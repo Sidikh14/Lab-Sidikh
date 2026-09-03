@@ -1,0 +1,242 @@
+.mise-en-page {
+  display: flex;
+  min-height: 100vh;
+}
+
+.barre-laterale {
+  width: 220px;
+  flex-shrink: 0;
+  background: var(--encre);
+  color: var(--papier);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 0;
+}
+
+.marque {
+  font-family: var(--font-marque);
+  font-size: 22px;
+  padding: 0 20px 20px;
+  border-bottom: 1px solid rgba(236, 227, 205, 0.18);
+  margin-bottom: 12px;
+}
+
+.nav-liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+}
+
+.nav-lien {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 20px;
+  color: rgba(236, 227, 205, 0.75);
+  text-decoration: none;
+  font-size: 14px;
+  border-left: 3px solid transparent;
+}
+
+.nav-lien:hover {
+  color: var(--papier);
+  background: rgba(236, 227, 205, 0.06);
+}
+
+.nav-lien.actif {
+  color: var(--papier);
+  border-left-color: var(--laiton);
+  background: rgba(236, 227, 205, 0.08);
+}
+
+.pied-sidebar {
+  padding: 16px 20px 0;
+  border-top: 1px solid rgba(236, 227, 205, 0.18);
+  font-size: 13px;
+}
+
+.pied-sidebar .nom {
+  color: var(--papier);
+  margin: 0 0 2px;
+}
+
+.pied-sidebar .role {
+  color: var(--laiton);
+  margin: 0 0 12px;
+  text-transform: capitalize;
+}
+
+.lien-deconnexion {
+  background: none;
+  border: none;
+  color: rgba(236, 227, 205, 0.6);
+  font-size: 13px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.contenu {
+  flex: 1;
+  padding: 32px 40px;
+  max-width: 1040px;
+}
+
+.entete-page {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-bottom: 24px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.entete-page h1 {
+  font-size: 26px;
+}
+
+.ligne-stats {
+  display: flex;
+  border-top: 1px solid var(--trait);
+  border-bottom: 1px solid var(--trait);
+  margin-bottom: 32px;
+}
+
+.stat {
+  flex: 1;
+  padding: 16px 20px;
+  border-right: 1px solid var(--trait);
+}
+
+.stat:last-child {
+  border-right: none;
+}
+
+.stat .etiquette {
+  margin-bottom: 8px;
+}
+
+.stat .valeur {
+  font-family: var(--font-chiffres);
+  font-size: 24px;
+}
+
+.panneau {
+  border-top: 1px solid var(--trait);
+}
+
+table.registre {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+table.registre th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--encre-douce);
+  font-size: 13px;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--trait);
+}
+
+table.registre td {
+  padding: 12px 8px;
+  border-bottom: 1px solid var(--trait);
+  font-size: 14px;
+}
+
+table.registre tr:last-child td {
+  border-bottom: none;
+}
+
+.barre-outils {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ecran-connexion {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--papier);
+}
+
+.carte-connexion {
+  width: 380px;
+  padding: 32px;
+  border: 1px solid var(--trait);
+  background: var(--papier-doux);
+}
+
+.carte-connexion h1 {
+  font-size: 24px;
+  margin-bottom: 4px;
+}
+
+.carte-connexion p.souligne {
+  color: var(--encre-douce);
+  font-size: 14px;
+  margin: 0 0 24px;
+}
+
+.champ-groupe {
+  margin-bottom: 16px;
+}
+
+.erreur {
+  background: var(--brique-claire);
+  color: var(--brique);
+  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: 3px;
+  margin-bottom: 16px;
+}
+
+.lien-bas {
+  margin-top: 20px;
+  font-size: 13px;
+  color: var(--encre-douce);
+  text-align: center;
+}
+
+.etat-vide {
+  padding: 40px 8px;
+  text-align: center;
+  color: var(--encre-douce);
+  font-size: 14px;
+}
+
+.modale-fond {
+  position: fixed;
+  inset: 0;
+  background: rgba(32, 42, 34, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.modale {
+  width: 420px;
+  max-width: calc(100vw - 40px);
+  background: var(--papier-doux);
+  border: 1px solid var(--trait-fort);
+  padding: 24px;
+}
+
+.modale h2 {
+  font-size: 19px;
+  margin-bottom: 18px;
+}
+
+.actions-modale {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
