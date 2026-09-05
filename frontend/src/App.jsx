@@ -7,6 +7,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { StockPage } from './pages/StockPage';
 import { OrdersPage } from './pages/OrdersPage';
 import { ClientsPage } from './pages/ClientsPage';
+import { TeamPage } from './pages/TeamPage';
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
           <Route path="/stock" element={<ProtectedRoute><StockPage /></ProtectedRoute>} />
           <Route path="/commandes" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
           <Route path="/clients" element={<ProtectedRoute><ClientsPage /></ProtectedRoute>} />
+          <Route path="/equipe" element={<ProtectedRoute><TeamPage /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

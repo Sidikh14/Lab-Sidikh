@@ -24,8 +24,8 @@ npm run dev
 
 | Méthode | Route | Rôles autorisés | Description |
 |---|---|---|---|
-| POST | `/auth/register` | public | Crée un commerçant + son compte manager |
-| POST | `/auth/login` | public | Connexion, retourne un token JWT |
+| POST | `/auth/register` | clé admin requise (en-tête `X-Admin-Key`) | Crée un commerçant + son compte manager |
+| POST | `/auth/login` | public | Connexion, retourne un token JWT + le nom du commerce |
 | GET | `/products` | tous | Liste du stock avec statut (en_stock/faible/rupture) |
 | POST | `/products` | manager, gerant | Créer un produit |
 | PATCH | `/products/:id` | manager, gerant | Modifier un produit |
@@ -36,6 +36,15 @@ npm run dev
 | GET | `/orders` | tous | Liste des commandes récentes |
 | POST | `/orders` | tous | Créer une commande (déduit le stock automatiquement) |
 | PATCH | `/orders/:id/status` | manager, gerant | Changer le statut d'une commande |
+| GET | `/users` | manager, gerant | Liste de l'équipe du commerce |
+| POST | `/users` | manager, gerant | Créer un membre (manager→gérant/vendeur, gérant→vendeur) |
+| PATCH | `/users/:id/status` | manager | Activer/désactiver un membre |
+
+`/auth/register` est volontairement protégée : seule la personne connaissant
+`ADMIN_REGISTRATION_KEY` peut créer un nouveau commerce sur la plateforme.
+Les commerçants existants ajoutent ensuite leurs gérants/vendeurs via `/users`,
+qui ne nécessite pas cette clé.
+
 
 Toutes les routes (sauf `/auth/*`) nécessitent l'en-tête :
 `Authorization: Bearer <token>`

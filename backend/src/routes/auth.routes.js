@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const { requireAdminKey } = require('../middleware/adminKey');
 
 const router = express.Router();
 
@@ -15,8 +16,10 @@ function signToken(user) {
 
 // POST /auth/register
 // Crée un nouveau commerçant ET son premier compte utilisateur (rôle manager).
-// C'est le point d'entrée quand un nouveau commerçant s'inscrit sur la plateforme.
-router.post('/register', async (req, res) => {
+// Protégé par une clé secrète (X-Admin-Key) : seul vous pouvez créer un nouveau
+// commerce sur la plateforme. Les commerçants existants ajoutent ensuite leurs
+// gérants/vendeurs via /users, qui ne nécessite pas cette clé.
+router.post('/register', requireAdminKey, async (req, res) => {
   const { businessName, sector, fullName, email, password } = req.body;
 
   if (!businessName || !fullName || !email || !password) {
@@ -64,6 +67,7 @@ router.post('/register', async (req, res) => {
 });
 
 // POST /auth/login
+// Renvoie aussi le nom du commerce, pour l'afficher dans l'interface.
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -73,8 +77,11 @@ router.post('/login', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT id, merchant_id, full_name, email, password_hash, role, is_active
-       FROM users WHERE email = $1`,
+      `SELECT u.id, u.merchant_id, u.full_name, u.email, u.password_hash, u.role, u.is_active,
+              m.business_name, m.currency
+       FROM users u
+       JOIN merchants m ON m.id = u.merchant_id
+       WHERE u.email = $1`,
       [email]
     );
     const user = result.rows[0];
@@ -94,6 +101,7 @@ router.post('/login', async (req, res) => {
     res.json({
       token,
       user: { id: user.id, fullName: user.full_name, email: user.email, role: user.role },
+      merchant: { id: user.merchant_id, businessName: user.business_name, currency: user.currency },
     });
   } catch (err) {
     console.error(err);
@@ -102,3 +110,4 @@ router.post('/login', async (req, res) => {
 });
 
 module.exports = router;
+

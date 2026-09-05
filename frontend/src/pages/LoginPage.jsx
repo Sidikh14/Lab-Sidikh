@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 export function LoginPage() {
@@ -66,10 +66,6 @@ export function LoginPage() {
             {chargement ? 'Connexion…' : 'Se connecter'}
           </button>
         </form>
-
-        <p className="lien-bas">
-          Nouveau commerçant ? <Link to="/inscription">Créer un compte</Link>
-        </p>
       </div>
     </div>
   );

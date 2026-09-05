@@ -28,8 +28,12 @@ export const api = {
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
 
-  register: (data) =>
-    request('/auth/register', { method: 'POST', body: JSON.stringify(data) }),
+  register: (data, adminKey) =>
+    request('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+      headers: { 'X-Admin-Key': adminKey || '' },
+    }),
 
   getProducts: () => request('/products'),
   createProduct: (data) =>
@@ -51,4 +55,10 @@ export const api = {
     request('/orders', { method: 'POST', body: JSON.stringify(data) }),
   updateOrderStatus: (id, status) =>
     request(`/orders/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+
+  getUsers: () => request('/users'),
+  createUser: (data) =>
+    request('/users', { method: 'POST', body: JSON.stringify(data) }),
+  setUserStatus: (id, isActive) =>
+    request(`/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
 };

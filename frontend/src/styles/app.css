@@ -4,21 +4,35 @@
 }
 
 .barre-laterale {
-  width: 220px;
+  width: 230px;
   flex-shrink: 0;
-  background: var(--encre);
+  background: linear-gradient(180deg, #232e26 0%, var(--encre) 100%);
   color: var(--papier);
   display: flex;
   flex-direction: column;
   padding: 24px 0;
+  box-shadow: 2px 0 12px rgba(0, 0, 0, 0.15);
 }
 
 .marque {
   font-family: var(--font-marque);
-  font-size: 22px;
+  font-size: 20px;
   padding: 0 20px 20px;
-  border-bottom: 1px solid rgba(236, 227, 205, 0.18);
+  border-bottom: 1px solid rgba(236, 227, 205, 0.14);
   margin-bottom: 12px;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.marque .sous-titre {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--laiton);
+  margin-top: 4px;
 }
 
 .nav-liste {
@@ -32,11 +46,17 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 20px;
-  color: rgba(236, 227, 205, 0.75);
+  padding: 11px 20px;
+  color: rgba(236, 227, 205, 0.72);
   text-decoration: none;
   font-size: 14px;
   border-left: 3px solid transparent;
+  transition: background var(--transition), color var(--transition);
+}
+
+.nav-lien svg {
+  flex-shrink: 0;
+  opacity: 0.85;
 }
 
 .nav-lien:hover {
@@ -47,31 +67,36 @@
 .nav-lien.actif {
   color: var(--papier);
   border-left-color: var(--laiton);
-  background: rgba(236, 227, 205, 0.08);
+  background: rgba(236, 227, 205, 0.09);
 }
 
 .pied-sidebar {
   padding: 16px 20px 0;
-  border-top: 1px solid rgba(236, 227, 205, 0.18);
+  border-top: 1px solid rgba(236, 227, 205, 0.14);
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .pied-sidebar .nom {
   color: var(--papier);
-  margin: 0 0 2px;
+  margin: 0;
+  font-weight: 500;
 }
 
 .pied-sidebar .role {
   color: var(--laiton);
-  margin: 0 0 12px;
+  margin: 0 0 2px;
   text-transform: capitalize;
+  font-size: 12px;
 }
 
 .lien-deconnexion {
   background: none;
   border: none;
-  color: rgba(236, 227, 205, 0.6);
-  font-size: 13px;
+  color: rgba(236, 227, 205, 0.55);
+  font-size: 12px;
   padding: 0;
   text-decoration: underline;
 }
@@ -79,7 +104,7 @@
 .contenu {
   flex: 1;
   padding: 32px 40px;
-  max-width: 1040px;
+  max-width: 1080px;
 }
 
 .entete-page {
@@ -97,14 +122,16 @@
 
 .ligne-stats {
   display: flex;
-  border-top: 1px solid var(--trait);
-  border-bottom: 1px solid var(--trait);
+  background: var(--papier-carte);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre-legere);
   margin-bottom: 32px;
+  overflow: hidden;
 }
 
 .stat {
   flex: 1;
-  padding: 16px 20px;
+  padding: 18px 20px;
   border-right: 1px solid var(--trait);
 }
 
@@ -122,27 +149,44 @@
 }
 
 .panneau {
-  border-top: 1px solid var(--trait);
+  background: var(--papier-carte);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre-legere);
+  overflow: hidden;
 }
 
 table.registre {
   width: 100%;
   border-collapse: collapse;
+  background: var(--papier-carte);
+  border-radius: var(--rayon);
+  overflow: hidden;
+  box-shadow: var(--ombre-legere);
 }
 
 table.registre th {
   text-align: left;
   font-weight: 500;
   color: var(--encre-douce);
-  font-size: 13px;
-  padding: 10px 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--trait);
 }
 
 table.registre td {
-  padding: 12px 8px;
+  padding: 13px 16px;
   border-bottom: 1px solid var(--trait);
   font-size: 14px;
+}
+
+table.registre tbody tr {
+  transition: background var(--transition);
+}
+
+table.registre tbody tr:hover {
+  background: rgba(185, 129, 42, 0.06);
 }
 
 table.registre tr:last-child td {
@@ -163,14 +207,15 @@ table.registre tr:last-child td {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--papier);
+  background: radial-gradient(circle at 30% 20%, #f5efdd 0%, var(--papier) 60%);
 }
 
 .carte-connexion {
   width: 380px;
   padding: 32px;
-  border: 1px solid var(--trait);
-  background: var(--papier-doux);
+  border-radius: var(--rayon);
+  background: var(--papier-carte);
+  box-shadow: var(--ombre-flottante);
 }
 
 .carte-connexion h1 {
@@ -193,7 +238,7 @@ table.registre tr:last-child td {
   color: var(--brique);
   font-size: 13px;
   padding: 10px 12px;
-  border-radius: 3px;
+  border-radius: var(--rayon-petit);
   margin-bottom: 16px;
 }
 
@@ -209,12 +254,16 @@ table.registre tr:last-child td {
   text-align: center;
   color: var(--encre-douce);
   font-size: 14px;
+  background: var(--papier-carte);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre-legere);
 }
 
 .modale-fond {
   position: fixed;
   inset: 0;
-  background: rgba(32, 42, 34, 0.45);
+  background: rgba(32, 42, 34, 0.5);
+  backdrop-filter: blur(1px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -224,8 +273,9 @@ table.registre tr:last-child td {
 .modale {
   width: 420px;
   max-width: calc(100vw - 40px);
-  background: var(--papier-doux);
-  border: 1px solid var(--trait-fort);
+  background: var(--papier-carte);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre-flottante);
   padding: 24px;
 }
 

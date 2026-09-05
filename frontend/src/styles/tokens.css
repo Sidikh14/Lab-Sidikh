@@ -1,6 +1,7 @@
 :root {
   --papier: #ece3cd;
   --papier-doux: #e2d7ba;
+  --papier-carte: #f5efdd;
   --encre: #202a22;
   --encre-douce: #56635b;
   --laiton: #b9812a;
@@ -9,8 +10,14 @@
   --sarcelle-claire: #dde8e1;
   --brique: #9c4430;
   --brique-claire: #f1ddd4;
-  --trait: #d4c9ae;
+  --trait: #d9cfb2;
   --trait-fort: #b9ab86;
+
+  --rayon: 8px;
+  --rayon-petit: 5px;
+  --ombre-legere: 0 1px 2px rgba(32, 42, 34, 0.06), 0 2px 8px rgba(32, 42, 34, 0.05);
+  --ombre-flottante: 0 4px 14px rgba(32, 42, 34, 0.12), 0 1px 3px rgba(32, 42, 34, 0.08);
+  --transition: 0.15s ease;
 
   --font-marque: 'Fraunces', serif;
   --font-ui: 'IBM Plex Sans', sans-serif;
@@ -66,48 +73,59 @@ textarea {
 }
 
 .btn {
-  border: 1px solid var(--encre);
-  background: transparent;
+  border: 1px solid var(--trait-fort);
+  background: var(--papier-carte);
   color: var(--encre);
   padding: 9px 16px;
-  border-radius: 3px;
+  border-radius: var(--rayon-petit);
   font-size: 14px;
   font-weight: 500;
-  transition: background 0.12s ease;
+  transition: background var(--transition), border-color var(--transition), transform var(--transition), box-shadow var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .btn:hover {
-  background: var(--papier-doux);
+  background: #fffaf0;
+  border-color: var(--encre);
 }
 
 .btn-principal {
   background: var(--laiton);
   border-color: var(--laiton);
   color: var(--encre);
+  box-shadow: 0 2px 6px rgba(185, 129, 42, 0.35);
 }
 
 .btn-principal:hover {
   background: #a5741f;
+  border-color: #a5741f;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(185, 129, 42, 0.4);
 }
 
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+  transform: none;
 }
 
 .champ {
   width: 100%;
   padding: 9px 12px;
   border: 1px solid var(--trait-fort);
-  border-radius: 3px;
+  border-radius: var(--rayon-petit);
   background: #fff8ea;
   color: var(--encre);
   font-size: 14px;
+  transition: border-color var(--transition), box-shadow var(--transition);
 }
 
 .champ:focus {
-  outline: 2px solid var(--laiton);
-  outline-offset: 1px;
+  outline: none;
+  border-color: var(--laiton);
+  box-shadow: 0 0 0 3px rgba(185, 129, 42, 0.18);
 }
 
 .etiquette {
@@ -118,11 +136,21 @@ textarea {
 }
 
 .tampon {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 12px;
   font-weight: 500;
-  padding: 3px 9px;
-  border-radius: 3px;
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+.tampon::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .tampon-sarcelle {
@@ -138,6 +166,20 @@ textarea {
 .tampon-laiton {
   background: var(--laiton-clair);
   color: #7a5619;
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--laiton);
+  color: var(--encre);
+  font-weight: 600;
+  font-size: 13px;
+  flex-shrink: 0;
 }
 
 a {
