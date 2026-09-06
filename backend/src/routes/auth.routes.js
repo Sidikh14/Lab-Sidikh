@@ -78,7 +78,7 @@ router.post('/login', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.merchant_id, u.full_name, u.email, u.password_hash, u.role, u.is_active,
-              m.business_name, m.currency
+              u.visible_modules, m.business_name, m.currency
        FROM users u
        JOIN merchants m ON m.id = u.merchant_id
        WHERE u.email = $1`,
@@ -100,7 +100,7 @@ router.post('/login', async (req, res) => {
     const token = signToken(user);
     res.json({
       token,
-      user: { id: user.id, fullName: user.full_name, email: user.email, role: user.role },
+      user: { id: user.id, fullName: user.full_name, email: user.email, role: user.role, visibleModules: user.visible_modules },
       merchant: { id: user.merchant_id, businessName: user.business_name, currency: user.currency },
     });
   } catch (err) {
@@ -110,4 +110,3 @@ router.post('/login', async (req, res) => {
 });
 
 module.exports = router;
-

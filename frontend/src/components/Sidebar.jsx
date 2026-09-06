@@ -22,7 +22,7 @@ function IconStock() {
   );
 }
 
-function IconCommandes() {
+function IconVentes() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
       <circle cx="9" cy="20" r="1.4" />
@@ -43,6 +43,26 @@ function IconClients() {
   );
 }
 
+function IconFournisseurs() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <rect x="3" y="10" width="13" height="8" rx="1.3" />
+      <path d="M16 13h3l2 2.5V18h-5" />
+      <circle cx="7.5" cy="19.5" r="1.4" />
+      <circle cx="17" cy="19.5" r="1.4" />
+    </svg>
+  );
+}
+
+function IconAchats() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M4 4h2l1.2 12.4A2 2 0 0 0 9.2 18h8.6a2 2 0 0 0 2-1.7L21 8H7.5" />
+      <path d="M12 11v4M10 13h4" />
+    </svg>
+  );
+}
+
 function IconEquipe() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
@@ -53,18 +73,34 @@ function IconEquipe() {
   );
 }
 
-const LIENS_BASE = [
-  { to: '/', label: 'Tableau de bord', fin: true, icone: IconDashboard },
-  { to: '/stock', label: 'Stock', icone: IconStock },
-  { to: '/commandes', label: 'Commandes', icone: IconCommandes },
-  { to: '/clients', label: 'Clients', icone: IconClients },
+const TOUS_LES_LIENS = [
+  { to: '/stock', label: 'Stock', icone: IconStock, module: 'stock' },
+  { to: '/ventes', label: 'Ventes', icone: IconVentes, module: 'ventes' },
+  { to: '/clients', label: 'Clients', icone: IconClients, module: 'clients' },
+  { to: '/fournisseurs', label: 'Fournisseurs', icone: IconFournisseurs, module: 'fournisseurs' },
+  { to: '/achats', label: 'Commandes fournisseurs', icone: IconAchats, module: 'achats' },
 ];
 
-const LIEN_EQUIPE = { to: '/equipe', label: 'Équipe', icone: IconEquipe };
+// Modules visibles par défaut pour chaque rôle, tant que le manager n'a pas
+// personnalisé les permissions d'un membre précis (visibleModules).
+const MODULES_PAR_DEFAUT = {
+  manager: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats'],
+  gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats'],
+  vendeur: ['stock', 'ventes', 'clients'],
+  caissier: ['ventes'],
+};
+
+function modulesAutorises(user) {
+  if (user.role === 'manager') return MODULES_PAR_DEFAUT.manager;
+  if (Array.isArray(user.visibleModules)) return user.visibleModules;
+  return MODULES_PAR_DEFAUT[user.role] || [];
+}
 
 export function Sidebar() {
   const { user, merchant, logout } = useAuth();
-  const liens = ['manager', 'gerant'].includes(user?.role) ? [...LIENS_BASE, LIEN_EQUIPE] : LIENS_BASE;
+  const autorises = modulesAutorises(user);
+  const liens = TOUS_LES_LIENS.filter((lien) => autorises.includes(lien.module));
+  const voitEquipe = ['manager', 'gerant'].includes(user?.role);
 
   const initiales = (user?.fullName || '?')
     .split(' ')
@@ -77,16 +113,21 @@ export function Sidebar() {
     <nav className="barre-laterale">
       <div className="marque">
         {merchant?.businessName || 'Mon commerce'}
-        <span className="sous-titre">Carnet</span>
+        <span className="sous-titre">Sidikh Stock</span>
       </div>
       <ul className="nav-liste">
+        <li>
+          <NavLink to="/" end className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')}>
+            <IconDashboard />
+            Tableau de bord
+          </NavLink>
+        </li>
         {liens.map((lien) => {
           const Icone = lien.icone;
           return (
             <li key={lien.to}>
               <NavLink
                 to={lien.to}
-                end={lien.fin}
                 className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')}
               >
                 <Icone />
@@ -95,6 +136,14 @@ export function Sidebar() {
             </li>
           );
         })}
+        {voitEquipe && (
+          <li>
+            <NavLink to="/equipe" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')}>
+              <IconEquipe />
+              Équipe
+            </NavLink>
+          </li>
+        )}
       </ul>
       {user && (
         <div className="pied-sidebar">

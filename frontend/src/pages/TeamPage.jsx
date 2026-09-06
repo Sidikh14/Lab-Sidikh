@@ -8,8 +8,23 @@ const ROLES_PROPOSES = {
   manager: [
     { value: 'gerant', label: 'Gérant' },
     { value: 'vendeur', label: 'Vendeur' },
+    { value: 'caissier', label: 'Caissier' },
   ],
   gerant: [{ value: 'vendeur', label: 'Vendeur' }],
+};
+
+const MODULES = [
+  { value: 'stock', label: 'Stock' },
+  { value: 'ventes', label: 'Ventes' },
+  { value: 'clients', label: 'Clients' },
+  { value: 'fournisseurs', label: 'Fournisseurs' },
+  { value: 'achats', label: 'Commandes fournisseurs' },
+];
+
+const MODULES_PAR_DEFAUT = {
+  gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats'],
+  vendeur: ['stock', 'ventes', 'clients'],
+  caissier: ['ventes'],
 };
 
 export function TeamPage() {
@@ -64,6 +79,41 @@ export function TeamPage() {
     }
   }
 
+  const [membrePermissions, setMembrePermissions] = useState(null);
+  const [selectionModules, setSelectionModules] = useState([]);
+
+  function ouvrirPermissions(membre) {
+    setMembrePermissions(membre);
+    setSelectionModules(membre.visible_modules ?? MODULES_PAR_DEFAUT[membre.role] ?? []);
+  }
+
+  function toggleModule(value) {
+    setSelectionModules((prev) =>
+      prev.includes(value) ? prev.filter((m) => m !== value) : [...prev, value]
+    );
+  }
+
+  async function handleSavePermissions(e) {
+    e.preventDefault();
+    try {
+      await api.setUserPermissions(membrePermissions.id, selectionModules);
+      setMembrePermissions(null);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
+  async function handleResetPermissions() {
+    try {
+      await api.setUserPermissions(membrePermissions.id, null);
+      setMembrePermissions(null);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
   return (
     <>
       <div className="entete-page">
@@ -106,15 +156,24 @@ export function TeamPage() {
                   </span>
                 </td>
                 {estManager && (
-                  <td>
+                  <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {m.role !== 'manager' && (
-                      <button
-                        className="btn"
-                        style={{ padding: '5px 10px', fontSize: 13 }}
-                        onClick={() => handleToggleStatus(m)}
-                      >
-                        {m.is_active ? 'Désactiver' : 'Réactiver'}
-                      </button>
+                      <>
+                        <button
+                          className="btn"
+                          style={{ padding: '5px 10px', fontSize: 13 }}
+                          onClick={() => ouvrirPermissions(m)}
+                        >
+                          Permissions
+                        </button>
+                        <button
+                          className="btn"
+                          style={{ padding: '5px 10px', fontSize: 13 }}
+                          onClick={() => handleToggleStatus(m)}
+                        >
+                          {m.is_active ? 'Désactiver' : 'Réactiver'}
+                        </button>
+                      </>
                     )}
                   </td>
                 )}
@@ -178,6 +237,37 @@ export function TeamPage() {
                 </button>
                 <button type="submit" className="btn btn-principal">
                   Ajouter
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {membrePermissions && (
+        <div className="modale-fond" onClick={() => setMembrePermissions(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Permissions de {membrePermissions.full_name}</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+              Cochez les pages que ce membre peut voir dans son compte.
+            </p>
+            <form onSubmit={handleSavePermissions}>
+              {MODULES.map((m) => (
+                <label key={m.value} className="case-a-cocher" style={{ marginBottom: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={selectionModules.includes(m.value)}
+                    onChange={() => toggleModule(m.value)}
+                  />
+                  {m.label}
+                </label>
+              ))}
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={handleResetPermissions}>
+                  Réinitialiser (par défaut)
+                </button>
+                <button type="submit" className="btn btn-principal">
+                  Enregistrer
                 </button>
               </div>
             </form>

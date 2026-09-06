@@ -6,8 +6,8 @@
 .barre-laterale {
   width: 230px;
   flex-shrink: 0;
-  background: linear-gradient(180deg, #232e26 0%, var(--encre) 100%);
-  color: var(--papier);
+  background: linear-gradient(180deg, #1b1c29 0%, var(--encre) 100%);
+  color: #f4f4f7;
   display: flex;
   flex-direction: column;
   padding: 24px 0;
@@ -18,20 +18,21 @@
   font-family: var(--font-marque);
   font-size: 20px;
   padding: 0 20px 20px;
-  border-bottom: 1px solid rgba(236, 227, 205, 0.14);
+  border-bottom: 1px solid rgba(244, 244, 247, 0.12);
   margin-bottom: 12px;
   line-height: 1.3;
   word-break: break-word;
+  color: #f4f4f7;
 }
 
 .marque .sous-titre {
   display: block;
   font-family: var(--font-ui);
   font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.06em;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--laiton);
+  color: #8b8de0;
   margin-top: 4px;
 }
 
@@ -47,7 +48,7 @@
   align-items: center;
   gap: 10px;
   padding: 11px 20px;
-  color: rgba(236, 227, 205, 0.72);
+  color: rgba(244, 244, 247, 0.68);
   text-decoration: none;
   font-size: 14px;
   border-left: 3px solid transparent;
@@ -60,19 +61,19 @@
 }
 
 .nav-lien:hover {
-  color: var(--papier);
-  background: rgba(236, 227, 205, 0.06);
+  color: #ffffff;
+  background: rgba(244, 244, 247, 0.06);
 }
 
 .nav-lien.actif {
-  color: var(--papier);
-  border-left-color: var(--laiton);
-  background: rgba(236, 227, 205, 0.09);
+  color: #ffffff;
+  border-left-color: var(--accent);
+  background: rgba(91, 79, 233, 0.18);
 }
 
 .pied-sidebar {
   padding: 16px 20px 0;
-  border-top: 1px solid rgba(236, 227, 205, 0.14);
+  border-top: 1px solid rgba(244, 244, 247, 0.12);
   font-size: 13px;
   display: flex;
   align-items: center;
@@ -80,13 +81,13 @@
 }
 
 .pied-sidebar .nom {
-  color: var(--papier);
+  color: #ffffff;
   margin: 0;
   font-weight: 500;
 }
 
 .pied-sidebar .role {
-  color: var(--laiton);
+  color: #8b8de0;
   margin: 0 0 2px;
   text-transform: capitalize;
   font-size: 12px;
@@ -95,7 +96,7 @@
 .lien-deconnexion {
   background: none;
   border: none;
-  color: rgba(236, 227, 205, 0.55);
+  color: rgba(244, 244, 247, 0.5);
   font-size: 12px;
   padding: 0;
   text-decoration: underline;
@@ -122,7 +123,8 @@
 
 .ligne-stats {
   display: flex;
-  background: var(--papier-carte);
+  background: var(--carte);
+  border: 1px solid var(--trait);
   border-radius: var(--rayon);
   box-shadow: var(--ombre-legere);
   margin-bottom: 32px;
@@ -149,7 +151,8 @@
 }
 
 .panneau {
-  background: var(--papier-carte);
+  background: var(--carte);
+  border: 1px solid var(--trait);
   border-radius: var(--rayon);
   box-shadow: var(--ombre-legere);
   overflow: hidden;
@@ -158,7 +161,8 @@
 table.registre {
   width: 100%;
   border-collapse: collapse;
-  background: var(--papier-carte);
+  background: var(--carte);
+  border: 1px solid var(--trait);
   border-radius: var(--rayon);
   overflow: hidden;
   box-shadow: var(--ombre-legere);
@@ -186,7 +190,7 @@ table.registre tbody tr {
 }
 
 table.registre tbody tr:hover {
-  background: rgba(185, 129, 42, 0.06);
+  background: var(--fond);
 }
 
 table.registre tr:last-child td {
@@ -207,14 +211,15 @@ table.registre tr:last-child td {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at 30% 20%, #f5efdd 0%, var(--papier) 60%);
+  background: linear-gradient(160deg, #ffffff 0%, var(--fond) 100%);
 }
 
 .carte-connexion {
   width: 380px;
   padding: 32px;
+  border: 1px solid var(--trait);
   border-radius: var(--rayon);
-  background: var(--papier-carte);
+  background: var(--carte);
   box-shadow: var(--ombre-flottante);
 }
 
@@ -234,8 +239,8 @@ table.registre tr:last-child td {
 }
 
 .erreur {
-  background: var(--brique-claire);
-  color: var(--brique);
+  background: var(--danger-clair);
+  color: var(--danger);
   font-size: 13px;
   padding: 10px 12px;
   border-radius: var(--rayon-petit);
@@ -254,7 +259,8 @@ table.registre tr:last-child td {
   text-align: center;
   color: var(--encre-douce);
   font-size: 14px;
-  background: var(--papier-carte);
+  background: var(--carte);
+  border: 1px solid var(--trait);
   border-radius: var(--rayon);
   box-shadow: var(--ombre-legere);
 }
@@ -262,7 +268,7 @@ table.registre tr:last-child td {
 .modale-fond {
   position: fixed;
   inset: 0;
-  background: rgba(32, 42, 34, 0.5);
+  background: rgba(20, 21, 31, 0.5);
   backdrop-filter: blur(1px);
   display: flex;
   align-items: center;
@@ -273,7 +279,9 @@ table.registre tr:last-child td {
 .modale {
   width: 420px;
   max-width: calc(100vw - 40px);
-  background: var(--papier-carte);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  background: var(--carte);
   border-radius: var(--rayon);
   box-shadow: var(--ombre-flottante);
   padding: 24px;
@@ -289,4 +297,18 @@ table.registre tr:last-child td {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 20px;
+}
+
+.case-a-cocher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.case-a-cocher input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
 }

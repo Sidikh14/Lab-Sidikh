@@ -33,8 +33,8 @@ export function LoginPage() {
   return (
     <div className="ecran-connexion">
       <div className="carte-connexion">
-        <h1>Carnet</h1>
-        <p className="souligne">Gestion de stock, commandes et clients</p>
+        <h1>Sidikh Stock</h1>
+        <p className="souligne">Gérez votre stock, vos ventes et vos clients</p>
 
         {erreur && <div className="erreur">{erreur}</div>}
 

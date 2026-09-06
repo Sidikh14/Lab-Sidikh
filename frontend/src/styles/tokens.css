@@ -1,22 +1,28 @@
 :root {
-  --papier: #ece3cd;
-  --papier-doux: #e2d7ba;
-  --papier-carte: #f5efdd;
-  --encre: #202a22;
-  --encre-douce: #56635b;
-  --laiton: #b9812a;
-  --laiton-clair: #f2e2c4;
-  --sarcelle: #2e5c52;
-  --sarcelle-claire: #dde8e1;
-  --brique: #9c4430;
-  --brique-claire: #f1ddd4;
-  --trait: #d9cfb2;
-  --trait-fort: #b9ab86;
+  --fond: #f7f8fa;
+  --carte: #ffffff;
+  --encre: #14151f;
+  --encre-douce: #6b7280;
+  --trait: #e5e7eb;
+  --trait-fort: #d1d5db;
 
-  --rayon: 8px;
-  --rayon-petit: 5px;
-  --ombre-legere: 0 1px 2px rgba(32, 42, 34, 0.06), 0 2px 8px rgba(32, 42, 34, 0.05);
-  --ombre-flottante: 0 4px 14px rgba(32, 42, 34, 0.12), 0 1px 3px rgba(32, 42, 34, 0.08);
+  --accent: #5b4fe9;
+  --accent-fonce: #4638c2;
+  --accent-clair: #eeebff;
+
+  --vif: #0891b2;
+  --vif-clair: #e0f5f8;
+
+  --danger: #dc2626;
+  --danger-clair: #fce8e6;
+
+  --warning: #d97706;
+  --warning-clair: #fef3c7;
+
+  --rayon: 10px;
+  --rayon-petit: 6px;
+  --ombre-legere: 0 1px 2px rgba(20, 21, 31, 0.04), 0 2px 8px rgba(20, 21, 31, 0.06);
+  --ombre-flottante: 0 8px 24px rgba(20, 21, 31, 0.14), 0 2px 6px rgba(20, 21, 31, 0.08);
   --transition: 0.15s ease;
 
   --font-marque: 'Fraunces', serif;
@@ -36,7 +42,7 @@ body,
 }
 
 body {
-  background: var(--papier);
+  background: var(--fond);
   color: var(--encre);
   font-family: var(--font-ui);
   font-size: 15px;
@@ -74,7 +80,7 @@ textarea {
 
 .btn {
   border: 1px solid var(--trait-fort);
-  background: var(--papier-carte);
+  background: var(--carte);
   color: var(--encre);
   padding: 9px 16px;
   border-radius: var(--rayon-petit);
@@ -87,22 +93,22 @@ textarea {
 }
 
 .btn:hover {
-  background: #fffaf0;
-  border-color: var(--encre);
+  background: var(--fond);
+  border-color: var(--encre-douce);
 }
 
 .btn-principal {
-  background: var(--laiton);
-  border-color: var(--laiton);
-  color: var(--encre);
-  box-shadow: 0 2px 6px rgba(185, 129, 42, 0.35);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(91, 79, 233, 0.35);
 }
 
 .btn-principal:hover {
-  background: #a5741f;
-  border-color: #a5741f;
+  background: var(--accent-fonce);
+  border-color: var(--accent-fonce);
   transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(185, 129, 42, 0.4);
+  box-shadow: 0 4px 12px rgba(91, 79, 233, 0.4);
 }
 
 .btn:disabled {
@@ -116,7 +122,7 @@ textarea {
   padding: 9px 12px;
   border: 1px solid var(--trait-fort);
   border-radius: var(--rayon-petit);
-  background: #fff8ea;
+  background: var(--carte);
   color: var(--encre);
   font-size: 14px;
   transition: border-color var(--transition), box-shadow var(--transition);
@@ -124,8 +130,8 @@ textarea {
 
 .champ:focus {
   outline: none;
-  border-color: var(--laiton);
-  box-shadow: 0 0 0 3px rgba(185, 129, 42, 0.18);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(91, 79, 233, 0.16);
 }
 
 .etiquette {
@@ -154,18 +160,18 @@ textarea {
 }
 
 .tampon-sarcelle {
-  background: var(--sarcelle-claire);
-  color: var(--sarcelle);
+  background: var(--vif-clair);
+  color: var(--vif);
 }
 
 .tampon-brique {
-  background: var(--brique-claire);
-  color: var(--brique);
+  background: var(--danger-clair);
+  color: var(--danger);
 }
 
 .tampon-laiton {
-  background: var(--laiton-clair);
-  color: #7a5619;
+  background: var(--warning-clair);
+  color: var(--warning);
 }
 
 .avatar {
@@ -175,8 +181,8 @@ textarea {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--laiton);
-  color: var(--encre);
+  background: var(--accent);
+  color: #ffffff;
   font-weight: 600;
   font-size: 13px;
   flex-shrink: 0;

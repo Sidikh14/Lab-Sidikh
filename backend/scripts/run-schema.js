@@ -1,25 +1,26 @@
-// Exécute schema.sql sur la base de données, sans avoir besoin d'installer psql.
+// Exécute n'importe quel fichier .sql sur la base, sans avoir besoin de psql.
 //
 // Usage :
-//   node scripts/run-schema.js "postgresql://...url-externe-copiée-sur-render..."
+//   node scripts/run-sql.js <chemin-du-fichier-sql> "postgresql://...url-externe..."
 //
-// Ou en définissant la variable d'environnement DATABASE_URL avant de lancer :
-//   set DATABASE_URL=postgresql://...   (PowerShell : $env:DATABASE_URL="...")
-//   node scripts/run-schema.js
+// Exemples :
+//   node scripts/run-sql.js schema.sql "postgresql://..."
+//   node scripts/run-sql.js migrations/002_fournisseurs_achats_tva_permissions.sql "postgresql://..."
 
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
 
-const connectionString = process.argv[2] || process.env.DATABASE_URL;
+const sqlFile = process.argv[2];
+const connectionString = process.argv[3] || process.env.DATABASE_URL;
 
-if (!connectionString) {
-  console.error("Fournissez l'URL de connexion en argument, ou via la variable DATABASE_URL.");
+if (!sqlFile || !connectionString) {
+  console.error('Usage : node scripts/run-sql.js <fichier.sql> "URL_DE_CONNEXION"');
   process.exit(1);
 }
 
-const schemaPath = path.join(__dirname, '..', 'schema.sql');
-const schemaSql = fs.readFileSync(schemaPath, 'utf8');
+const sqlPath = path.isAbsolute(sqlFile) ? sqlFile : path.join(__dirname, '..', sqlFile);
+const sql = fs.readFileSync(sqlPath, 'utf8');
 
 const client = new Client({
   connectionString,
@@ -28,14 +29,14 @@ const client = new Client({
 
 async function run() {
   await client.connect();
-  console.log('Connecté à la base. Exécution de schema.sql...');
-  await client.query(schemaSql);
-  console.log('Schéma appliqué avec succès.');
+  console.log(`Connecté à la base. Exécution de ${sqlFile}...`);
+  await client.query(sql);
+  console.log('Terminé avec succès.');
   await client.end();
 }
 
 run().catch((err) => {
-  console.error("Échec de l'exécution du schéma :");
+  console.error("Échec de l'exécution du fichier SQL :");
   console.error(err.message);
   process.exit(1);
 });

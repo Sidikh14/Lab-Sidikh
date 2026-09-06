@@ -12,7 +12,7 @@ router.use(authenticate);
 // manager depuis cette route (ça reste le rôle du premier compte créé
 // à l'inscription du commerce).
 const ROLES_AUTORISES_PAR_CREATEUR = {
-  manager: ['gerant', 'vendeur'],
+  manager: ['gerant', 'vendeur', 'caissier'],
   gerant: ['vendeur'],
 };
 
@@ -20,7 +20,7 @@ const ROLES_AUTORISES_PAR_CREATEUR = {
 router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, full_name, email, role, is_active, last_login_at, created_at
+      `SELECT id, full_name, email, role, is_active, last_login_at, created_at, visible_modules
        FROM users
        WHERE merchant_id = $1
        ORDER BY
@@ -93,6 +93,34 @@ router.patch('/:id/status', requireRole('manager'), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la mise à jour du membre.' });
+  }
+});
+
+// PATCH /users/:id/permissions — manager choisit les modules visibles pour un
+// gérant ou un vendeur. modules: null = accès complet par défaut du rôle.
+const MODULES_VALIDES = ['stock', 'ventes', 'clients', 'fournisseurs', 'achats'];
+
+router.patch('/:id/permissions', requireRole('manager'), async (req, res) => {
+  const { modules } = req.body;
+
+  if (modules !== null && (!Array.isArray(modules) || !modules.every((m) => MODULES_VALIDES.includes(m)))) {
+    return res.status(400).json({ error: 'Liste de modules invalide.' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE users SET visible_modules = $1
+       WHERE id = $2 AND merchant_id = $3 AND role != 'manager'
+       RETURNING id, full_name, role, visible_modules`,
+      [modules, req.params.id, req.user.merchantId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Membre introuvable.' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour des permissions.' });
   }
 });
 

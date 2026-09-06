@@ -8,6 +8,8 @@ import { StockPage } from './pages/StockPage';
 import { OrdersPage } from './pages/OrdersPage';
 import { ClientsPage } from './pages/ClientsPage';
 import { TeamPage } from './pages/TeamPage';
+import { SuppliersPage } from './pages/SuppliersPage';
+import { PurchaseOrdersPage } from './pages/PurchaseOrdersPage';
 
 export default function App() {
   return (
@@ -18,8 +20,10 @@ export default function App() {
           <Route path="/inscription" element={<RegisterPage />} />
           <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/stock" element={<ProtectedRoute><StockPage /></ProtectedRoute>} />
-          <Route path="/commandes" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
+          <Route path="/ventes" element={<ProtectedRoute><OrdersPage /></ProtectedRoute>} />
           <Route path="/clients" element={<ProtectedRoute><ClientsPage /></ProtectedRoute>} />
+          <Route path="/fournisseurs" element={<ProtectedRoute><SuppliersPage /></ProtectedRoute>} />
+          <Route path="/achats" element={<ProtectedRoute><PurchaseOrdersPage /></ProtectedRoute>} />
           <Route path="/equipe" element={<ProtectedRoute><TeamPage /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>
