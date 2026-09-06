@@ -3,15 +3,26 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 
+const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
+const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
+
 const router = express.Router();
 router.use(authenticate);
+
+// Construit un numéro de commande lisible à partir du compteur interne (order_seq).
+function formatOrderNumber(order) {
+  const annee = new Date(order.created_at).getFullYear();
+  const numero = String(order.order_seq).padStart(4, '0');
+  return `CMD-${annee}-${numero}`;
+}
 
 // GET /orders — liste des commandes récentes du commerçant
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT o.id, o.status, o.total_amount, o.created_at,
-              c.full_name AS client_name
+      `SELECT o.id, o.order_seq, o.status, o.total_amount, o.subtotal_amount, o.tva_applicable,
+              o.tva_amount, o.payment_method, o.amount_received, o.change_given,
+              o.created_at, c.full_name AS client_name
        FROM orders o
        LEFT JOIN clients c ON c.id = o.client_id
        WHERE o.merchant_id = $1
@@ -19,7 +30,8 @@ router.get('/', async (req, res) => {
        LIMIT 100`,
       [req.user.merchantId]
     );
-    res.json(result.rows);
+    const rows = result.rows.map((o) => ({ ...o, order_number: formatOrderNumber(o) }));
+    res.json(rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération des commandes.' });
@@ -47,7 +59,7 @@ router.get('/:id', async (req, res) => {
       [order.id]
     );
 
-    res.json({ ...order, items: itemsResult.rows });
+    res.json({ ...order, order_number: formatOrderNumber(order), items: itemsResult.rows });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération de la commande.' });
@@ -58,9 +70,9 @@ router.get('/:id', async (req, res) => {
 // Crée une commande avec ses lignes, déduit le stock automatiquement et
 // enregistre le mouvement de stock correspondant. Tout se fait dans une
 // transaction : si un produit n'a pas assez de stock, rien n'est enregistré.
-// Accessible à tous les rôles : un vendeur doit pouvoir enregistrer une vente.
-router.post('/', async (req, res) => {
-  const { clientId, items, notes } = req.body;
+// Le caissier ne crée pas de vente, il encaisse celles créées par le vendeur.
+router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) => {
+  const { clientId, items, notes, tvaApplicable } = req.body;
   // items attendu : [{ productId, quantity }, ...]
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -71,7 +83,7 @@ router.post('/', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    let totalAmount = 0;
+    let subtotalAmount = 0;
     const resolvedItems = [];
 
     for (const item of items) {
@@ -94,15 +106,28 @@ router.post('/', async (req, res) => {
       }
 
       const lineTotal = product.unit_price * item.quantity;
-      totalAmount += Number(lineTotal);
+      subtotalAmount += Number(lineTotal);
       resolvedItems.push({ product, quantity: item.quantity, unitPrice: product.unit_price });
     }
 
+    const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * TVA_RATE) / 100 : 0;
+    const totalAmount = subtotalAmount + tvaAmount;
+
     const orderResult = await client.query(
-      `INSERT INTO orders (merchant_id, client_id, created_by, status, total_amount, notes)
-       VALUES ($1, $2, $3, 'en_attente', $4, $5)
+      `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes)
+       VALUES ($1, $2, $3, 'en_attente', $4, $5, $6, $7, $8, $9)
        RETURNING *`,
-      [req.user.merchantId, clientId || null, req.user.id, totalAmount, notes || null]
+      [
+        req.user.merchantId,
+        clientId || null,
+        req.user.id,
+        subtotalAmount,
+        Boolean(tvaApplicable),
+        TVA_RATE,
+        tvaAmount,
+        totalAmount,
+        notes || null,
+      ]
     );
     const order = orderResult.rows[0];
 
@@ -127,7 +152,7 @@ router.post('/', async (req, res) => {
     }
 
     await client.query('COMMIT');
-    res.status(201).json(order);
+    res.status(201).json({ ...order, order_number: formatOrderNumber(order) });
   } catch (err) {
     await client.query('ROLLBACK');
     if (err.status) {
@@ -140,9 +165,56 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PATCH /orders/:id/status
-// Réservé au manager et au gérant : un vendeur ne valide/annule pas une commande.
-router.patch('/:id/status', requireRole('manager', 'gerant'), async (req, res) => {
+// PATCH /orders/:id/payment — encaissement par le caissier (ou le manager)
+// Enregistre le moyen de paiement, le montant reçu, calcule la monnaie à
+// rendre, et fait passer la commande au statut "validée".
+router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res) => {
+  const { paymentMethod, amountReceived } = req.body;
+
+  if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
+    return res.status(400).json({ error: 'Moyen de paiement invalide.' });
+  }
+  if (typeof amountReceived !== 'number' || amountReceived < 0) {
+    return res.status(400).json({ error: 'Montant reçu invalide.' });
+  }
+
+  try {
+    const orderResult = await pool.query(
+      `SELECT id, total_amount, status FROM orders WHERE id = $1 AND merchant_id = $2`,
+      [req.params.id, req.user.merchantId]
+    );
+    const order = orderResult.rows[0];
+    if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+    if (order.status !== 'en_attente') {
+      return res.status(400).json({ error: 'Cette commande a déjà été traitée.' });
+    }
+    if (amountReceived < Number(order.total_amount)) {
+      return res.status(400).json({ error: 'Le montant reçu est inférieur au total à payer.' });
+    }
+
+    const changeGiven = amountReceived - Number(order.total_amount);
+
+    const result = await pool.query(
+      `UPDATE orders SET
+         status = 'validee',
+         payment_method = $1,
+         amount_received = $2,
+         change_given = $3,
+         validated_by = $4,
+         validated_at = now()
+       WHERE id = $5 AND merchant_id = $6
+       RETURNING *`,
+      [paymentMethod, amountReceived, changeGiven, req.user.id, req.params.id, req.user.merchantId]
+    );
+    res.json({ ...result.rows[0], order_number: formatOrderNumber(result.rows[0]) });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors de l'encaissement." });
+  }
+});
+
+// PATCH /orders/:id/status — changements manuels de statut (livraison, annulation)
+router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
   const { status } = req.body;
   const validStatuses = ['en_attente', 'validee', 'livree', 'annulee'];
 
@@ -158,7 +230,7 @@ router.patch('/:id/status', requireRole('manager', 'gerant'), async (req, res) =
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Commande introuvable.' });
     }
-    res.json(result.rows[0]);
+    res.json({ ...result.rows[0], order_number: formatOrderNumber(result.rows[0]) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la mise à jour du statut.' });
