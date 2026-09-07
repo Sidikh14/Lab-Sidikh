@@ -214,6 +214,137 @@ table.registre tr:last-child td {
   background: linear-gradient(160deg, #ffffff 0%, var(--fond) 100%);
 }
 
+.ecran-connexion-partage {
+  min-height: 100vh;
+  display: flex;
+}
+
+.panneau-marque {
+  flex: 1.1;
+  background: linear-gradient(155deg, #1b1c29 0%, var(--encre) 55%, #232244 100%);
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 64px;
+  position: relative;
+  overflow: hidden;
+}
+
+.logo-badge {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-marque);
+  font-weight: 600;
+  font-size: 17px;
+  margin-bottom: 28px;
+}
+
+.titre-marque {
+  font-family: var(--font-marque);
+  font-size: 36px;
+  line-height: 1.2;
+  font-weight: 500;
+  max-width: 420px;
+  position: relative;
+  z-index: 1;
+}
+
+.tagline-marque {
+  color: rgba(244, 244, 247, 0.68);
+  font-size: 15px;
+  max-width: 380px;
+  margin-top: 16px;
+  line-height: 1.6;
+  position: relative;
+  z-index: 1;
+}
+
+.puces-marque {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 28px;
+  position: relative;
+  z-index: 1;
+}
+
+.puce {
+  border: 1px solid rgba(244, 244, 247, 0.25);
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: #f4f4f7;
+}
+
+.decor-cercles {
+  position: absolute;
+  left: -60px;
+  bottom: -60px;
+  width: 320px;
+  height: 320px;
+}
+
+.decor-cercles .cercle {
+  position: absolute;
+  border: 1px solid rgba(244, 244, 247, 0.14);
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.cercle-1 { width: 120px; height: 120px; }
+.cercle-2 { width: 200px; height: 200px; }
+.cercle-3 { width: 300px; height: 300px; }
+
+.point-central {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 0 rgba(91, 79, 233, 0.5);
+  animation: pulsation 2.4s ease-out infinite;
+}
+
+@keyframes pulsation {
+  0% { box-shadow: 0 0 0 0 rgba(91, 79, 233, 0.45); }
+  70% { box-shadow: 0 0 0 22px rgba(91, 79, 233, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(91, 79, 233, 0); }
+}
+
+.panneau-formulaire {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--carte);
+  padding: 40px;
+}
+
+.carte-connexion--plate {
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  width: 100%;
+  max-width: 340px;
+}
+
+@media (max-width: 860px) {
+  .panneau-marque {
+    display: none;
+  }
+}
+
 .carte-connexion {
   width: 380px;
   padding: 32px;

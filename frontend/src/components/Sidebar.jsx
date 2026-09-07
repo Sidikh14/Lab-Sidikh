@@ -113,7 +113,7 @@ export function Sidebar() {
     <nav className="barre-laterale">
       <div className="marque">
         {merchant?.businessName || 'Mon commerce'}
-        <span className="sous-titre">Sidikh Stock</span>
+        <span className="sous-titre">Amaterasu</span>
       </div>
       <ul className="nav-liste">
         <li>
