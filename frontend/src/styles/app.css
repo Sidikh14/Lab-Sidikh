@@ -239,27 +239,38 @@ table.registre tr:last-child td {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-family: var(--font-marque);
-  font-weight: 600;
+  font-family: var(--font-ui);
+  font-weight: 700;
   font-size: 17px;
-  margin-bottom: 28px;
+  color: #ffffff;
+  flex-shrink: 0;
+}
+
+.nom-marque {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 19px;
+  color: #ffffff;
+  letter-spacing: 0.01em;
 }
 
 .titre-marque {
-  font-family: var(--font-marque);
-  font-size: 36px;
-  line-height: 1.2;
-  font-weight: 500;
-  max-width: 420px;
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 42px;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  max-width: 440px;
+  color: #ffffff;
   position: relative;
   z-index: 1;
 }
 
 .tagline-marque {
-  color: rgba(244, 244, 247, 0.68);
-  font-size: 15px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 16px;
   max-width: 380px;
-  margin-top: 16px;
+  margin-top: 18px;
   line-height: 1.6;
   position: relative;
   z-index: 1;

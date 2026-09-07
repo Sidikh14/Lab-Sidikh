@@ -42,7 +42,10 @@ export function LoginPage() {
           <span className="point-central" />
         </div>
 
-        <div className="logo-badge">A</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 40 }}>
+          <div className="logo-badge">A</div>
+          <span className="nom-marque">Amaterasu</span>
+        </div>
         <h1 className="titre-marque">
           Votre gestion de stock,<br />simplifiée.
         </h1>

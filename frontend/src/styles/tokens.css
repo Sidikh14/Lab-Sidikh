@@ -19,8 +19,8 @@
   --warning: #d97706;
   --warning-clair: #fef3c7;
 
-  --rayon: 10px;
-  --rayon-petit: 6px;
+  --rayon: 12px;
+  --rayon-petit: 8px;
   --ombre-legere: 0 1px 2px rgba(20, 21, 31, 0.04), 0 2px 8px rgba(20, 21, 31, 0.06);
   --ombre-flottante: 0 8px 24px rgba(20, 21, 31, 0.14), 0 2px 6px rgba(20, 21, 31, 0.08);
   --transition: 0.15s ease;
@@ -82,7 +82,7 @@ textarea {
   border: 1px solid var(--trait-fort);
   background: var(--carte);
   color: var(--encre);
-  padding: 9px 16px;
+  padding: 11px 18px;
   border-radius: var(--rayon-petit);
   font-size: 14px;
   font-weight: 500;
@@ -119,12 +119,12 @@ textarea {
 
 .champ {
   width: 100%;
-  padding: 9px 12px;
+  padding: 12px 14px;
   border: 1px solid var(--trait-fort);
   border-radius: var(--rayon-petit);
   background: var(--carte);
   color: var(--encre);
-  font-size: 14px;
+  font-size: 15px;
   transition: border-color var(--transition), box-shadow var(--transition);
 }
 
