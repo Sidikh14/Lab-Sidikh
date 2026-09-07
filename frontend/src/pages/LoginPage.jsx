@@ -33,11 +33,45 @@ function IconFournisseurs() {
   );
 }
 
+function IconMail() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3" y="5" width="18" height="14" rx="2.2" />
+      <path d="M3.5 6.5l8.5 6.5 8.5-6.5" />
+    </svg>
+  );
+}
+
+function IconCadenas() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="4.5" y="10.5" width="15" height="10" rx="2" />
+      <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+function IconOeil({ ouvert }) {
+  return ouvert ? (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M1.5 12S5 5 12 5s10.5 7 10.5 7-3.5 7-10.5 7S1.5 12 1.5 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  ) : (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M3 3l18 18" />
+      <path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c7 0 10.5 7 10.5 7a17.7 17.7 0 0 1-3.4 4.4M6.6 6.6C3.4 8.7 1.5 12 1.5 12s3.5 7 10.5 7a10.6 10.6 0 0 0 4-.8" />
+      <path d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+    </svg>
+  );
+}
+
 export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [motDePasseVisible, setMotDePasseVisible] = useState(false);
   const [erreur, setErreur] = useState('');
   const [chargement, setChargement] = useState(false);
 
@@ -108,8 +142,12 @@ export function LoginPage() {
       </div>
 
       <div className="panneau-formulaire">
+        <div className="fond-motif fond-motif--clair" aria-hidden="true" />
+        <div className="fond-halo fond-halo--clair" aria-hidden="true" />
+
         <div className="carte-connexion carte-connexion--plate">
-          <h2 style={{ fontSize: 22, marginBottom: 4 }}>Bienvenue</h2>
+          <span className="pastille-accueil">Connexion</span>
+          <h2 style={{ fontSize: 26, margin: '14px 0 4px', fontWeight: 700 }}>Bon retour</h2>
           <p className="souligne">Connectez-vous à votre espace Amaterasu</p>
 
           {erreur && <div className="erreur">{erreur}</div>}
@@ -117,31 +155,48 @@ export function LoginPage() {
           <form onSubmit={handleSubmit}>
             <div className="champ-groupe">
               <label className="etiquette" htmlFor="email">Email</label>
-              <input
-                id="email"
-                type="email"
-                className="champ"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="nom@boutique.com"
-                autoComplete="email"
-              />
+              <div className="champ-avec-icone">
+                <span className="champ-icone"><IconMail /></span>
+                <input
+                  id="email"
+                  type="email"
+                  className="champ champ--avec-icone"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="nom@boutique.com"
+                  autoComplete="email"
+                />
+              </div>
             </div>
             <div className="champ-groupe">
               <label className="etiquette" htmlFor="password">Mot de passe</label>
-              <input
-                id="password"
-                type="password"
-                className="champ"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-              />
+              <div className="champ-avec-icone">
+                <span className="champ-icone"><IconCadenas /></span>
+                <input
+                  id="password"
+                  type={motDePasseVisible ? 'text' : 'password'}
+                  className="champ champ--avec-icone champ--avec-icone-droite"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  className="champ-icone champ-icone--bouton"
+                  onClick={() => setMotDePasseVisible((v) => !v)}
+                  aria-label={motDePasseVisible ? 'Masquer le mot de passe' : 'Afficher le mot de passe'}
+                >
+                  <IconOeil ouvert={motDePasseVisible} />
+                </button>
+              </div>
             </div>
-            <button type="submit" className="btn btn-principal" style={{ width: '100%' }} disabled={chargement}>
+            <button type="submit" className="btn btn-principal btn-connexion" disabled={chargement}>
               {chargement ? 'Connexion…' : 'Se connecter'}
+              {!chargement && <span aria-hidden="true">→</span>}
             </button>
           </form>
+
+          <p className="pied-connexion">Amaterasu — gestion commerçante</p>
         </div>
       </div>
     </div>

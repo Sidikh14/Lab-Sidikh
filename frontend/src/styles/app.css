@@ -381,6 +381,23 @@ table.registre tr:last-child td {
   justify-content: center;
   background: var(--carte);
   padding: 40px;
+  position: relative;
+  overflow: hidden;
+}
+
+.panneau-formulaire .fond-motif--clair {
+  background-image: radial-gradient(rgba(20, 21, 31, 0.05) 1px, transparent 1px);
+  mask-image: radial-gradient(circle at 70% 30%, rgba(0, 0, 0, 0.8), transparent 65%);
+}
+
+.panneau-formulaire .fond-halo--clair {
+  top: auto;
+  right: auto;
+  bottom: -200px;
+  left: -160px;
+  width: 460px;
+  height: 460px;
+  background: radial-gradient(circle, rgba(91, 79, 233, 0.12) 0%, rgba(91, 79, 233, 0) 70%);
 }
 
 .carte-connexion--plate {
@@ -388,7 +405,67 @@ table.registre tr:last-child td {
   box-shadow: none;
   padding: 0;
   width: 100%;
-  max-width: 340px;
+  max-width: 360px;
+  position: relative;
+  z-index: 1;
+}
+
+.pastille-accueil {
+  display: inline-block;
+  background: var(--accent-clair);
+  color: var(--accent-fonce);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 5px 12px;
+  border-radius: 20px;
+}
+
+.champ-avec-icone {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.champ-icone {
+  position: absolute;
+  left: 14px;
+  color: var(--encre-douce);
+  display: inline-flex;
+  pointer-events: none;
+}
+
+.champ-icone--bouton {
+  left: auto;
+  right: 12px;
+  background: none;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.champ--avec-icone {
+  padding-left: 42px;
+}
+
+.champ--avec-icone-droite {
+  padding-right: 42px;
+}
+
+.btn-connexion {
+  width: 100%;
+  justify-content: center;
+  font-size: 15px;
+  padding: 13px 18px;
+}
+
+.pied-connexion {
+  text-align: center;
+  font-size: 12px;
+  color: var(--encre-douce);
+  margin-top: 28px;
 }
 
 @media (max-width: 860px) {
