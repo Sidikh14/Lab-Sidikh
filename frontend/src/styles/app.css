@@ -3,6 +3,65 @@
   min-height: 100vh;
 }
 
+.carte-activite {
+  background: var(--carte);
+  border: 1px solid var(--trait);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre-legere);
+  padding: 20px 22px;
+}
+
+.carte-activite-titre {
+  font-size: 17px;
+  margin-bottom: 14px;
+}
+
+.liste-activite {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ligne-activite {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--trait);
+}
+
+.ligne-activite:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.ligne-activite:first-child {
+  padding-top: 0;
+}
+
+.ligne-activite-heure {
+  font-family: var(--font-chiffres);
+  font-size: 12px;
+  color: var(--encre-douce);
+  width: 42px;
+  flex-shrink: 0;
+}
+
+.avatar-couleur {
+  color: #ffffff;
+}
+
+.ligne-activite-texte {
+  margin: 0;
+  font-size: 14px;
+  color: var(--encre);
+  min-width: 0;
+}
+
+.ligne-activite-texte strong {
+  font-weight: 700;
+}
+
 .grille-etiquettes {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));

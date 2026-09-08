@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
-
-const LABEL_MOUVEMENT = { entree: 'Entrée', sortie: 'Sortie', ajustement: 'Ajustement' };
+import { ActiviteListe } from '../components/ActiviteListe';
 
 function IconValeur() {
   return (
@@ -72,11 +71,14 @@ export function DashboardPage() {
   const [activite, setActivite] = useState([]);
   const [chargementActivite, setChargementActivite] = useState(true);
 
+  const [activiteAujourdhui, setActiviteAujourdhui] = useState([]);
+
   useEffect(() => {
-    Promise.all([api.getProducts(), api.getOrders()])
-      .then(([p, o]) => {
+    Promise.all([api.getProducts(), api.getOrders(), api.getActivityToday()])
+      .then(([p, o, a]) => {
         setProducts(p);
         setOrders(o);
+        setActiviteAujourdhui(a);
       })
       .catch((err) => setErreur(err.message))
       .finally(() => setChargement(false));
@@ -215,6 +217,10 @@ export function DashboardPage() {
                 </div>
               )}
             </div>
+
+            <div style={{ marginTop: 24 }}>
+              <ActiviteListe activite={activiteAujourdhui.slice(0, 8)} titre="Activité récente" />
+            </div>
           </>
         )
       )}
@@ -263,40 +269,17 @@ export function DashboardPage() {
                 </>
               )}
 
-              <h2 style={{ fontSize: 16, marginBottom: 12 }}>
-                {vueEquipe ? "Activité de l'équipe" : 'Mon activité'}
-                {' '}({dateDebut === dateFin ? new Date(dateDebut).toLocaleDateString('fr-FR') : `${new Date(dateDebut).toLocaleDateString('fr-FR')} → ${new Date(dateFin).toLocaleDateString('fr-FR')}`})
-              </h2>
-              <div className="panneau">
-                {activite.length === 0 ? (
-                  <p className="etat-vide">Aucune activité enregistrée sur cette période.</p>
-                ) : (
-                  <table className="registre">
-                    <thead>
-                      <tr>
-                        <th>Date</th>
-                        <th>Heure</th>
-                        <th>Membre</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {activite.map((a) => (
-                        <tr key={a.id}>
-                          <td>{new Date(a.created_at).toLocaleDateString('fr-FR')}</td>
-                          <td className="chiffre">{new Date(a.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</td>
-                          <td>{a.user_name || 'Inconnu'}</td>
-                          <td>
-                            {a.type === 'vente'
-                              ? `Vente de ${Number(a.montant).toLocaleString('fr-FR')} FCFA`
-                              : `${LABEL_MOUVEMENT[a.movement_type] || a.movement_type} — ${a.product_name} (${a.quantity})`}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+              <ActiviteListe
+                activite={activite}
+                titre={
+                  (vueEquipe ? "Activité de l'équipe" : 'Mon activité') +
+                  ' (' +
+                  (dateDebut === dateFin
+                    ? new Date(dateDebut).toLocaleDateString('fr-FR')
+                    : `${new Date(dateDebut).toLocaleDateString('fr-FR')} → ${new Date(dateFin).toLocaleDateString('fr-FR')}`) +
+                  ')'
+                }
+              />
             </>
           )}
         </>
