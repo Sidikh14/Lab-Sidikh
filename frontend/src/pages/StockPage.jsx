@@ -1,19 +1,48 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
 
 const ROLES_GESTION = ['manager', 'gerant'];
+const FILTRES_STATUT = [
+  { value: 'tous', label: 'Tous statuts' },
+  { value: 'en_stock', label: 'En stock' },
+  { value: 'faible', label: 'Faible' },
+  { value: 'rupture', label: 'Rupture' },
+];
+
+function IconBoite() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M3 7l9-4 9 4-9 4-9-4z" />
+      <path d="M3 7v10l9 4 9-4V7" />
+      <path d="M12 11v10" />
+    </svg>
+  );
+}
+
+function IconRecherche() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.3-4.3" />
+    </svg>
+  );
+}
 
 export function StockPage() {
   const { user } = useAuth();
   const peutGerer = ROLES_GESTION.includes(user.role);
+  const [searchParams] = useSearchParams();
 
   const [products, setProducts] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
+  const [recherche, setRecherche] = useState(searchParams.get('q') || '');
+  const [filtreStatut, setFiltreStatut] = useState('tous');
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouveauProduit, setNouveauProduit] = useState({ name: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5' });
+  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5' });
 
   function charger() {
     setChargement(true);
@@ -26,6 +55,15 @@ export function StockPage() {
 
   useEffect(charger, []);
 
+  const produitsFiltres = useMemo(() => {
+    return products.filter((p) => {
+      const correspondRecherche = p.name.toLowerCase().includes(recherche.toLowerCase()) ||
+        (p.sku || '').toLowerCase().includes(recherche.toLowerCase());
+      const correspondStatut = filtreStatut === 'tous' || p.status === filtreStatut;
+      return correspondRecherche && correspondStatut;
+    });
+  }, [products, recherche, filtreStatut]);
+
   async function handleCreate(e) {
     e.preventDefault();
     if (!nouveauProduit.name) {
@@ -35,12 +73,13 @@ export function StockPage() {
     try {
       await api.createProduct({
         name: nouveauProduit.name,
+        sku: nouveauProduit.sku || undefined,
         unitPrice: Number(nouveauProduit.unitPrice) || 0,
         quantityInStock: Number(nouveauProduit.quantityInStock) || 0,
         quantityAlertThreshold: Number(nouveauProduit.quantityAlertThreshold) || 5,
       });
       setModaleOuverte(false);
-      setNouveauProduit({ name: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5' });
+      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5' });
       charger();
     } catch (err) {
       setErreur(err.message);
@@ -76,66 +115,71 @@ export function StockPage() {
   return (
     <>
       <div className="entete-page">
-        <h1>Stock</h1>
-      </div>
-
-      {erreur && <div className="erreur">{erreur}</div>}
-
-      <div className="barre-outils">
-        <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{products.length} référence(s)</span>
+        <h1>Produits</h1>
         {peutGerer && (
           <button className="btn btn-principal" onClick={() => setModaleOuverte(true)}>
-            Ajouter un produit
+            Nouveau produit
           </button>
         )}
       </div>
 
+      {erreur && <div className="erreur">{erreur}</div>}
+
+      <div className="barre-filtres">
+        <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
+          <span className="champ-icone"><IconRecherche /></span>
+          <input
+            type="text"
+            className="champ champ--avec-icone"
+            placeholder="Rechercher par nom ou référence…"
+            value={recherche}
+            onChange={(e) => setRecherche(e.target.value)}
+          />
+        </div>
+        <select className="champ" style={{ width: 'auto' }} value={filtreStatut} onChange={(e) => setFiltreStatut(e.target.value)}>
+          {FILTRES_STATUT.map((f) => (
+            <option key={f.value} value={f.value}>{f.label}</option>
+          ))}
+        </select>
+      </div>
+
       {chargement ? (
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
-      ) : products.length === 0 ? (
-        <p className="etat-vide">Aucun produit enregistré. Ajoutez votre premier produit pour démarrer.</p>
+      ) : produitsFiltres.length === 0 ? (
+        <p className="etat-vide">
+          {products.length === 0 ? 'Aucun produit enregistré. Ajoutez votre premier produit pour démarrer.' : 'Aucun produit ne correspond à ces filtres.'}
+        </p>
       ) : (
-        <table className="registre">
-          <thead>
-            <tr>
-              <th>Produit</th>
-              <th>Quantité</th>
-              <th>Prix unitaire</th>
-              <th>Statut</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {products.map((p) => (
-              <tr key={p.id}>
-                <td>{p.name}</td>
-                <td className="chiffre">{p.quantity_in_stock}</td>
-                <td className="chiffre">{Number(p.unit_price).toLocaleString('fr-FR')} FCFA</td>
-                <td><StatusBadge status={p.status} /></td>
-                <td>
-                  <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handleVente(p)}>
-                    Vendre
-                  </button>{' '}
-                  {peutGerer && (
-                    <button
-                      className="btn"
-                      style={{ padding: '5px 10px', fontSize: 13 }}
-                      onClick={() => handleSupprimer(p)}
-                    >
-                      Retirer
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="grille-produits">
+          {produitsFiltres.map((p) => (
+            <div key={p.id} className="carte-produit">
+              <div className="carte-produit-entete">
+                <span className="carte-produit-icone"><IconBoite /></span>
+                <StatusBadge status={p.status} />
+              </div>
+              <p className="carte-produit-nom">{p.name}</p>
+              {p.sku && <p className="carte-produit-sku">{p.sku}</p>}
+              <p className="carte-produit-prix">{Number(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
+              <p className="carte-produit-stock">{p.quantity_in_stock} en stock</p>
+              <div className="carte-produit-actions">
+                <button className="btn" style={{ flex: 1, justifyContent: 'center', fontSize: 13 }} onClick={() => handleVente(p)}>
+                  Vendre
+                </button>
+                {peutGerer && (
+                  <button className="btn" style={{ fontSize: 13 }} onClick={() => handleSupprimer(p)}>
+                    Retirer
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {modaleOuverte && (
         <div className="modale-fond" onClick={() => setModaleOuverte(false)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Ajouter un produit</h2>
+            <h2>Nouveau produit</h2>
             <form onSubmit={handleCreate}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="p-name">Nom du produit</label>
@@ -145,6 +189,16 @@ export function StockPage() {
                   value={nouveauProduit.name}
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, name: e.target.value })}
                   placeholder="Riz brisé 25kg"
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="p-sku">Référence / code (facultatif)</label>
+                <input
+                  id="p-sku"
+                  className="champ"
+                  value={nouveauProduit.sku}
+                  onChange={(e) => setNouveauProduit({ ...nouveauProduit, sku: e.target.value })}
+                  placeholder="RIZ-25"
                 />
               </div>
               <div className="champ-groupe">

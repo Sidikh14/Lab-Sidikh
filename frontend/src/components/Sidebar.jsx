@@ -74,11 +74,11 @@ function IconEquipe() {
 }
 
 const TOUS_LES_LIENS = [
-  { to: '/stock', label: 'Stock', icone: IconStock, module: 'stock' },
-  { to: '/ventes', label: 'Ventes', icone: IconVentes, module: 'ventes' },
+  { to: '/stock', label: 'Produits', icone: IconStock, module: 'stock' },
+  { to: '/ventes', label: 'Ventes & caisse', icone: IconVentes, module: 'ventes' },
   { to: '/clients', label: 'Clients', icone: IconClients, module: 'clients' },
   { to: '/fournisseurs', label: 'Fournisseurs', icone: IconFournisseurs, module: 'fournisseurs' },
-  { to: '/achats', label: 'Commandes fournisseurs', icone: IconAchats, module: 'achats' },
+  { to: '/achats', label: 'Achats', icone: IconAchats, module: 'achats' },
 ];
 
 // Modules visibles par défaut pour chaque rôle, tant que le manager n'a pas

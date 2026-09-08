@@ -3,6 +3,386 @@
   min-height: 100vh;
 }
 
+.mise-en-page-caisse {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.caisse-produits {
+  flex: 1.4;
+  min-width: 0;
+}
+
+.grille-caisse {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.carte-caisse {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  background: var(--carte);
+  border: 1px solid var(--trait);
+  border-radius: var(--rayon);
+  padding: 14px;
+  text-align: left;
+  cursor: pointer;
+  transition: box-shadow var(--transition), border-color var(--transition), transform var(--transition);
+  font-family: var(--font-ui);
+}
+
+.carte-caisse:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: var(--ombre-legere);
+  transform: translateY(-2px);
+}
+
+.carte-caisse:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.carte-caisse-nom {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--encre);
+  margin-top: 6px;
+}
+
+.carte-caisse-prix {
+  font-family: var(--font-chiffres);
+  font-size: 14px;
+  color: var(--accent-fonce);
+}
+
+.carte-caisse-stock {
+  font-size: 11px;
+  color: var(--encre-douce);
+}
+
+.caisse-ticket {
+  flex: 1;
+  min-width: 300px;
+  background: var(--carte);
+  border: 1px solid var(--trait);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre-legere);
+  padding: 20px;
+  position: sticky;
+  top: 88px;
+}
+
+.ticket-lignes {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.ticket-ligne {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--trait);
+}
+
+.ticket-ligne-nom {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ticket-ligne-prix {
+  font-size: 12px;
+  color: var(--encre-douce);
+  margin: 0;
+}
+
+.ticket-ligne-qte {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.ticket-ligne-qte button {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--trait-fort);
+  background: var(--fond);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.ticket-ligne-retirer {
+  background: none;
+  border: none;
+  color: var(--encre-douce);
+  font-size: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.ticket-totaux {
+  border-top: 1px solid var(--trait);
+  padding-top: 12px;
+}
+
+.ticket-total-ligne {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--encre-douce);
+  padding: 3px 0;
+}
+
+.ticket-total-ligne--principal {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--encre);
+  margin-top: 4px;
+}
+
+.barre-filtres {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.champ-avec-icone--pleine-largeur {
+  flex: 1;
+  min-width: 220px;
+}
+
+.grille-produits {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.carte-produit {
+  background: var(--carte);
+  border: 1px solid var(--trait);
+  border-radius: var(--rayon);
+  padding: 16px;
+  box-shadow: var(--ombre-legere);
+  transition: box-shadow var(--transition), transform var(--transition);
+}
+
+.carte-produit:hover {
+  box-shadow: var(--ombre-flottante);
+  transform: translateY(-2px);
+}
+
+.carte-produit-entete {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.carte-produit-icone {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  background: var(--accent-clair);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.carte-produit-nom {
+  font-weight: 600;
+  font-size: 14px;
+  margin: 0 0 2px;
+}
+
+.carte-produit-sku {
+  font-size: 12px;
+  color: var(--encre-douce);
+  margin: 0 0 10px;
+  font-family: var(--font-chiffres);
+}
+
+.carte-produit-prix {
+  font-family: var(--font-chiffres);
+  font-size: 16px;
+  margin: 0;
+}
+
+.carte-produit-stock {
+  font-size: 12px;
+  color: var(--encre-douce);
+  margin: 2px 0 14px;
+}
+
+.carte-produit-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.onglets {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--trait);
+  margin-bottom: 24px;
+}
+
+.onglet {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 10px 4px;
+  margin-right: 20px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--encre-douce);
+  cursor: pointer;
+}
+
+.onglet:hover {
+  color: var(--encre);
+}
+
+.onglet.actif {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.zone-principale {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.barre-haut {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 32px;
+  background: var(--carte);
+  border-bottom: 1px solid var(--trait);
+}
+
+.barre-haut-commerce {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.barre-haut-recherche {
+  flex: 1;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--fond);
+  border: 1px solid var(--trait);
+  border-radius: 20px;
+  padding: 8px 14px;
+  color: var(--encre-douce);
+}
+
+.barre-haut-recherche input {
+  border: none;
+  background: none;
+  outline: none;
+  font-size: 14px;
+  width: 100%;
+  color: var(--encre);
+  font-family: var(--font-ui);
+}
+
+.barre-haut-cloche {
+  position: relative;
+  background: none;
+  border: none;
+  color: var(--encre-douce);
+  padding: 6px;
+  border-radius: 8px;
+  display: inline-flex;
+}
+
+.barre-haut-cloche:hover {
+  background: var(--fond);
+}
+
+.barre-haut-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  background: var(--danger);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
+.barre-haut-avatar-zone {
+  position: relative;
+  margin-left: auto;
+}
+
+.avatar--bouton {
+  border: none;
+  cursor: pointer;
+}
+
+.barre-haut-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  background: var(--carte);
+  border: 1px solid var(--trait);
+  border-radius: var(--rayon-petit);
+  box-shadow: var(--ombre-flottante);
+  padding: 12px 14px;
+  min-width: 160px;
+  z-index: 10;
+}
+
+.barre-haut-menu-nom {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.barre-haut-menu-role {
+  font-size: 12px;
+  color: var(--encre-douce);
+  text-transform: capitalize;
+  margin: 0 0 10px;
+}
+
+.barre-haut-menu button {
+  background: none;
+  border: none;
+  color: var(--danger);
+  font-size: 13px;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .barre-laterale {
   width: 230px;
   flex-shrink: 0;

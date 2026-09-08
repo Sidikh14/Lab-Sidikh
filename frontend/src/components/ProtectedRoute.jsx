@@ -1,6 +1,7 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Sidebar } from './Sidebar';
+import { Topbar } from './Topbar';
 
 export function ProtectedRoute({ children }) {
   const { user } = useAuth();
@@ -12,7 +13,10 @@ export function ProtectedRoute({ children }) {
   return (
     <div className="mise-en-page">
       <Sidebar />
-      <main className="contenu">{children}</main>
+      <div className="zone-principale">
+        <Topbar />
+        <main className="contenu">{children}</main>
+      </div>
     </div>
   );
 }
