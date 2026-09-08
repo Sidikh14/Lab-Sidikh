@@ -547,27 +547,40 @@
 }
 
 .ligne-stats {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.stat {
   background: var(--carte);
   border: 1px solid var(--trait);
   border-radius: var(--rayon);
   box-shadow: var(--ombre-legere);
-  margin-bottom: 32px;
-  overflow: hidden;
-}
-
-.stat {
-  flex: 1;
   padding: 18px 20px;
-  border-right: 1px solid var(--trait);
+  transition: box-shadow var(--transition), transform var(--transition);
 }
 
-.stat:last-child {
-  border-right: none;
+.stat:hover {
+  box-shadow: var(--ombre-flottante);
+  transform: translateY(-2px);
+}
+
+.stat-icone {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--accent-clair);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
 }
 
 .stat .etiquette {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .stat .valeur {

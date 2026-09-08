@@ -5,44 +5,81 @@ const { authenticate } = require('../middleware/auth');
 const router = express.Router();
 router.use(authenticate);
 
-// GET /activity/today
-// Manager et gérant voient l'activité de toute l'équipe ; un vendeur ne voit
-// que ses propres actions.
+// Manager et gérant voient l'activité de toute l'équipe ; les autres rôles
+// (vendeur, caissier) ne voient que leurs propres actions.
+function estLimiteAuxSiennes(role) {
+  return !['manager', 'gerant'].includes(role);
+}
+
+async function recupererActivite(req, dateDebut, dateFin) {
+  const limite = estLimiteAuxSiennes(req.user.role);
+
+  const ordersResult = await pool.query(
+    `SELECT o.id, 'vente' AS type, o.total_amount AS montant, o.created_at,
+            u.full_name AS user_name, c.full_name AS client_name
+     FROM orders o
+     LEFT JOIN users u ON u.id = o.created_by
+     LEFT JOIN clients c ON c.id = o.client_id
+     WHERE o.merchant_id = $1 AND o.created_at >= $2 AND o.created_at < $3
+     ${limite ? 'AND o.created_by = $4' : ''}
+     ORDER BY o.created_at DESC
+     LIMIT 300`,
+    limite ? [req.user.merchantId, dateDebut, dateFin, req.user.id] : [req.user.merchantId, dateDebut, dateFin]
+  );
+
+  const stockResult = await pool.query(
+    `SELECT sm.id, 'stock' AS type, sm.movement_type, sm.quantity, sm.created_at,
+            u.full_name AS user_name, p.name AS product_name
+     FROM stock_movements sm
+     LEFT JOIN users u ON u.id = sm.user_id
+     LEFT JOIN products p ON p.id = sm.product_id
+     WHERE sm.merchant_id = $1 AND sm.created_at >= $2 AND sm.created_at < $3
+     ${limite ? 'AND sm.user_id = $4' : ''}
+     ORDER BY sm.created_at DESC
+     LIMIT 300`,
+    limite ? [req.user.merchantId, dateDebut, dateFin, req.user.id] : [req.user.merchantId, dateDebut, dateFin]
+  );
+
+  return [...ordersResult.rows, ...stockResult.rows].sort(
+    (a, b) => new Date(b.created_at) - new Date(a.created_at)
+  );
+}
+
+// GET /activity/today — utilisé par le tableau de bord (Pilotage)
 router.get('/today', async (req, res) => {
-  const scopedToUser = req.user.role === 'vendeur';
+  try {
+    const debut = new Date();
+    debut.setHours(0, 0, 0, 0);
+    const fin = new Date(debut);
+    fin.setDate(fin.getDate() + 1);
+
+    const activite = await recupererActivite(req, debut.toISOString(), fin.toISOString());
+    res.json(activite.slice(0, 30));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors de la récupération de l'activité." });
+  }
+});
+
+// GET /activity/range?from=2026-01-01&to=2026-01-15 — journal d'activité sur une plage de dates
+router.get('/range', async (req, res) => {
+  const { from, to } = req.query;
+
+  if (!from || !to) {
+    return res.status(400).json({ error: 'Les dates "from" et "to" sont requises (AAAA-MM-JJ).' });
+  }
 
   try {
-    const ordersResult = await pool.query(
-      `SELECT o.id, 'vente' AS type, o.total_amount AS montant, o.created_at,
-              u.full_name AS user_name, c.full_name AS client_name
-       FROM orders o
-       LEFT JOIN users u ON u.id = o.created_by
-       LEFT JOIN clients c ON c.id = o.client_id
-       WHERE o.merchant_id = $1 AND o.created_at >= date_trunc('day', now())
-       ${scopedToUser ? 'AND o.created_by = $2' : ''}
-       ORDER BY o.created_at DESC
-       LIMIT 50`,
-      scopedToUser ? [req.user.merchantId, req.user.id] : [req.user.merchantId]
-    );
+    const debut = new Date(`${from}T00:00:00`);
+    const fin = new Date(`${to}T00:00:00`);
+    fin.setDate(fin.getDate() + 1); // borne exclusive, inclut toute la journée "to"
 
-    const stockResult = await pool.query(
-      `SELECT sm.id, 'stock' AS type, sm.movement_type, sm.quantity, sm.created_at,
-              u.full_name AS user_name, p.name AS product_name
-       FROM stock_movements sm
-       LEFT JOIN users u ON u.id = sm.user_id
-       LEFT JOIN products p ON p.id = sm.product_id
-       WHERE sm.merchant_id = $1 AND sm.created_at >= date_trunc('day', now())
-       ${scopedToUser ? 'AND sm.user_id = $2' : ''}
-       ORDER BY sm.created_at DESC
-       LIMIT 50`,
-      scopedToUser ? [req.user.merchantId, req.user.id] : [req.user.merchantId]
-    );
+    if (Number.isNaN(debut.getTime()) || Number.isNaN(fin.getTime())) {
+      return res.status(400).json({ error: 'Format de date invalide.' });
+    }
 
-    const activite = [...ordersResult.rows, ...stockResult.rows].sort(
-      (a, b) => new Date(b.created_at) - new Date(a.created_at)
-    );
-
-    res.json(activite.slice(0, 30));
+    const activite = await recupererActivite(req, debut.toISOString(), fin.toISOString());
+    res.json(activite);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Erreur lors de la récupération de l'activité." });

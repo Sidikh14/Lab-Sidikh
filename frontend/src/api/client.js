@@ -103,6 +103,7 @@ export const api = {
     downloadFile(`/purchase-orders/${id}/pdf`, `bon-de-commande-${id.slice(0, 8)}.pdf`),
 
   getActivityToday: () => request('/activity/today'),
+  getActivityRange: (from, to) => request(`/activity/range?from=${from}&to=${to}`),
 
   getInventorySessions: () => request('/inventory-sessions'),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),
