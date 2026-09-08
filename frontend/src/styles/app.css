@@ -558,7 +558,7 @@
   border: 1px solid var(--trait);
   border-radius: var(--rayon);
   box-shadow: var(--ombre-legere);
-  padding: 18px 20px;
+  padding: 14px 16px;
   transition: box-shadow var(--transition), transform var(--transition);
 }
 
@@ -568,24 +568,26 @@
 }
 
 .stat-icone {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
   background: var(--accent-clair);
   color: var(--accent);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .stat .etiquette {
-  margin-bottom: 6px;
+  margin-bottom: 4px;
+  font-weight: 600;
 }
 
 .stat .valeur {
   font-family: var(--font-chiffres);
-  font-size: 24px;
+  font-size: 19px;
+  font-weight: 600;
 }
 
 .panneau {
@@ -621,6 +623,7 @@ table.registre td {
   padding: 13px 16px;
   border-bottom: 1px solid var(--trait);
   font-size: 14px;
+  font-weight: 500;
 }
 
 table.registre tbody tr {
