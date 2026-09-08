@@ -103,4 +103,15 @@ export const api = {
     downloadFile(`/purchase-orders/${id}/pdf`, `bon-de-commande-${id.slice(0, 8)}.pdf`),
 
   getActivityToday: () => request('/activity/today'),
+
+  getInventorySessions: () => request('/inventory-sessions'),
+  getInventorySession: (id) => request(`/inventory-sessions/${id}`),
+  createInventorySession: () => request('/inventory-sessions', { method: 'POST' }),
+  setInventoryItemCount: (sessionId, itemId, countedQuantity) =>
+    request(`/inventory-sessions/${sessionId}/items/${itemId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ countedQuantity }),
+    }),
+  closeInventorySession: (id) => request(`/inventory-sessions/${id}/close`, { method: 'PATCH' }),
+  adjustInventorySession: (id) => request(`/inventory-sessions/${id}/adjust`, { method: 'PATCH' }),
 };

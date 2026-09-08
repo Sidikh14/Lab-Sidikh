@@ -241,3 +241,31 @@ CREATE TRIGGER trg_purchase_orders_updated_at BEFORE UPDATE ON purchase_orders
 -- 10. Permissions d'affichage par membre d'équipe (NULL = accès complet du rôle)
 -- ---------------------------------------------------------
 ALTER TABLE users ADD COLUMN visible_modules TEXT[];
+
+-- ---------------------------------------------------------
+-- 11. Sessions de comptage d'inventaire
+-- ---------------------------------------------------------
+CREATE TYPE inventory_session_status AS ENUM ('en_cours', 'ajustee', 'cloturee');
+
+CREATE TABLE inventory_sessions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_seq     BIGSERIAL,
+    merchant_id     UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
+    created_by      UUID REFERENCES users(id) ON DELETE SET NULL,
+    status          inventory_session_status NOT NULL DEFAULT 'en_cours',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    closed_at       TIMESTAMPTZ
+);
+
+CREATE INDEX idx_inventory_sessions_merchant ON inventory_sessions(merchant_id);
+
+CREATE TABLE inventory_session_items (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id            UUID NOT NULL REFERENCES inventory_sessions(id) ON DELETE CASCADE,
+    product_id            UUID NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    theoretical_quantity  INTEGER NOT NULL,
+    counted_quantity      INTEGER,
+    counted_at            TIMESTAMPTZ
+);
+
+CREATE INDEX idx_inventory_session_items_session ON inventory_session_items(session_id);

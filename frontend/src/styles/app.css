@@ -3,6 +3,51 @@
   min-height: 100vh;
 }
 
+.grille-etiquettes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.etiquette-produit {
+  border: 1px dashed var(--trait-fort);
+  border-radius: var(--rayon-petit);
+  padding: 12px;
+  text-align: center;
+}
+
+.etiquette-nom {
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.etiquette-prix {
+  font-family: var(--font-chiffres);
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+
+.etiquette-code {
+  font-family: var(--font-chiffres);
+  font-size: 11px;
+  color: var(--encre-douce);
+  margin: 0;
+}
+
+@media print {
+  .barre-laterale,
+  .barre-haut,
+  .no-print {
+    display: none !important;
+  }
+  .zone-principale,
+  .contenu {
+    padding: 0 !important;
+    max-width: 100% !important;
+  }
+}
+
 .mise-en-page-caisse {
   display: flex;
   gap: 24px;
