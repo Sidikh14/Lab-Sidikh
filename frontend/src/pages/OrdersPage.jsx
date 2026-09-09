@@ -2,18 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
+import { ModaleEncaissement } from '../components/ModaleEncaissement';
 
 const PEUT_CREER = ['manager', 'gerant', 'vendeur'];
 const PEUT_ENCAISSER = ['manager', 'caissier'];
 const PEUT_GERER_STATUT = ['manager', 'gerant', 'caissier'];
-
-const MOYENS_PAIEMENT = [
-  { value: 'especes', label: 'Espèces' },
-  { value: 'wave', label: 'Wave' },
-  { value: 'orange_money', label: 'Orange Money' },
-  { value: 'cheque', label: 'Chèque' },
-  { value: 'virement', label: 'Virement' },
-];
 
 function IconPanier() {
   return (
@@ -34,6 +27,15 @@ function IconRecherche() {
   );
 }
 
+function IconCoche() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 12.5l2.5 2.5L16 9" />
+    </svg>
+  );
+}
+
 export function OrdersPage() {
   const { user } = useAuth();
   const peutCreer = PEUT_CREER.includes(user.role);
@@ -47,17 +49,14 @@ export function OrdersPage() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
 
-  // Caisse
   const [rechercheCaisse, setRechercheCaisse] = useState('');
-  const [panier, setPanier] = useState([]); // [{ productId, quantity }]
+  const [panier, setPanier] = useState([]);
   const [clientId, setClientId] = useState('');
   const [tvaApplicable, setTvaApplicable] = useState(false);
   const [venteEnCours, setVenteEnCours] = useState(false);
+  const [confirmationVente, setConfirmationVente] = useState(null);
 
-  // Encaissement
   const [commandeAEncaisser, setCommandeAEncaisser] = useState(null);
-  const [moyenPaiement, setMoyenPaiement] = useState('especes');
-  const [montantRecu, setMontantRecu] = useState('');
 
   function charger() {
     setChargement(true);
@@ -92,9 +91,7 @@ export function OrdersPage() {
 
   function changerQuantite(productId, delta) {
     setPanier((prev) =>
-      prev
-        .map((l) => (l.productId === productId ? { ...l, quantity: l.quantity + delta } : l))
-        .filter((l) => l.quantity > 0)
+      prev.map((l) => (l.productId === productId ? { ...l, quantity: l.quantity + delta } : l)).filter((l) => l.quantity > 0)
     );
   }
 
@@ -108,7 +105,7 @@ export function OrdersPage() {
 
   const apercuCaisse = useMemo(() => {
     const sousTotal = lignesPanier.reduce((sum, l) => sum + Number(l.produit.unit_price) * l.quantity, 0);
-    const tva = tvaApplicable ? Math.round(sousTotal * 18) / 100 : 0;
+    const tva = tvaApplicable ? Math.round(sousTotal * 0.18) : 0;
     return { sousTotal, tva, total: sousTotal + tva };
   }, [lignesPanier, tvaApplicable]);
 
@@ -127,40 +124,14 @@ export function OrdersPage() {
       setTvaApplicable(false);
       charger();
       if (peutEncaisser) {
-        ouvrirEncaissement(commande);
+        setCommandeAEncaisser(commande);
+      } else {
+        setConfirmationVente(commande);
       }
     } catch (err) {
       setErreur(err.message);
     } finally {
       setVenteEnCours(false);
-    }
-  }
-
-  function ouvrirEncaissement(order) {
-    setCommandeAEncaisser(order);
-    setMoyenPaiement('especes');
-    setMontantRecu(String(order.total_amount));
-  }
-
-  const monnaieARendre = commandeAEncaisser
-    ? Math.max(0, Number(montantRecu || 0) - Number(commandeAEncaisser.total_amount))
-    : 0;
-
-  async function handleEncaisser(e) {
-    e.preventDefault();
-    if (Number(montantRecu) < Number(commandeAEncaisser.total_amount)) {
-      setErreur('Le montant reçu est inférieur au total à payer.');
-      return;
-    }
-    try {
-      await api.recordOrderPayment(commandeAEncaisser.id, {
-        paymentMethod: moyenPaiement,
-        amountReceived: Number(montantRecu),
-      });
-      setCommandeAEncaisser(null);
-      charger();
-    } catch (err) {
-      setErreur(err.message);
     }
   }
 
@@ -172,6 +143,14 @@ export function OrdersPage() {
       setErreur(err.message);
     }
   }
+
+  const ordersTries = peutEncaisser
+    ? [...orders].sort((a, b) => {
+        if (a.status === 'en_attente' && b.status !== 'en_attente') return -1;
+        if (b.status === 'en_attente' && a.status !== 'en_attente') return 1;
+        return new Date(b.created_at) - new Date(a.created_at);
+      })
+    : orders;
 
   return (
     <>
@@ -216,7 +195,7 @@ export function OrdersPage() {
                 >
                   <span className="carte-produit-icone"><IconPanier /></span>
                   <span className="carte-caisse-nom">{p.name}</span>
-                  <span className="carte-caisse-prix">{Number(p.unit_price).toLocaleString('fr-FR')}</span>
+                  <span className="carte-caisse-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')}</span>
                   {p.quantity_in_stock <= 0 ? (
                     <span className="tampon tampon-brique" style={{ marginTop: 4 }}>Rupture</span>
                   ) : (
@@ -240,15 +219,13 @@ export function OrdersPage() {
 
             <div className="ticket-lignes">
               {lignesPanier.length === 0 ? (
-                <p className="etat-vide" style={{ padding: '32px 8px' }}>
-                  Ticket vide. Touchez un produit pour l'ajouter.
-                </p>
+                <p className="etat-vide" style={{ padding: '32px 8px' }}>Ticket vide. Touchez un produit pour l'ajouter.</p>
               ) : (
                 lignesPanier.map((l) => (
                   <div key={l.productId} className="ticket-ligne">
                     <div style={{ minWidth: 0 }}>
                       <p className="ticket-ligne-nom">{l.produit.name}</p>
-                      <p className="ticket-ligne-prix">{Number(l.produit.unit_price).toLocaleString('fr-FR')} FCFA</p>
+                      <p className="ticket-ligne-prix">{Math.round(l.produit.unit_price).toLocaleString('fr-FR')} FCFA</p>
                     </div>
                     <div className="ticket-ligne-qte">
                       <button type="button" onClick={() => changerQuantite(l.productId, -1)}>−</button>
@@ -269,17 +246,17 @@ export function OrdersPage() {
             <div className="ticket-totaux">
               <div className="ticket-total-ligne">
                 <span>Sous-total</span>
-                <span className="chiffre">{apercuCaisse.sousTotal.toLocaleString('fr-FR')}</span>
+                <span className="chiffre">{Math.round(apercuCaisse.sousTotal).toLocaleString('fr-FR')}</span>
               </div>
               {tvaApplicable && (
                 <div className="ticket-total-ligne">
                   <span>TVA (18 %)</span>
-                  <span className="chiffre">{apercuCaisse.tva.toLocaleString('fr-FR')}</span>
+                  <span className="chiffre">{Math.round(apercuCaisse.tva).toLocaleString('fr-FR')}</span>
                 </div>
               )}
               <div className="ticket-total-ligne ticket-total-ligne--principal">
                 <span>Total à payer</span>
-                <span className="chiffre">{apercuCaisse.total.toLocaleString('fr-FR')} FCFA</span>
+                <span className="chiffre">{Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA</span>
               </div>
             </div>
 
@@ -290,7 +267,7 @@ export function OrdersPage() {
               disabled={lignesPanier.length === 0 || venteEnCours}
               onClick={handlePayer}
             >
-              {venteEnCours ? 'Enregistrement…' : `Payer · ${apercuCaisse.total.toLocaleString('fr-FR')} FCFA`}
+              {venteEnCours ? 'Enregistrement…' : `Payer · ${Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA`}
             </button>
           </div>
         </div>
@@ -318,16 +295,16 @@ export function OrdersPage() {
                 </tr>
               </thead>
               <tbody>
-                {orders.map((o) => (
-                  <tr key={o.id}>
+                {ordersTries.map((o) => (
+                  <tr key={o.id} className={o.status === 'en_attente' && peutEncaisser ? 'ligne-prioritaire' : ''}>
                     <td className="chiffre">{o.order_number}</td>
                     <td>{o.client_name || 'Client de passage'}</td>
-                    <td className="chiffre">{Number(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
+                    <td className="chiffre">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
                     <td><StatusBadge status={o.status} /></td>
                     {(peutEncaisser || peutGererStatut) && (
                       <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                         {peutEncaisser && o.status === 'en_attente' && (
-                          <button className="btn btn-principal" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => ouvrirEncaissement(o)}>
+                          <button className="btn btn-principal" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => setCommandeAEncaisser(o)}>
                             Encaisser
                           </button>
                         )}
@@ -352,41 +329,36 @@ export function OrdersPage() {
       )}
 
       {commandeAEncaisser && (
-        <div className="modale-fond" onClick={() => setCommandeAEncaisser(null)}>
-          <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Encaisser {commandeAEncaisser.order_number}</h2>
-            <p style={{ fontSize: 14, color: 'var(--encre-douce)', marginBottom: 16 }}>
-              Total à payer : <strong className="chiffre" style={{ color: 'var(--encre)' }}>
-                {Number(commandeAEncaisser.total_amount).toLocaleString('fr-FR')} FCFA
-              </strong>
+        <ModaleEncaissement
+          commande={commandeAEncaisser}
+          onClose={() => setCommandeAEncaisser(null)}
+          onSuccess={() => {
+            setCommandeAEncaisser(null);
+            charger();
+          }}
+        />
+      )}
+
+      {confirmationVente && (
+        <div className="modale-fond" onClick={() => setConfirmationVente(null)}>
+          <div className="modale" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ color: 'var(--vif)', margin: '0 auto 12px', width: 'fit-content' }}>
+              <IconCoche />
+            </div>
+            <h2 style={{ marginBottom: 6 }}>Vente enregistrée</h2>
+            <p style={{ color: 'var(--encre-douce)', fontSize: 14, marginBottom: 16 }}>
+              Elle a été envoyée à la caisse pour encaissement.
             </p>
-            <form onSubmit={handleEncaisser}>
-              <div className="champ-groupe">
-                <label className="etiquette" htmlFor="e-moyen">Moyen de paiement</label>
-                <select id="e-moyen" className="champ" value={moyenPaiement} onChange={(e) => setMoyenPaiement(e.target.value)}>
-                  {MOYENS_PAIEMENT.map((m) => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="champ-groupe">
-                <label className="etiquette" htmlFor="e-recu">Montant reçu (FCFA)</label>
-                <input
-                  id="e-recu"
-                  type="number"
-                  className="champ"
-                  value={montantRecu}
-                  onChange={(e) => setMontantRecu(e.target.value)}
-                />
-              </div>
-              <div style={{ fontSize: 14, marginBottom: 8 }}>
-                Monnaie à rendre : <strong className="chiffre">{monnaieARendre.toLocaleString('fr-FR')} FCFA</strong>
-              </div>
-              <div className="actions-modale">
-                <button type="button" className="btn" onClick={() => setCommandeAEncaisser(null)}>Plus tard</button>
-                <button type="submit" className="btn btn-principal">Confirmer l'encaissement</button>
-              </div>
-            </form>
+            <div style={{ background: 'var(--fond)', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', padding: '14px', marginBottom: 16 }}>
+              <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '0 0 4px' }}>Numéro à donner au client</p>
+              <p className="chiffre" style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{confirmationVente.order_number}</p>
+              <p style={{ fontSize: 13, color: 'var(--encre-douce)', margin: '4px 0 0' }}>
+                Total : {Math.round(confirmationVente.total_amount).toLocaleString('fr-FR')} FCFA
+              </p>
+            </div>
+            <button className="btn btn-principal" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setConfirmationVente(null)}>
+              Compris
+            </button>
           </div>
         </div>
       )}

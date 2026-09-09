@@ -3,6 +3,52 @@
   min-height: 100vh;
 }
 
+.liste-a-encaisser {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.carte-a-encaisser {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--carte);
+  border: 1px solid var(--accent);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre-legere);
+  padding: 14px 18px;
+}
+
+.carte-a-encaisser-numero {
+  font-family: var(--font-chiffres);
+  font-weight: 700;
+  font-size: 14px;
+  margin: 0;
+}
+
+.carte-a-encaisser-client {
+  font-size: 12px;
+  color: var(--encre-douce);
+  margin: 2px 0 0;
+}
+
+.carte-a-encaisser-montant {
+  margin-left: auto;
+  font-family: var(--font-chiffres);
+  font-weight: 700;
+  font-size: 17px;
+}
+
+.ligne-prioritaire {
+  background: var(--accent-clair);
+}
+
+.ligne-prioritaire:hover {
+  background: var(--accent-clair) !important;
+}
+
 .ligne-cliquable {
   cursor: pointer;
 }

@@ -56,6 +56,7 @@ export function StockPage() {
 
   const [onglet, setOnglet] = useState('catalogue');
   const [products, setProducts] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
   const [recherche, setRecherche] = useState(searchParams.get('q') || '');
@@ -66,10 +67,19 @@ export function StockPage() {
   const [prixModifies, setPrixModifies] = useState({});
   const [augmentationGlobale, setAugmentationGlobale] = useState('');
   const [enregistrementPrix, setEnregistrementPrix] = useState(false);
+  const [modaleEntreeOuverte, setModaleEntreeOuverte] = useState(false);
+  const [entreeStock, setEntreeStock] = useState({ productId: '', quantity: '', supplierId: '', movementDate: new Date().toISOString().slice(0, 10) });
+  const [enregistrementEntree, setEnregistrementEntree] = useState(false);
 
   function charger() {
     setChargement(true);
-    api.getProducts().then(setProducts).catch((err) => setErreur(err.message)).finally(() => setChargement(false));
+    Promise.all([api.getProducts(), api.getSuppliers().catch(() => [])])
+      .then(([p, s]) => {
+        setProducts(p);
+        setSuppliers(s);
+      })
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargement(false));
   }
 
   useEffect(charger, []);
@@ -128,6 +138,31 @@ export function StockPage() {
       charger();
     } catch (err) {
       setErreur(err.message);
+    }
+  }
+
+  async function handleEntreeStock(e) {
+    e.preventDefault();
+    if (!entreeStock.productId || !Number(entreeStock.quantity)) {
+      setErreur('Choisissez un produit et une quantité.');
+      return;
+    }
+    setEnregistrementEntree(true);
+    try {
+      await api.recordStockMovement(entreeStock.productId, {
+        movementType: 'entree',
+        quantity: Number(entreeStock.quantity),
+        supplierId: entreeStock.supplierId || undefined,
+        movementDate: entreeStock.movementDate || undefined,
+        reason: 'Réapprovisionnement',
+      });
+      setModaleEntreeOuverte(false);
+      setEntreeStock({ productId: '', quantity: '', supplierId: '', movementDate: new Date().toISOString().slice(0, 10) });
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnregistrementEntree(false);
     }
   }
 
@@ -217,6 +252,7 @@ export function StockPage() {
               ))}
             </select>
             <button className="btn" onClick={handleExportCsv}>Exporter CSV</button>
+            {peutGerer && <button className="btn" onClick={() => setModaleEntreeOuverte(true)}>Entrée de stock</button>}
             {peutGerer && <button className="btn" onClick={ouvrirRevisionPrix}>Réviser les prix</button>}
           </div>
 
@@ -236,7 +272,7 @@ export function StockPage() {
                   </div>
                   <p className="carte-produit-nom">{p.name}</p>
                   <p className="carte-produit-sku">{codeInterne(p)}</p>
-                  <p className="carte-produit-prix">{Number(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
+                  <p className="carte-produit-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
                   <p className="carte-produit-stock">{p.quantity_in_stock} en stock</p>
                   <div className="carte-produit-actions">
                     <button className="btn" style={{ flex: 1, justifyContent: 'center', fontSize: 13 }} onClick={() => handleVente(p)}>
@@ -267,7 +303,7 @@ export function StockPage() {
             {products.map((p) => (
               <div key={p.id} className="etiquette-produit">
                 <p className="etiquette-nom">{p.name}</p>
-                <p className="etiquette-prix">{Number(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
+                <p className="etiquette-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
                 <p className="etiquette-code">{codeInterne(p)}</p>
               </div>
             ))}
@@ -373,6 +409,70 @@ export function StockPage() {
                 {enregistrementPrix ? 'Enregistrement…' : 'Enregistrer'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {modaleEntreeOuverte && (
+        <div className="modale-fond" onClick={() => setModaleEntreeOuverte(false)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Entrée de stock</h2>
+            <form onSubmit={handleEntreeStock}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="e-produit">Produit</label>
+                <select
+                  id="e-produit"
+                  className="champ"
+                  value={entreeStock.productId}
+                  onChange={(e) => setEntreeStock({ ...entreeStock, productId: e.target.value })}
+                >
+                  <option value="">Choisir un produit</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="e-qte">Quantité achetée</label>
+                <input
+                  id="e-qte"
+                  type="number"
+                  min="1"
+                  className="champ"
+                  value={entreeStock.quantity}
+                  onChange={(e) => setEntreeStock({ ...entreeStock, quantity: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="e-fournisseur">Fournisseur (facultatif)</label>
+                <select
+                  id="e-fournisseur"
+                  className="champ"
+                  value={entreeStock.supplierId}
+                  onChange={(e) => setEntreeStock({ ...entreeStock, supplierId: e.target.value })}
+                >
+                  <option value="">Non renseigné</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="e-date">Date de réception</label>
+                <input
+                  id="e-date"
+                  type="date"
+                  className="champ"
+                  value={entreeStock.movementDate}
+                  onChange={(e) => setEntreeStock({ ...entreeStock, movementDate: e.target.value })}
+                />
+              </div>
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={() => setModaleEntreeOuverte(false)}>Annuler</button>
+                <button type="submit" className="btn btn-principal" disabled={enregistrementEntree}>
+                  {enregistrementEntree ? 'Enregistrement…' : 'Ajouter au stock'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

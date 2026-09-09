@@ -269,3 +269,25 @@ CREATE TABLE inventory_session_items (
 );
 
 CREATE INDEX idx_inventory_session_items_session ON inventory_session_items(session_id);
+
+-- ---------------------------------------------------------
+-- 12. Traçabilité complète : livraison/annulation, entrées avec fournisseur, journal général
+-- ---------------------------------------------------------
+ALTER TABLE orders ADD COLUMN delivered_by UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE orders ADD COLUMN delivered_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN cancelled_by UUID REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE orders ADD COLUMN cancelled_at TIMESTAMPTZ;
+
+ALTER TABLE stock_movements ADD COLUMN supplier_id UUID REFERENCES suppliers(id) ON DELETE SET NULL;
+ALTER TABLE stock_movements ADD COLUMN movement_date DATE;
+
+CREATE TABLE activity_log (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    merchant_id  UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
+    user_id      UUID REFERENCES users(id) ON DELETE SET NULL,
+    action       VARCHAR(50) NOT NULL,
+    description  TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_activity_log_merchant ON activity_log(merchant_id, created_at DESC);

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
 import { ActiviteListe, initiales, couleurPour } from '../components/ActiviteListe';
+import { ModaleEncaissement } from '../components/ModaleEncaissement';
 
 function IconValeur() {
   return (
@@ -51,13 +53,25 @@ function IconCamion() {
   );
 }
 
+function IconCaisse() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="2" y="6" width="20" height="13" rx="2" />
+      <path d="M2 11h20M7 15h4" />
+    </svg>
+  );
+}
+
 function dateAujourdHui() {
   return new Date().toISOString().slice(0, 10);
 }
 
 export function DashboardPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const vueEquipe = ['manager', 'gerant'].includes(user.role);
+  const estCaissier = user.role === 'caissier';
+  const estVendeur = user.role === 'vendeur';
 
   const [onglet, setOnglet] = useState('pilotage');
   const [products, setProducts] = useState([]);
@@ -73,8 +87,10 @@ export function DashboardPage() {
 
   const [commandeDetail, setCommandeDetail] = useState(null);
   const [chargementDetail, setChargementDetail] = useState(false);
+  const [commandeAEncaisser, setCommandeAEncaisser] = useState(null);
 
-  useEffect(() => {
+  function charger() {
+    setChargement(true);
     Promise.all([api.getProducts(), api.getOrders(), api.getActivityToday()])
       .then(([p, o, a]) => {
         setProducts(p);
@@ -83,7 +99,9 @@ export function DashboardPage() {
       })
       .catch((err) => setErreur(err.message))
       .finally(() => setChargement(false));
-  }, []);
+  }
+
+  useEffect(charger, []);
 
   function chargerActivite() {
     setChargementActivite(true);
@@ -109,13 +127,21 @@ export function DashboardPage() {
 
   const enRupture = products.filter((p) => p.status === 'rupture');
   const enFaible = products.filter((p) => p.status === 'faible');
-  const enAttente = orders.filter((o) => o.status === 'en_attente').length;
+  const commandesEnAttente = [...orders]
+    .filter((o) => o.status === 'en_attente')
+    .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   const aLivrer = orders.filter((o) => o.status === 'validee');
   const valeurStock = products.reduce((sum, p) => sum + Number(p.unit_price) * Number(p.quantity_in_stock), 0);
   const aujourdHui = new Date().toDateString();
   const ventesDuJour = orders
     .filter((o) => new Date(o.created_at).toDateString() === aujourdHui)
     .reduce((sum, o) => sum + Number(o.total_amount), 0);
+
+  const encaissementsAujourdhui = activiteAujourdhui.filter((a) => a.type === 'encaissement');
+  const totalEncaisseAujourdhui = encaissementsAujourdhui.reduce((sum, a) => sum + Number(a.montant), 0);
+
+  const mesVentesAujourdhui = activiteAujourdhui.filter((a) => a.type === 'vente');
+  const totalMesVentesAujourdhui = mesVentesAujourdhui.reduce((sum, a) => sum + Number(a.montant), 0);
 
   const resumeParVendeur = {};
   activite
@@ -147,13 +173,71 @@ export function DashboardPage() {
       {onglet === 'pilotage' && (
         chargement ? (
           <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+        ) : estCaissier ? (
+          <>
+            <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+              <div className="stat">
+                <span className="stat-icone" style={commandesEnAttente.length > 0 ? { background: 'var(--accent-clair)', color: 'var(--accent)' } : undefined}><IconCaisse /></span>
+                <span className="etiquette">À encaisser</span>
+                <span className="valeur">{commandesEnAttente.length}</span>
+              </div>
+              <div className="stat">
+                <span className="stat-icone"><IconVentes /></span>
+                <span className="etiquette">Encaissé aujourd'hui</span>
+                <span className="valeur">{Math.round(totalEncaisseAujourdhui).toLocaleString('fr-FR')} FCFA</span>
+              </div>
+            </div>
+
+            <h2 style={{ fontSize: 16, marginBottom: 12 }}>Ventes à encaisser</h2>
+            {commandesEnAttente.length === 0 ? (
+              <p className="etat-vide" style={{ marginBottom: 24 }}>Aucune vente en attente d'encaissement pour le moment.</p>
+            ) : (
+              <div className="liste-a-encaisser">
+                {commandesEnAttente.map((o) => (
+                  <div key={o.id} className="carte-a-encaisser">
+                    <div style={{ minWidth: 0 }}>
+                      <p className="carte-a-encaisser-numero">{o.order_number}</p>
+                      <p className="carte-a-encaisser-client">{o.client_name || 'Client de passage'}</p>
+                    </div>
+                    <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                    <button className="btn btn-principal" onClick={() => setCommandeAEncaisser(o)}>Encaisser</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ marginTop: 24 }}>
+              <ActiviteListe activite={activiteAujourdhui.slice(0, 8)} titre="Mon activité aujourd'hui" />
+            </div>
+          </>
+        ) : estVendeur ? (
+          <>
+            <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+              <div className="stat">
+                <span className="stat-icone"><IconVentes /></span>
+                <span className="etiquette">Mes ventes aujourd'hui</span>
+                <span className="valeur">{mesVentesAujourdhui.length}</span>
+              </div>
+              <div className="stat">
+                <span className="stat-icone"><IconValeur /></span>
+                <span className="etiquette">Total réalisé aujourd'hui</span>
+                <span className="valeur">{Math.round(totalMesVentesAujourdhui).toLocaleString('fr-FR')} FCFA</span>
+              </div>
+            </div>
+
+            <button className="btn btn-principal" style={{ marginBottom: 24 }} onClick={() => navigate('/ventes')}>
+              + Nouvelle vente
+            </button>
+
+            <ActiviteListe activite={activiteAujourdhui.slice(0, 10)} titre="Mon activité aujourd'hui" />
+          </>
         ) : (
           <>
             <div className="ligne-stats">
               <div className="stat">
                 <span className="stat-icone"><IconValeur /></span>
                 <span className="etiquette">Valeur du stock</span>
-                <span className="valeur">{valeurStock.toLocaleString('fr-FR')} FCFA</span>
+                <span className="valeur">{Math.round(valeurStock).toLocaleString('fr-FR')} FCFA</span>
               </div>
               <div className="stat">
                 <span className="stat-icone" style={enRupture.length + enFaible.length > 0 ? { background: 'var(--danger-clair)', color: 'var(--danger)' } : undefined}><IconAlerte /></span>
@@ -163,12 +247,12 @@ export function DashboardPage() {
               <div className="stat">
                 <span className="stat-icone"><IconVentes /></span>
                 <span className="etiquette">Ventes du jour</span>
-                <span className="valeur">{ventesDuJour.toLocaleString('fr-FR')} FCFA</span>
+                <span className="valeur">{Math.round(ventesDuJour).toLocaleString('fr-FR')} FCFA</span>
               </div>
               <div className="stat">
                 <span className="stat-icone"><IconHorloge /></span>
                 <span className="etiquette">En attente</span>
-                <span className="valeur">{enAttente}</span>
+                <span className="valeur">{commandesEnAttente.length}</span>
               </div>
               <div className="stat">
                 <span className="stat-icone"><IconCamion /></span>
@@ -178,7 +262,7 @@ export function DashboardPage() {
             </div>
 
             <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-              {vueEquipe && (enRupture.length > 0 || enFaible.length > 0) && (
+              {(enRupture.length > 0 || enFaible.length > 0) && (
                 <div style={{ flex: 1, minWidth: 280 }}>
                   <h2 style={{ fontSize: 16, marginBottom: 12 }}>Alertes de seuil</h2>
                   <table className="registre">
@@ -218,7 +302,7 @@ export function DashboardPage() {
                         <tr key={o.id} className="ligne-cliquable" onClick={() => ouvrirDetailCommande(o.id)}>
                           <td className="chiffre">{o.order_number}</td>
                           <td>{o.client_name || 'Client de passage'}</td>
-                          <td className="chiffre">{Number(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
+                          <td className="chiffre">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
                         </tr>
                       ))}
                     </tbody>
@@ -269,7 +353,7 @@ export function DashboardPage() {
                             <p className="carte-resume-membre-nom">{nom}</p>
                             <p className="carte-resume-membre-detail">{r.count} vente{r.count > 1 ? 's' : ''}</p>
                           </div>
-                          <p className="carte-resume-membre-total">{r.total.toLocaleString('fr-FR')} FCFA</p>
+                          <p className="carte-resume-membre-total">{Math.round(r.total).toLocaleString('fr-FR')} FCFA</p>
                         </div>
                       ))}
                   </div>
@@ -316,13 +400,13 @@ export function DashboardPage() {
                       <tr key={it.id}>
                         <td>{it.product_name}</td>
                         <td className="chiffre">{it.quantity}</td>
-                        <td className="chiffre">{Number(it.line_total).toLocaleString('fr-FR')} FCFA</td>
+                        <td className="chiffre">{Math.round(it.line_total).toLocaleString('fr-FR')} FCFA</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <p style={{ fontWeight: 700, textAlign: 'right' }}>
-                  Total : {Number(commandeDetail.total_amount).toLocaleString('fr-FR')} FCFA
+                  Total : {Math.round(commandeDetail.total_amount).toLocaleString('fr-FR')} FCFA
                 </p>
                 <div className="actions-modale">
                   <button className="btn" onClick={() => setCommandeDetail(null)}>Fermer</button>
@@ -331,6 +415,17 @@ export function DashboardPage() {
             )}
           </div>
         </div>
+      )}
+
+      {commandeAEncaisser && (
+        <ModaleEncaissement
+          commande={commandeAEncaisser}
+          onClose={() => setCommandeAEncaisser(null)}
+          onSuccess={() => {
+            setCommandeAEncaisser(null);
+            charger();
+          }}
+        />
       )}
     </>
   );

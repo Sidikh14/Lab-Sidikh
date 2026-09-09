@@ -36,8 +36,19 @@ function descriptionAction(a) {
   if (a.type === 'encaissement') {
     return <>a encaissé <strong>{Number(a.montant).toLocaleString('fr-FR')} FCFA</strong></>;
   }
+  if (a.type === 'livraison') {
+    return <>a <strong>livré</strong> la commande {a.client_name ? `de ${a.client_name}` : ''}</>;
+  }
+  if (a.type === 'journal') {
+    return a.description;
+  }
   const verbe = LABEL_MOUVEMENT[a.movement_type] || a.movement_type;
-  return <>a {verbe} <strong>{a.quantity} × {a.product_name}</strong></>;
+  return (
+    <>
+      a {verbe} <strong>{a.quantity} × {a.product_name}</strong>
+      {a.supplier_name && <> (fournisseur : {a.supplier_name})</>}
+    </>
+  );
 }
 
 export function ActiviteListe({ activite, titre = 'Activité récente' }) {

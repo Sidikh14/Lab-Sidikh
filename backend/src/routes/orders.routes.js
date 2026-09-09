@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
+const { logActivity } = require('../utils/activityLog');
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
@@ -110,8 +111,10 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
       resolvedItems.push({ product, quantity: item.quantity, unitPrice: product.unit_price });
     }
 
-    const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * TVA_RATE) / 100 : 0;
-    const totalAmount = subtotalAmount + tvaAmount;
+    // Arrondi en FCFA entiers (pas de centimes) : on arrondit le montant de
+    // TVA lui-même, pas un ratio intermédiaire, pour éviter les décimales.
+    const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
+    const totalAmount = Math.round(subtotalAmount + tvaAmount);
 
     const orderResult = await client.query(
       `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes)
@@ -192,7 +195,7 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
       return res.status(400).json({ error: 'Le montant reçu est inférieur au total à payer.' });
     }
 
-    const changeGiven = amountReceived - Number(order.total_amount);
+    const changeGiven = Math.round(amountReceived - Number(order.total_amount));
 
     const result = await pool.query(
       `UPDATE orders SET
@@ -223,14 +226,41 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier'), async 
   }
 
   try {
+    let colonnes = '';
+    if (status === 'livree') colonnes = ', delivered_by = $4, delivered_at = now()';
+    if (status === 'annulee') colonnes = ', cancelled_by = $4, cancelled_at = now()';
+
+    const params = colonnes
+      ? [status, req.params.id, req.user.merchantId, req.user.id]
+      : [status, req.params.id, req.user.merchantId];
+
     const result = await pool.query(
-      `UPDATE orders SET status = $1 WHERE id = $2 AND merchant_id = $3 RETURNING *`,
-      [status, req.params.id, req.user.merchantId]
+      `UPDATE orders SET status = $1${colonnes} WHERE id = $2 AND merchant_id = $3 RETURNING *`,
+      params
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Commande introuvable.' });
     }
-    res.json({ ...result.rows[0], order_number: formatOrderNumber(result.rows[0]) });
+
+    const order = result.rows[0];
+    if (status === 'livree') {
+      await logActivity({
+        merchantId: req.user.merchantId,
+        userId: req.user.id,
+        action: 'order_delivered',
+        description: `a livré la commande ${formatOrderNumber(order)}`,
+      });
+    }
+    if (status === 'annulee') {
+      await logActivity({
+        merchantId: req.user.merchantId,
+        userId: req.user.id,
+        action: 'order_cancelled',
+        description: `a annulé la commande ${formatOrderNumber(order)}`,
+      });
+    }
+
+    res.json({ ...order, order_number: formatOrderNumber(order) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la mise à jour du statut.' });
