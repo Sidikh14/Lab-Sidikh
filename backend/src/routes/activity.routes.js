@@ -27,6 +27,19 @@ async function recupererActivite(req, dateDebut, dateFin) {
     limite ? [req.user.merchantId, dateDebut, dateFin, req.user.id] : [req.user.merchantId, dateDebut, dateFin]
   );
 
+  const encaissementsResult = await pool.query(
+    `SELECT o.id, 'encaissement' AS type, o.total_amount AS montant, o.payment_method, o.validated_at AS created_at,
+            u.full_name AS user_name, c.full_name AS client_name
+     FROM orders o
+     LEFT JOIN users u ON u.id = o.validated_by
+     LEFT JOIN clients c ON c.id = o.client_id
+     WHERE o.merchant_id = $1 AND o.validated_at >= $2 AND o.validated_at < $3
+     ${limite ? 'AND o.validated_by = $4' : ''}
+     ORDER BY o.validated_at DESC
+     LIMIT 300`,
+    limite ? [req.user.merchantId, dateDebut, dateFin, req.user.id] : [req.user.merchantId, dateDebut, dateFin]
+  );
+
   const stockResult = await pool.query(
     `SELECT sm.id, 'stock' AS type, sm.movement_type, sm.quantity, sm.created_at,
             u.full_name AS user_name, p.name AS product_name
@@ -40,7 +53,7 @@ async function recupererActivite(req, dateDebut, dateFin) {
     limite ? [req.user.merchantId, dateDebut, dateFin, req.user.id] : [req.user.merchantId, dateDebut, dateFin]
   );
 
-  return [...ordersResult.rows, ...stockResult.rows].sort(
+  return [...ordersResult.rows, ...encaissementsResult.rows, ...stockResult.rows].sort(
     (a, b) => new Date(b.created_at) - new Date(a.created_at)
   );
 }

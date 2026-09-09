@@ -331,7 +331,7 @@ export function OrdersPage() {
                             Encaisser
                           </button>
                         )}
-                        {peutGererStatut && o.status === 'validee' && (
+                        {peutGererStatut && o.status === 'validee' && o.client_name && (
                           <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handleStatut(o, 'livree')}>
                             Marquer livrée
                           </button>

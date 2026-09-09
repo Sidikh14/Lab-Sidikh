@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
-import { ActiviteListe } from '../components/ActiviteListe';
+import { ActiviteListe, initiales, couleurPour } from '../components/ActiviteListe';
 
 function IconValeur() {
   return (
@@ -65,13 +65,14 @@ export function DashboardPage() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
 
-  // Journal d'activité — plage de dates
   const [dateDebut, setDateDebut] = useState(dateAujourdHui());
   const [dateFin, setDateFin] = useState(dateAujourdHui());
   const [activite, setActivite] = useState([]);
   const [chargementActivite, setChargementActivite] = useState(true);
-
   const [activiteAujourdhui, setActiviteAujourdhui] = useState([]);
+
+  const [commandeDetail, setCommandeDetail] = useState(null);
+  const [chargementDetail, setChargementDetail] = useState(false);
 
   useEffect(() => {
     Promise.all([api.getProducts(), api.getOrders(), api.getActivityToday()])
@@ -86,17 +87,25 @@ export function DashboardPage() {
 
   function chargerActivite() {
     setChargementActivite(true);
-    api
-      .getActivityRange(dateDebut, dateFin)
-      .then(setActivite)
-      .catch((err) => setErreur(err.message))
-      .finally(() => setChargementActivite(false));
+    api.getActivityRange(dateDebut, dateFin).then(setActivite).catch((err) => setErreur(err.message)).finally(() => setChargementActivite(false));
   }
 
   useEffect(() => {
     if (onglet === 'activite') chargerActivite();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onglet]);
+
+  async function ouvrirDetailCommande(id) {
+    setChargementDetail(true);
+    try {
+      const detail = await api.getOrder(id);
+      setCommandeDetail(detail);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setChargementDetail(false);
+    }
+  }
 
   const enRupture = products.filter((p) => p.status === 'rupture');
   const enFaible = products.filter((p) => p.status === 'faible');
@@ -206,7 +215,7 @@ export function DashboardPage() {
                     </thead>
                     <tbody>
                       {aLivrer.slice(0, 8).map((o) => (
-                        <tr key={o.id}>
+                        <tr key={o.id} className="ligne-cliquable" onClick={() => ouvrirDetailCommande(o.id)}>
                           <td className="chiffre">{o.order_number}</td>
                           <td>{o.client_name || 'Client de passage'}</td>
                           <td className="chiffre">{Number(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
@@ -246,27 +255,25 @@ export function DashboardPage() {
           ) : (
             <>
               {vueEquipe && Object.keys(resumeParVendeur).length > 0 && (
-                <>
+                <div style={{ marginBottom: 24 }}>
                   <h2 style={{ fontSize: 16, marginBottom: 12 }}>Ventes par membre de l'équipe, sur cette période</h2>
-                  <table className="registre" style={{ marginBottom: 32 }}>
-                    <thead>
-                      <tr>
-                        <th>Membre</th>
-                        <th>Ventes</th>
-                        <th>Total encaissé</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(resumeParVendeur).map(([nom, r]) => (
-                        <tr key={nom}>
-                          <td>{nom}</td>
-                          <td className="chiffre">{r.count}</td>
-                          <td className="chiffre">{r.total.toLocaleString('fr-FR')} FCFA</td>
-                        </tr>
+                  <div className="grille-resume-equipe">
+                    {Object.entries(resumeParVendeur)
+                      .sort((a, b) => b[1].total - a[1].total)
+                      .map(([nom, r]) => (
+                        <div key={nom} className="carte-resume-membre">
+                          <span className="avatar avatar-couleur" style={{ background: couleurPour(nom) }}>
+                            {initiales(nom)}
+                          </span>
+                          <div style={{ minWidth: 0 }}>
+                            <p className="carte-resume-membre-nom">{nom}</p>
+                            <p className="carte-resume-membre-detail">{r.count} vente{r.count > 1 ? 's' : ''}</p>
+                          </div>
+                          <p className="carte-resume-membre-total">{r.total.toLocaleString('fr-FR')} FCFA</p>
+                        </div>
                       ))}
-                    </tbody>
-                  </table>
-                </>
+                  </div>
+                </div>
               )}
 
               <ActiviteListe
@@ -283,6 +290,47 @@ export function DashboardPage() {
             </>
           )}
         </>
+      )}
+
+      {(commandeDetail || chargementDetail) && (
+        <div className="modale-fond" onClick={() => setCommandeDetail(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            {chargementDetail && !commandeDetail ? (
+              <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+            ) : (
+              <>
+                <h2>{commandeDetail.order_number}</h2>
+                <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+                  {commandeDetail.client_name || 'Client de passage'} · <StatusBadge status={commandeDetail.status} />
+                </p>
+                <table className="registre" style={{ marginBottom: 16 }}>
+                  <thead>
+                    <tr>
+                      <th>Produit</th>
+                      <th>Qté</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {commandeDetail.items.map((it) => (
+                      <tr key={it.id}>
+                        <td>{it.product_name}</td>
+                        <td className="chiffre">{it.quantity}</td>
+                        <td className="chiffre">{Number(it.line_total).toLocaleString('fr-FR')} FCFA</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p style={{ fontWeight: 700, textAlign: 'right' }}>
+                  Total : {Number(commandeDetail.total_amount).toLocaleString('fr-FR')} FCFA
+                </p>
+                <div className="actions-modale">
+                  <button className="btn" onClick={() => setCommandeDetail(null)}>Fermer</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </>
   );

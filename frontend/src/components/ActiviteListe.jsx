@@ -1,7 +1,7 @@
 const PALETTE_AVATARS = ['#5b4fe9', '#0891b2', '#db2777', '#2563eb', '#7c3aed', '#0d9488', '#c2410c'];
 const LABEL_MOUVEMENT = { entree: 'ajouté', sortie: 'sorti', ajustement: 'ajusté' };
 
-function initiales(nom) {
+export function initiales(nom) {
   return (nom || '?')
     .split(' ')
     .map((mot) => mot[0])
@@ -10,7 +10,7 @@ function initiales(nom) {
     .toUpperCase();
 }
 
-function couleurPour(nom) {
+export function couleurPour(nom) {
   const texte = nom || '?';
   let hash = 0;
   for (let i = 0; i < texte.length; i++) hash = texte.charCodeAt(i) + ((hash << 5) - hash);
@@ -31,7 +31,10 @@ function formatQuand(dateStr) {
 
 function descriptionAction(a) {
   if (a.type === 'vente') {
-    return <>a enregistré une <strong>vente de {Number(a.montant).toLocaleString('fr-FR')} FCFA</strong></>;
+    return <>a créé une <strong>vente de {Number(a.montant).toLocaleString('fr-FR')} FCFA</strong></>;
+  }
+  if (a.type === 'encaissement') {
+    return <>a encaissé <strong>{Number(a.montant).toLocaleString('fr-FR')} FCFA</strong></>;
   }
   const verbe = LABEL_MOUVEMENT[a.movement_type] || a.movement_type;
   return <>a {verbe} <strong>{a.quantity} × {a.product_name}</strong></>;
