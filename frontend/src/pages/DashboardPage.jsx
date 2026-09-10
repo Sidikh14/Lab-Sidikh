@@ -332,6 +332,9 @@ export function DashboardPage() {
             <button className="btn btn-principal" style={{ alignSelf: 'flex-end' }} onClick={chargerActivite}>
               Afficher
             </button>
+            <button className="btn" style={{ alignSelf: 'flex-end' }} onClick={() => api.downloadActivityPdf(dateDebut, dateFin).catch((err) => setErreur(err.message))}>
+              Exporter PDF
+            </button>
           </div>
 
           {chargementActivite ? (

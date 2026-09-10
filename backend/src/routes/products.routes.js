@@ -1,4 +1,5 @@
 const express = require('express');
+const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
@@ -6,6 +7,69 @@ const { logActivity } = require('../utils/activityLog');
 
 const router = express.Router();
 router.use(authenticate);
+
+// GET /products/pdf — catalogue produits en PDF (avant les routes /:id pour éviter tout conflit de route)
+router.get('/pdf', async (req, res) => {
+  try {
+    const merchantResult = await pool.query(`SELECT business_name FROM merchants WHERE id = $1`, [req.user.merchantId]);
+    const businessName = merchantResult.rows[0]?.business_name || 'Commerce';
+
+    const result = await pool.query(
+      `SELECT
+         p.name, p.sku, p.unit_price, p.quantity_in_stock,
+         CASE
+           WHEN p.quantity_in_stock = 0 THEN 'Rupture'
+           WHEN p.quantity_in_stock <= p.quantity_alert_threshold THEN 'Faible'
+           ELSE 'En stock'
+         END AS status
+       FROM products p
+       WHERE p.merchant_id = $1 AND p.is_active = TRUE
+       ORDER BY p.name`,
+      [req.user.merchantId]
+    );
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="catalogue-produits-${new Date().toISOString().slice(0, 10)}.pdf"`);
+
+    const doc = new PDFDocument({ margin: 50 });
+    doc.pipe(res);
+
+    doc.fontSize(16).text(businessName);
+    doc.fontSize(13).fillColor('#5b4fe9').text('CATALOGUE PRODUITS');
+    doc.fillColor('#000000').fontSize(9).text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`);
+    doc.moveDown(1);
+
+    const startY = doc.y;
+    doc.fontSize(9).fillColor('#555555');
+    doc.text('Produit', 50, startY, { width: 200 });
+    doc.text('Référence', 250, startY, { width: 90 });
+    doc.text('Prix', 340, startY, { width: 80 });
+    doc.text('Stock', 420, startY, { width: 60 });
+    doc.text('Statut', 480, startY, { width: 70 });
+    doc.moveTo(50, startY + 14).lineTo(550, startY + 14).strokeColor('#e5e7eb').stroke();
+
+    let y = startY + 20;
+    doc.fillColor('#000000');
+    result.rows.forEach((p) => {
+      if (y > 760) {
+        doc.addPage();
+        y = 50;
+      }
+      doc.fontSize(9);
+      doc.text(p.name, 50, y, { width: 200 });
+      doc.text(p.sku || '—', 250, y, { width: 90 });
+      doc.text(`${Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA`, 340, y, { width: 80 });
+      doc.text(String(p.quantity_in_stock), 420, y, { width: 60 });
+      doc.text(p.status, 480, y, { width: 70 });
+      y += 18;
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
+  }
+});
 
 // GET /products
 router.get('/', async (req, res) => {
@@ -103,6 +167,13 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
         userId: req.user.id,
         action: 'product_price_updated',
         description: `a changé le prix de ${nomProduit} : ${Math.round(ancienPrix).toLocaleString('fr-FR')} → ${Math.round(Number(unitPrice)).toLocaleString('fr-FR')} FCFA`,
+      });
+    } else if (name !== undefined || sku !== undefined || quantityAlertThreshold !== undefined) {
+      await logActivity({
+        merchantId: req.user.merchantId,
+        userId: req.user.id,
+        action: 'product_updated',
+        description: `a modifié la fiche du produit ${nomProduit}`,
       });
     }
 

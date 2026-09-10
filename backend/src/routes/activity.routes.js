@@ -1,4 +1,5 @@
 const express = require('express');
+const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 
@@ -124,6 +125,64 @@ router.get('/range', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Erreur lors de la récupération de l'activité." });
+  }
+});
+
+const LABEL_MOUVEMENT = { entree: 'ajouté', sortie: 'sorti', ajustement: 'ajusté' };
+
+function texteActivite(a) {
+  if (a.type === 'vente') return `a créé une vente de ${Math.round(a.montant).toLocaleString('fr-FR')} FCFA`;
+  if (a.type === 'encaissement') return `a encaissé ${Math.round(a.montant).toLocaleString('fr-FR')} FCFA`;
+  if (a.type === 'livraison') return `a livré la commande${a.client_name ? ` de ${a.client_name}` : ''}`;
+  if (a.type === 'journal') return a.description;
+  const verbe = LABEL_MOUVEMENT[a.movement_type] || a.movement_type;
+  return `a ${verbe} ${a.quantity} × ${a.product_name}${a.supplier_name ? ` (fournisseur : ${a.supplier_name})` : ''}`;
+}
+
+// GET /activity/pdf?from=&to=
+router.get('/pdf', async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) {
+    return res.status(400).json({ error: 'Les dates "from" et "to" sont requises.' });
+  }
+
+  try {
+    const merchantResult = await pool.query(`SELECT business_name FROM merchants WHERE id = $1`, [req.user.merchantId]);
+    const businessName = merchantResult.rows[0]?.business_name || 'Commerce';
+
+    const debut = new Date(`${from}T00:00:00`);
+    const fin = new Date(`${to}T00:00:00`);
+    fin.setDate(fin.getDate() + 1);
+
+    const activite = await recupererActivite(req, debut.toISOString(), fin.toISOString());
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="journal-activite-${from}-${to}.pdf"`);
+
+    const doc = new PDFDocument({ margin: 50 });
+    doc.pipe(res);
+
+    doc.fontSize(16).text(businessName);
+    doc.fontSize(13).fillColor('#5b4fe9').text('JOURNAL D\'ACTIVITÉ');
+    doc.fillColor('#000000').fontSize(9).text(`Du ${new Date(from).toLocaleDateString('fr-FR')} au ${new Date(to).toLocaleDateString('fr-FR')}`);
+    doc.moveDown(1);
+
+    let y = doc.y;
+    activite.forEach((a) => {
+      if (y > 760) {
+        doc.addPage();
+        y = 50;
+      }
+      const date = new Date(a.created_at);
+      doc.fontSize(8).fillColor('#555555').text(date.toLocaleString('fr-FR'), 50, y, { width: 100 });
+      doc.fontSize(9).fillColor('#000000').text(`${a.user_name || 'Inconnu'} ${texteActivite(a)}`, 155, y, { width: 395 });
+      y += 20;
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
   }
 });
 

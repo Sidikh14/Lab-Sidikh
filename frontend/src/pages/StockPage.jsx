@@ -252,6 +252,7 @@ export function StockPage() {
               ))}
             </select>
             <button className="btn" onClick={handleExportCsv}>Exporter CSV</button>
+            <button className="btn" onClick={() => api.downloadProductsPdf().catch((err) => setErreur(err.message))}>Exporter PDF</button>
             {peutGerer && <button className="btn" onClick={() => setModaleEntreeOuverte(true)}>Entrée de stock</button>}
             {peutGerer && <button className="btn" onClick={ouvrirRevisionPrix}>Réviser les prix</button>}
           </div>

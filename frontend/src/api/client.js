@@ -104,6 +104,8 @@ export const api = {
 
   getActivityToday: () => request('/activity/today'),
   getActivityRange: (from, to) => request(`/activity/range?from=${from}&to=${to}`),
+  downloadActivityPdf: (from, to) => downloadFile(`/activity/pdf?from=${from}&to=${to}`, `journal-activite-${from}-${to}.pdf`),
+  downloadProductsPdf: () => downloadFile('/products/pdf', `catalogue-produits-${new Date().toISOString().slice(0, 10)}.pdf`),
 
   getInventorySessions: () => request('/inventory-sessions'),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),
