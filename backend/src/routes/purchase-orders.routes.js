@@ -3,6 +3,7 @@ const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
+const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, traitSeparateur } = require('../utils/pdfHelpers');
 
 const router = express.Router();
 router.use(authenticate);
@@ -155,52 +156,60 @@ router.get('/:id/pdf', async (req, res) => {
     if (!po) return res.status(404).json({ error: 'Commande fournisseur introuvable.' });
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="bon-de-commande-${po.id.slice(0, 8)}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="bon-de-commande-${po.id.slice(0, 8)}.pdf"`);
 
-    const doc = new PDFDocument({ margin: 50 });
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
     doc.pipe(res);
 
-    doc.fontSize(18).text(po.business_name || 'Commerce', { continued: false });
-    doc.moveDown(0.3);
-    doc.fontSize(14).fillColor('#5b4fe9').text('BON DE COMMANDE', { characterSpacing: 1 });
-    doc.fillColor('#000000');
-    doc.moveDown(1);
+    let y = dessinerEntete(doc, {
+      businessName: po.business_name,
+      titre: 'Bon de commande',
+      sousTitre: `Réf. ${po.id.slice(0, 8).toUpperCase()} · ${new Date(po.created_at).toLocaleDateString('fr-FR')}`,
+    });
 
-    doc.fontSize(10).fillColor('#555555').text(`Date : ${new Date(po.created_at).toLocaleDateString('fr-FR')}`);
-    doc.text(`Référence : ${po.id.slice(0, 8).toUpperCase()}`);
-    doc.moveDown(1);
+    // Bloc fournisseur
+    doc.fontSize(9).fillColor(COULEURS.muted).text('ADRESSÉ À', 50, y);
+    y += 14;
+    doc.fontSize(11).fillColor(COULEURS.encre).font('Helvetica-Bold').text(po.supplier_name, 50, y);
+    doc.font('Helvetica');
+    y += 16;
+    doc.fontSize(9).fillColor(COULEURS.muted);
+    if (po.supplier_phone) { doc.text(po.supplier_phone, 50, y); y += 12; }
+    if (po.supplier_email) { doc.text(po.supplier_email, 50, y); y += 12; }
+    if (po.supplier_address) { doc.text(po.supplier_address, 50, y); y += 12; }
+    y += 14;
 
-    doc.fillColor('#000000').fontSize(11).text('Adressé à :', { underline: true });
-    doc.fontSize(10).text(po.supplier_name);
-    if (po.supplier_phone) doc.text(po.supplier_phone);
-    if (po.supplier_email) doc.text(po.supplier_email);
-    if (po.supplier_address) doc.text(po.supplier_address);
-    doc.moveDown(1.5);
+    y = dessinerEnteteTableau(doc, y, [
+      { texte: 'Produit', x: 56, largeur: 210 },
+      { texte: 'Qté', x: 280, largeur: 60, aligner: 'right' },
+      { texte: 'Prix unitaire', x: 360, largeur: 85, aligner: 'right' },
+      { texte: 'Total', x: 460, largeur: 85, aligner: 'right' },
+    ]);
 
-    const startY = doc.y;
-    doc.fontSize(10).fillColor('#555555');
-    doc.text('Produit', 50, startY, { width: 220 });
-    doc.text('Quantité', 280, startY, { width: 80 });
-    doc.text('Prix unitaire', 370, startY, { width: 90 });
-    doc.text('Total', 470, startY, { width: 80 });
-    doc.moveTo(50, startY + 15).lineTo(550, startY + 15).strokeColor('#e5e7eb').stroke();
-
-    let y = startY + 22;
-    doc.fillColor('#000000');
-    po.items.forEach((item) => {
-      doc.fontSize(10).text(item.product_name, 50, y, { width: 220 });
-      doc.text(String(item.quantity), 280, y, { width: 80 });
-      doc.text(`${Number(item.unit_cost).toLocaleString('fr-FR')} ${po.currency}`, 370, y, { width: 90 });
-      doc.text(`${Number(item.line_total).toLocaleString('fr-FR')} ${po.currency}`, 470, y, { width: 80 });
+    po.items.forEach((item, index) => {
+      if (index % 2 === 1) {
+        doc.rect(50, y, doc.page.width - 100, 20).fill(COULEURS.fondAlterne);
+        doc.fillColor(COULEURS.encre);
+      }
+      doc.fontSize(9.5);
+      doc.text(item.product_name, 56, y + 5, { width: 210 });
+      doc.text(String(item.quantity), 280, y + 5, { width: 60, align: 'right' });
+      doc.text(`${formatMontant(item.unit_cost)} ${po.currency}`, 360, y + 5, { width: 85, align: 'right' });
+      doc.text(`${formatMontant(item.line_total)} ${po.currency}`, 460, y + 5, { width: 85, align: 'right' });
       y += 20;
     });
 
-    doc.moveTo(50, y + 5).lineTo(550, y + 5).strokeColor('#e5e7eb').stroke();
-    doc.fontSize(12).text(`Total : ${Number(po.total_amount).toLocaleString('fr-FR')} ${po.currency}`, 370, y + 15, { width: 180 });
+    traitSeparateur(doc, y + 4);
+    y += 16;
+    doc.fontSize(9).fillColor(COULEURS.muted).text('MONTANT TOTAL', 300, y, { width: 145, align: 'right' });
+    doc.fontSize(15).fillColor(COULEURS.accent).font('Helvetica-Bold')
+      .text(`${formatMontant(po.total_amount)} ${po.currency}`, 460, y - 2, { width: 85, align: 'right' });
+    doc.fillColor(COULEURS.encre).font('Helvetica');
 
     if (po.notes) {
-      doc.moveDown(3);
-      doc.fontSize(10).fillColor('#555555').text(`Notes : ${po.notes}`);
+      y += 40;
+      doc.fontSize(9).fillColor(COULEURS.muted).text('NOTES', 50, y);
+      doc.fontSize(10).fillColor(COULEURS.encre).text(po.notes, 50, y + 14, { width: doc.page.width - 100 });
     }
 
     doc.end();

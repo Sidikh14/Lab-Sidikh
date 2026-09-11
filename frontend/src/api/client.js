@@ -24,9 +24,10 @@ async function request(path, options = {}) {
   return body;
 }
 
-// Télécharge un fichier binaire (PDF) en conservant l'en-tête d'authentification,
-// puis déclenche le téléchargement dans le navigateur.
-async function downloadFile(path, filename) {
+// Ouvre un PDF en aperçu dans un nouvel onglet (au lieu de le télécharger
+// directement) : l'utilisateur peut ensuite l'imprimer ou l'enregistrer
+// depuis la visionneuse PDF du navigateur.
+async function previewFile(path) {
   const token = getToken();
   const response = await fetch(`${API_URL}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -37,13 +38,9 @@ async function downloadFile(path, filename) {
   }
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  window.open(url, '_blank');
+  // On laisse un délai avant de révoquer l'URL, le temps que l'onglet charge le fichier.
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 export const api = {
@@ -104,12 +101,12 @@ export const api = {
   updatePurchaseOrderStatus: (id, status) =>
     request(`/purchase-orders/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   downloadPurchaseOrderPdf: (id) =>
-    downloadFile(`/purchase-orders/${id}/pdf`, `bon-de-commande-${id.slice(0, 8)}.pdf`),
+    previewFile(`/purchase-orders/${id}/pdf`),
 
   getActivityToday: () => request('/activity/today'),
   getActivityRange: (from, to) => request(`/activity/range?from=${from}&to=${to}`),
-  downloadActivityPdf: (from, to) => downloadFile(`/activity/pdf?from=${from}&to=${to}`, `journal-activite-${from}-${to}.pdf`),
-  downloadProductsPdf: () => downloadFile('/products/pdf', `catalogue-produits-${new Date().toISOString().slice(0, 10)}.pdf`),
+  downloadActivityPdf: (from, to) => previewFile(`/activity/pdf?from=${from}&to=${to}`),
+  downloadProductsPdf: () => previewFile('/products/pdf'),
 
   getInventorySessions: () => request('/inventory-sessions'),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),

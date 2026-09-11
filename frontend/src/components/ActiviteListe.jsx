@@ -1,5 +1,6 @@
 const PALETTE_AVATARS = ['#5b4fe9', '#0891b2', '#db2777', '#2563eb', '#7c3aed', '#0d9488', '#c2410c'];
 const LABEL_MOUVEMENT = { entree: 'ajouté', sortie: 'sorti', ajustement: 'ajusté' };
+const LABEL_PAIEMENT = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
 
 export function initiales(nom) {
   return (nom || '?')
@@ -34,7 +35,13 @@ function descriptionAction(a) {
     return <>a créé une <strong>vente de {Number(a.montant).toLocaleString('fr-FR')} FCFA</strong></>;
   }
   if (a.type === 'encaissement') {
-    return <>a encaissé <strong>{Number(a.montant).toLocaleString('fr-FR')} FCFA</strong></>;
+    const moyen = LABEL_PAIEMENT[a.payment_method] || a.payment_method;
+    return (
+      <>
+        a encaissé <strong>{Number(a.montant).toLocaleString('fr-FR')} FCFA</strong>
+        {moyen && <> ({moyen})</>}
+      </>
+    );
   }
   if (a.type === 'livraison') {
     return <>a <strong>livré</strong> la commande {a.client_name ? `de ${a.client_name}` : ''}</>;

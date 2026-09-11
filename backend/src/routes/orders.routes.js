@@ -209,7 +209,7 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
 
   try {
     const orderResult = await pool.query(
-      `SELECT id, total_amount, status FROM orders WHERE id = $1 AND merchant_id = $2`,
+      `SELECT id, total_amount, status, client_id FROM orders WHERE id = $1 AND merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
     const order = orderResult.rows[0];
@@ -222,20 +222,35 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
     }
 
     const changeGiven = Math.round(amountReceived - Number(order.total_amount));
+    // Un client de passage n'a pas de livraison à faire : la commande est
+    // directement marquée comme livrée dès l'encaissement.
+    const estClientDePassage = !order.client_id;
 
     const result = await pool.query(
       `UPDATE orders SET
-         status = 'validee',
+         status = $7,
          payment_method = $1,
          amount_received = $2,
          change_given = $3,
          validated_by = $4,
          validated_at = now()
+         ${estClientDePassage ? ', delivered_by = $4, delivered_at = now()' : ''}
        WHERE id = $5 AND merchant_id = $6
        RETURNING *`,
-      [paymentMethod, amountReceived, changeGiven, req.user.id, req.params.id, req.user.merchantId]
+      [paymentMethod, amountReceived, changeGiven, req.user.id, req.params.id, req.user.merchantId, estClientDePassage ? 'livree' : 'validee']
     );
-    res.json({ ...result.rows[0], order_number: formatOrderNumber(result.rows[0]) });
+    const orderMisAJour = result.rows[0];
+
+    if (estClientDePassage) {
+      await logActivity({
+        merchantId: req.user.merchantId,
+        userId: req.user.id,
+        action: 'order_delivered',
+        description: `a livré la commande ${formatOrderNumber(orderMisAJour)} (client de passage)`,
+      });
+    }
+
+    res.json({ ...orderMisAJour, order_number: formatOrderNumber(orderMisAJour) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Erreur lors de l'encaissement." });

@@ -2,6 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
+const { COULEURS, formatMontant, dessinerEntete } = require('../utils/pdfHelpers');
 
 const router = express.Router();
 router.use(authenticate);
@@ -129,10 +130,14 @@ router.get('/range', async (req, res) => {
 });
 
 const LABEL_MOUVEMENT = { entree: 'ajouté', sortie: 'sorti', ajustement: 'ajusté' };
+const LABEL_PAIEMENT = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
 
 function texteActivite(a) {
-  if (a.type === 'vente') return `a créé une vente de ${Math.round(a.montant).toLocaleString('fr-FR')} FCFA`;
-  if (a.type === 'encaissement') return `a encaissé ${Math.round(a.montant).toLocaleString('fr-FR')} FCFA`;
+  if (a.type === 'vente') return `a créé une vente de ${formatMontant(a.montant)} FCFA`;
+  if (a.type === 'encaissement') {
+    const moyen = LABEL_PAIEMENT[a.payment_method] || a.payment_method || 'moyen non précisé';
+    return `a encaissé ${formatMontant(a.montant)} FCFA (${moyen})`;
+  }
   if (a.type === 'livraison') return `a livré la commande${a.client_name ? ` de ${a.client_name}` : ''}`;
   if (a.type === 'journal') return a.description;
   const verbe = LABEL_MOUVEMENT[a.movement_type] || a.movement_type;
@@ -157,26 +162,34 @@ router.get('/pdf', async (req, res) => {
     const activite = await recupererActivite(req, debut.toISOString(), fin.toISOString());
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="journal-activite-${from}-${to}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="journal-activite-${from}-${to}.pdf"`);
 
-    const doc = new PDFDocument({ margin: 50 });
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
     doc.pipe(res);
 
-    doc.fontSize(16).text(businessName);
-    doc.fontSize(13).fillColor('#5b4fe9').text('JOURNAL D\'ACTIVITÉ');
-    doc.fillColor('#000000').fontSize(9).text(`Du ${new Date(from).toLocaleDateString('fr-FR')} au ${new Date(to).toLocaleDateString('fr-FR')}`);
-    doc.moveDown(1);
+    let y = dessinerEntete(doc, {
+      businessName,
+      titre: "Journal d'activité",
+      sousTitre: `Du ${new Date(from).toLocaleDateString('fr-FR')} au ${new Date(to).toLocaleDateString('fr-FR')} · ${activite.length} événement(s)`,
+    });
+    y += 10;
 
-    let y = doc.y;
-    activite.forEach((a) => {
+    activite.forEach((a, index) => {
       if (y > 760) {
         doc.addPage();
         y = 50;
       }
+      if (index % 2 === 1) {
+        doc.rect(50, y, doc.page.width - 100, 22).fill(COULEURS.fondAlterne);
+      }
       const date = new Date(a.created_at);
-      doc.fontSize(8).fillColor('#555555').text(date.toLocaleString('fr-FR'), 50, y, { width: 100 });
-      doc.fontSize(9).fillColor('#000000').text(`${a.user_name || 'Inconnu'} ${texteActivite(a)}`, 155, y, { width: 395 });
-      y += 20;
+      doc.fillColor(COULEURS.muted).fontSize(8).font('Helvetica')
+        .text(date.toLocaleDateString('fr-FR'), 56, y + 6, { width: 60 })
+        .text(date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }), 56, y + 6 + 9, { width: 60 });
+      doc.fillColor(COULEURS.encre).fontSize(9);
+      doc.font('Helvetica-Bold').text(a.user_name || 'Inconnu', 130, y + 6, { continued: true, width: 400 });
+      doc.font('Helvetica').text(` ${texteActivite(a)}`, { width: 400 });
+      y += 22;
     });
 
     doc.end();

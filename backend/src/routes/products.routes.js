@@ -4,6 +4,7 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
+const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
 
 const router = express.Router();
 router.use(authenticate);
@@ -29,39 +30,50 @@ router.get('/pdf', async (req, res) => {
     );
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="catalogue-produits-${new Date().toISOString().slice(0, 10)}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="catalogue-produits-${new Date().toISOString().slice(0, 10)}.pdf"`);
 
-    const doc = new PDFDocument({ margin: 50 });
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
     doc.pipe(res);
 
-    doc.fontSize(16).text(businessName);
-    doc.fontSize(13).fillColor('#5b4fe9').text('CATALOGUE PRODUITS');
-    doc.fillColor('#000000').fontSize(9).text(`Généré le ${new Date().toLocaleDateString('fr-FR')}`);
-    doc.moveDown(1);
+    let y = dessinerEntete(doc, {
+      businessName,
+      titre: 'Catalogue produits',
+      sousTitre: `${result.rows.length} référence(s) · généré le ${new Date().toLocaleDateString('fr-FR')}`,
+    });
+    y += 10;
 
-    const startY = doc.y;
-    doc.fontSize(9).fillColor('#555555');
-    doc.text('Produit', 50, startY, { width: 200 });
-    doc.text('Référence', 250, startY, { width: 90 });
-    doc.text('Prix', 340, startY, { width: 80 });
-    doc.text('Stock', 420, startY, { width: 60 });
-    doc.text('Statut', 480, startY, { width: 70 });
-    doc.moveTo(50, startY + 14).lineTo(550, startY + 14).strokeColor('#e5e7eb').stroke();
+    const COULEUR_STATUT = { Rupture: '#dc2626', Faible: '#d97706', 'En stock': '#0891b2' };
 
-    let y = startY + 20;
-    doc.fillColor('#000000');
-    result.rows.forEach((p) => {
+    function entete() {
+      y = dessinerEnteteTableau(doc, y, [
+        { texte: 'Produit', x: 56, largeur: 190 },
+        { texte: 'Référence', x: 250, largeur: 90 },
+        { texte: 'Prix', x: 345, largeur: 80, aligner: 'right' },
+        { texte: 'Stock', x: 435, largeur: 50, aligner: 'right' },
+        { texte: 'Statut', x: 495, largeur: 55 },
+      ]);
+    }
+    entete();
+
+    result.rows.forEach((p, index) => {
       if (y > 760) {
         doc.addPage();
         y = 50;
+        entete();
       }
-      doc.fontSize(9);
-      doc.text(p.name, 50, y, { width: 200 });
-      doc.text(p.sku || '—', 250, y, { width: 90 });
-      doc.text(`${Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA`, 340, y, { width: 80 });
-      doc.text(String(p.quantity_in_stock), 420, y, { width: 60 });
-      doc.text(p.status, 480, y, { width: 70 });
-      y += 18;
+      if (index % 2 === 1) {
+        doc.rect(50, y, doc.page.width - 100, 20).fill(COULEURS.fondAlterne);
+        doc.fillColor(COULEURS.encre);
+      }
+      doc.fontSize(9.5);
+      doc.text(p.name, 56, y + 5, { width: 190 });
+      doc.fillColor(COULEURS.muted).text(p.sku || '—', 250, y + 5, { width: 90 });
+      doc.fillColor(COULEURS.encre).text(`${formatMontant(p.unit_price)} FCFA`, 345, y + 5, { width: 80, align: 'right' });
+      doc.text(String(p.quantity_in_stock), 435, y + 5, { width: 50, align: 'right' });
+      doc.fillColor(COULEUR_STATUT[p.status] || COULEURS.encre).font('Helvetica-Bold').fontSize(8.5)
+        .text(p.status, 495, y + 6, { width: 55 });
+      doc.fillColor(COULEURS.encre).font('Helvetica');
+      y += 20;
     });
 
     doc.end();
