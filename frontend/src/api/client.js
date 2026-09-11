@@ -65,6 +65,10 @@ export const api = {
   recordStockMovement: (id, data) =>
     request(`/products/${id}/stock-movement`, { method: 'POST', body: JSON.stringify(data) }),
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
+  addProductUnit: (productId, data) =>
+    request(`/products/${productId}/units`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteProductUnit: (productId, unitId) =>
+    request(`/products/${productId}/units/${unitId}`, { method: 'DELETE' }),
 
   getClients: () => request('/clients'),
   getClient: (id) => request(`/clients/${id}`),

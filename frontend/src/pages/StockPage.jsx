@@ -63,6 +63,7 @@ export function StockPage() {
   const [filtreStatut, setFiltreStatut] = useState('tous');
   const [modaleOuverte, setModaleOuverte] = useState(false);
   const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5' });
+  const [conditionnements, setConditionnements] = useState([]);
   const [modalePrixOuverte, setModalePrixOuverte] = useState(false);
   const [prixModifies, setPrixModifies] = useState({});
   const [augmentationGlobale, setAugmentationGlobale] = useState('');
@@ -93,6 +94,20 @@ export function StockPage() {
     });
   }, [products, recherche, filtreStatut]);
 
+  function ajouterConditionnement() {
+    setConditionnements([...conditionnements, { label: '', price: '', quantityPerUnit: '' }]);
+  }
+
+  function modifierConditionnement(index, champ, valeur) {
+    const copie = [...conditionnements];
+    copie[index] = { ...copie[index], [champ]: valeur };
+    setConditionnements(copie);
+  }
+
+  function retirerConditionnement(index) {
+    setConditionnements(conditionnements.filter((_, i) => i !== index));
+  }
+
   async function handleCreate(e) {
     e.preventDefault();
     if (!nouveauProduit.name) {
@@ -106,9 +121,13 @@ export function StockPage() {
         unitPrice: Number(nouveauProduit.unitPrice) || 0,
         quantityInStock: Number(nouveauProduit.quantityInStock) || 0,
         quantityAlertThreshold: Number(nouveauProduit.quantityAlertThreshold) || 5,
+        units: conditionnements
+          .filter((c) => c.label && Number(c.price) && Number(c.quantityPerUnit))
+          .map((c) => ({ label: c.label, price: Number(c.price), quantityPerUnit: Number(c.quantityPerUnit) })),
       });
       setModaleOuverte(false);
       setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5' });
+      setConditionnements([]);
       charger();
     } catch (err) {
       setErreur(err.message);
@@ -338,7 +357,7 @@ export function StockPage() {
                 />
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="p-price">Prix unitaire (FCFA)</label>
+                <label className="etiquette" htmlFor="p-price">Prix au détail (FCFA)</label>
                 <input
                   id="p-price"
                   type="number"
@@ -348,7 +367,7 @@ export function StockPage() {
                 />
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="p-qty">Quantité initiale</label>
+                <label className="etiquette" htmlFor="p-qty">Quantité initiale (unités de base)</label>
                 <input
                   id="p-qty"
                   type="number"
@@ -367,6 +386,41 @@ export function StockPage() {
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, quantityAlertThreshold: e.target.value })}
                 />
               </div>
+
+              <label className="etiquette" style={{ marginTop: 4 }}>
+                Vente en gros (facultatif) — cartons, packs, etc.
+              </label>
+              {conditionnements.map((c, index) => (
+                <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                  <input
+                    className="champ"
+                    placeholder="Ex: Carton"
+                    value={c.label}
+                    onChange={(e) => modifierConditionnement(index, 'label', e.target.value)}
+                  />
+                  <input
+                    type="number"
+                    className="champ"
+                    style={{ width: 90 }}
+                    placeholder="Prix"
+                    value={c.price}
+                    onChange={(e) => modifierConditionnement(index, 'price', e.target.value)}
+                  />
+                  <input
+                    type="number"
+                    className="champ"
+                    style={{ width: 90 }}
+                    placeholder="Contient"
+                    value={c.quantityPerUnit}
+                    onChange={(e) => modifierConditionnement(index, 'quantityPerUnit', e.target.value)}
+                  />
+                  <button type="button" className="btn" onClick={() => retirerConditionnement(index)}>×</button>
+                </div>
+              ))}
+              <button type="button" className="btn" onClick={ajouterConditionnement} style={{ marginBottom: 16 }}>
+                + Ajouter un conditionnement
+              </button>
+
               <div className="actions-modale">
                 <button type="button" className="btn" onClick={() => setModaleOuverte(false)}>Annuler</button>
                 <button type="submit" className="btn btn-principal">Ajouter</button>

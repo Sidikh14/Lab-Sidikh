@@ -74,7 +74,9 @@ router.get('/:id', async (req, res) => {
 // Le caissier ne crée pas de vente, il encaisse celles créées par le vendeur.
 router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) => {
   const { clientId, items, notes, tvaApplicable } = req.body;
-  // items attendu : [{ productId, quantity }, ...]
+  // items attendu : [{ productId, quantity, unitId }, ...]
+  // quantity = nombre de conditionnements vendus (ex: 2 cartons) ; unitId
+  // facultatif = référence vers product_units (sinon vente au détail).
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'La commande doit contenir au moins un article.' });
@@ -98,17 +100,41 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
         [item.productId, req.user.merchantId]
       );
       const product = productResult.rows[0];
-
       if (!product) {
         throw { status: 404, message: `Produit ${item.productId} introuvable.` };
       }
-      if (product.quantity_in_stock < item.quantity) {
+
+      let prixParConditionnement = Number(product.unit_price);
+      let quantitePerUnite = 1;
+      let packagingLabel = null;
+
+      if (item.unitId) {
+        const uniteResult = await client.query(
+          `SELECT price, quantity_per_unit, label FROM product_units
+           WHERE id = $1 AND product_id = $2 AND merchant_id = $3`,
+          [item.unitId, product.id, req.user.merchantId]
+        );
+        const unite = uniteResult.rows[0];
+        if (!unite) throw { status: 400, message: `Conditionnement invalide pour ${product.name}.` };
+        prixParConditionnement = Number(unite.price);
+        quantitePerUnite = unite.quantity_per_unit;
+        packagingLabel = unite.label;
+      }
+
+      const baseQuantity = item.quantity * quantitePerUnite;
+      if (product.quantity_in_stock < baseQuantity) {
         throw { status: 400, message: `Stock insuffisant pour ${product.name}.` };
       }
 
-      const lineTotal = product.unit_price * item.quantity;
-      subtotalAmount += Number(lineTotal);
-      resolvedItems.push({ product, quantity: item.quantity, unitPrice: product.unit_price });
+      const lineTotal = prixParConditionnement * item.quantity;
+      subtotalAmount += lineTotal;
+      resolvedItems.push({
+        product,
+        baseQuantity,
+        unitPrice: prixParConditionnement / quantitePerUnite,
+        packagingLabel,
+        packagingQuantity: packagingLabel ? item.quantity : null,
+      });
     }
 
     // Arrondi en FCFA entiers (pas de centimes) : on arrondit le montant de
@@ -136,12 +162,12 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
 
     for (const resolved of resolvedItems) {
       await client.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, unit_price)
-         VALUES ($1, $2, $3, $4)`,
-        [order.id, resolved.product.id, resolved.quantity, resolved.unitPrice]
+        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, packaging_label, packaging_quantity)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.packagingLabel, resolved.packagingQuantity]
       );
 
-      const newQuantity = resolved.product.quantity_in_stock - resolved.quantity;
+      const newQuantity = resolved.product.quantity_in_stock - resolved.baseQuantity;
       await client.query(`UPDATE products SET quantity_in_stock = $1 WHERE id = $2`, [
         newQuantity,
         resolved.product.id,
@@ -150,7 +176,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
       await client.query(
         `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason)
          VALUES ($1, $2, $3, 'sortie', $4, $5)`,
-        [req.user.merchantId, resolved.product.id, req.user.id, resolved.quantity, `Commande ${order.id}`]
+        [req.user.merchantId, resolved.product.id, req.user.id, resolved.baseQuantity, `Commande ${order.id}`]
       );
     }
 

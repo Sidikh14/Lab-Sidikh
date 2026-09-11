@@ -89,7 +89,20 @@ router.get('/', async (req, res) => {
        ORDER BY p.name`,
       [req.user.merchantId]
     );
-    res.json(result.rows);
+
+    const unitsResult = await pool.query(
+      `SELECT id, product_id, label, price, quantity_per_unit
+       FROM product_units WHERE merchant_id = $1
+       ORDER BY quantity_per_unit`,
+      [req.user.merchantId]
+    );
+    const unitsParProduit = {};
+    unitsResult.rows.forEach((u) => {
+      if (!unitsParProduit[u.product_id]) unitsParProduit[u.product_id] = [];
+      unitsParProduit[u.product_id].push(u);
+    });
+
+    res.json(result.rows.map((p) => ({ ...p, units: unitsParProduit[p.id] || [] })));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération du stock.' });
@@ -98,14 +111,17 @@ router.get('/', async (req, res) => {
 
 // POST /products
 router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold } = req.body;
+  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: 'Le nom du produit est requis.' });
   }
 
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+
+    const result = await client.query(
       `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_in_stock, quantity_alert_threshold)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
@@ -119,6 +135,22 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
         quantityAlertThreshold || 5,
       ]
     );
+    const product = result.rows[0];
+
+    const conditionnements = [];
+    if (Array.isArray(units)) {
+      for (const u of units) {
+        if (!u.label || !Number(u.price) || !Number.isInteger(Number(u.quantityPerUnit)) || Number(u.quantityPerUnit) < 1) continue;
+        const uResult = await client.query(
+          `INSERT INTO product_units (product_id, merchant_id, label, price, quantity_per_unit)
+           VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+          [product.id, req.user.merchantId, u.label, Number(u.price), Number(u.quantityPerUnit)]
+        );
+        conditionnements.push(uResult.rows[0]);
+      }
+    }
+
+    await client.query('COMMIT');
 
     await logActivity({
       merchantId: req.user.merchantId,
@@ -127,10 +159,52 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
       description: `a ajouté le produit ${name} au catalogue`,
     });
 
+    res.status(201).json({ ...product, units: conditionnements });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la création du produit.' });
+  } finally {
+    client.release();
+  }
+});
+
+// POST /products/:id/units — ajouter un conditionnement à un produit existant
+router.post('/:id/units', requireRole('manager', 'gerant'), async (req, res) => {
+  const { label, price, quantityPerUnit } = req.body;
+
+  if (!label || !Number(price) || !Number.isInteger(Number(quantityPerUnit)) || Number(quantityPerUnit) < 1) {
+    return res.status(400).json({ error: 'Conditionnement invalide.' });
+  }
+
+  try {
+    const produit = await pool.query(`SELECT id FROM products WHERE id = $1 AND merchant_id = $2`, [req.params.id, req.user.merchantId]);
+    if (produit.rows.length === 0) return res.status(404).json({ error: 'Produit introuvable.' });
+
+    const result = await pool.query(
+      `INSERT INTO product_units (product_id, merchant_id, label, price, quantity_per_unit)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [req.params.id, req.user.merchantId, label, Number(price), Number(quantityPerUnit)]
+    );
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Erreur lors de la création du produit.' });
+    res.status(500).json({ error: "Erreur lors de l'ajout du conditionnement." });
+  }
+});
+
+// DELETE /products/:id/units/:unitId
+router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM product_units WHERE id = $1 AND product_id = $2 AND merchant_id = $3 RETURNING id`,
+      [req.params.unitId, req.params.id, req.user.merchantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Conditionnement introuvable.' });
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la suppression du conditionnement.' });
   }
 });
 

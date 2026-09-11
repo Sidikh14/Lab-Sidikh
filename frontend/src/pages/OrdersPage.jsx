@@ -36,6 +36,21 @@ function IconCoche() {
   );
 }
 
+function optionsDeVente(produit) {
+  const detail = { unitId: null, label: 'Détail', price: Number(produit.unit_price), quantityPerUnit: 1 };
+  const gros = (produit.units || []).map((u) => ({
+    unitId: u.id,
+    label: u.label,
+    price: Number(u.price),
+    quantityPerUnit: u.quantity_per_unit,
+  }));
+  return [detail, ...gros];
+}
+
+function cleLigne(productId, unitId) {
+  return `${productId}::${unitId || 'detail'}`;
+}
+
 export function OrdersPage() {
   const { user } = useAuth();
   const peutCreer = PEUT_CREER.includes(user.role);
@@ -55,6 +70,7 @@ export function OrdersPage() {
   const [tvaApplicable, setTvaApplicable] = useState(false);
   const [venteEnCours, setVenteEnCours] = useState(false);
   const [confirmationVente, setConfirmationVente] = useState(null);
+  const [choixConditionnement, setChoixConditionnement] = useState(null);
 
   const [commandeAEncaisser, setCommandeAEncaisser] = useState(null);
 
@@ -77,34 +93,56 @@ export function OrdersPage() {
     [products, rechercheCaisse]
   );
 
-  function ajouterAuPanier(produit) {
-    if (produit.quantity_in_stock <= 0) return;
-    setPanier((prev) => {
-      const existant = prev.find((l) => l.productId === produit.id);
-      if (existant) {
-        if (existant.quantity >= produit.quantity_in_stock) return prev;
-        return prev.map((l) => (l.productId === produit.id ? { ...l, quantity: l.quantity + 1 } : l));
-      }
-      return [...prev, { productId: produit.id, quantity: 1 }];
-    });
+  function demarrerAjout(produit) {
+    const options = optionsDeVente(produit);
+    if (options.length === 1) {
+      ajouterAuPanier(produit, options[0]);
+    } else {
+      setChoixConditionnement(produit);
+    }
   }
 
-  function changerQuantite(productId, delta) {
+  function ajouterAuPanier(produit, option) {
+    const baseParUnite = option.quantityPerUnit;
+    const stockDisponibleEnOptions = Math.floor(produit.quantity_in_stock / baseParUnite);
+    if (stockDisponibleEnOptions <= 0) return;
+
+    setPanier((prev) => {
+      const cle = cleLigne(produit.id, option.unitId);
+      const existant = prev.find((l) => cleLigne(l.productId, l.unitId) === cle);
+      if (existant) {
+        if (existant.quantity >= stockDisponibleEnOptions) return prev;
+        return prev.map((l) => (cleLigne(l.productId, l.unitId) === cle ? { ...l, quantity: l.quantity + 1 } : l));
+      }
+      return [...prev, { productId: produit.id, unitId: option.unitId, quantity: 1 }];
+    });
+    setChoixConditionnement(null);
+  }
+
+  function changerQuantite(productId, unitId, delta) {
     setPanier((prev) =>
-      prev.map((l) => (l.productId === productId ? { ...l, quantity: l.quantity + delta } : l)).filter((l) => l.quantity > 0)
+      prev
+        .map((l) => (l.productId === productId && l.unitId === unitId ? { ...l, quantity: l.quantity + delta } : l))
+        .filter((l) => l.quantity > 0)
     );
   }
 
-  function retirerDuPanier(productId) {
-    setPanier((prev) => prev.filter((l) => l.productId !== productId));
+  function retirerDuPanier(productId, unitId) {
+    setPanier((prev) => prev.filter((l) => !(l.productId === productId && l.unitId === unitId)));
   }
 
   const lignesPanier = panier
-    .map((l) => ({ ...l, produit: products.find((p) => p.id === l.productId) }))
-    .filter((l) => l.produit);
+    .map((l) => {
+      const produit = products.find((p) => p.id === l.productId);
+      if (!produit) return null;
+      const option = optionsDeVente(produit).find((o) => o.unitId === l.unitId);
+      if (!option) return null;
+      return { ...l, produit, option };
+    })
+    .filter(Boolean);
 
   const apercuCaisse = useMemo(() => {
-    const sousTotal = lignesPanier.reduce((sum, l) => sum + Number(l.produit.unit_price) * l.quantity, 0);
+    const sousTotal = lignesPanier.reduce((sum, l) => sum + l.option.price * l.quantity, 0);
     const tva = tvaApplicable ? Math.round(sousTotal * 0.18) : 0;
     return { sousTotal, tva, total: sousTotal + tva };
   }, [lignesPanier, tvaApplicable]);
@@ -116,7 +154,7 @@ export function OrdersPage() {
     try {
       const commande = await api.createOrder({
         clientId: clientId || null,
-        items: panier.map((l) => ({ productId: l.productId, quantity: l.quantity })),
+        items: panier.map((l) => ({ productId: l.productId, quantity: l.quantity, unitId: l.unitId || undefined })),
         tvaApplicable,
       });
       setPanier([]);
@@ -191,7 +229,7 @@ export function OrdersPage() {
                   type="button"
                   className="carte-caisse"
                   disabled={p.quantity_in_stock <= 0}
-                  onClick={() => ajouterAuPanier(p)}
+                  onClick={() => demarrerAjout(p)}
                 >
                   <span className="carte-produit-icone"><IconPanier /></span>
                   <span className="carte-caisse-nom">{p.name}</span>
@@ -199,7 +237,9 @@ export function OrdersPage() {
                   {p.quantity_in_stock <= 0 ? (
                     <span className="tampon tampon-brique" style={{ marginTop: 4 }}>Rupture</span>
                   ) : (
-                    <span className="carte-caisse-stock">{p.quantity_in_stock} en stock</span>
+                    <span className="carte-caisse-stock">
+                      {p.quantity_in_stock} en stock{p.units?.length > 0 ? ' · gros dispo' : ''}
+                    </span>
                   )}
                 </button>
               ))}
@@ -222,17 +262,20 @@ export function OrdersPage() {
                 <p className="etat-vide" style={{ padding: '32px 8px' }}>Ticket vide. Touchez un produit pour l'ajouter.</p>
               ) : (
                 lignesPanier.map((l) => (
-                  <div key={l.productId} className="ticket-ligne">
+                  <div key={cleLigne(l.productId, l.unitId)} className="ticket-ligne">
                     <div style={{ minWidth: 0 }}>
-                      <p className="ticket-ligne-nom">{l.produit.name}</p>
-                      <p className="ticket-ligne-prix">{Math.round(l.produit.unit_price).toLocaleString('fr-FR')} FCFA</p>
+                      <p className="ticket-ligne-nom">
+                        {l.produit.name}
+                        {l.option.label !== 'Détail' && <span style={{ color: 'var(--accent)' }}> · {l.option.label}</span>}
+                      </p>
+                      <p className="ticket-ligne-prix">{Math.round(l.option.price).toLocaleString('fr-FR')} FCFA</p>
                     </div>
                     <div className="ticket-ligne-qte">
-                      <button type="button" onClick={() => changerQuantite(l.productId, -1)}>−</button>
+                      <button type="button" onClick={() => changerQuantite(l.productId, l.unitId, -1)}>−</button>
                       <span>{l.quantity}</span>
-                      <button type="button" onClick={() => changerQuantite(l.productId, 1)}>+</button>
+                      <button type="button" onClick={() => changerQuantite(l.productId, l.unitId, 1)}>+</button>
                     </div>
-                    <button type="button" className="ticket-ligne-retirer" onClick={() => retirerDuPanier(l.productId)}>×</button>
+                    <button type="button" className="ticket-ligne-retirer" onClick={() => retirerDuPanier(l.productId, l.unitId)}>×</button>
                   </div>
                 ))
               )}
@@ -326,6 +369,32 @@ export function OrdersPage() {
             </table>
           )}
         </>
+      )}
+
+      {choixConditionnement && (
+        <div className="modale-fond" onClick={() => setChoixConditionnement(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>{choixConditionnement.name}</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>Choisissez le conditionnement à vendre</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {optionsDeVente(choixConditionnement).map((option) => (
+                <button
+                  key={option.unitId || 'detail'}
+                  type="button"
+                  className="btn"
+                  style={{ justifyContent: 'space-between', padding: '12px 16px' }}
+                  onClick={() => ajouterAuPanier(choixConditionnement, option)}
+                >
+                  <span>{option.label}{option.quantityPerUnit > 1 ? ` (${option.quantityPerUnit} unités)` : ''}</span>
+                  <span className="chiffre">{Math.round(option.price).toLocaleString('fr-FR')} FCFA</span>
+                </button>
+              ))}
+            </div>
+            <div className="actions-modale">
+              <button className="btn" onClick={() => setChoixConditionnement(null)}>Annuler</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {commandeAEncaisser && (

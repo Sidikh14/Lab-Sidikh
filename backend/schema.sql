@@ -291,3 +291,21 @@ CREATE TABLE activity_log (
 );
 
 CREATE INDEX idx_activity_log_merchant ON activity_log(merchant_id, created_at DESC);
+
+-- ---------------------------------------------------------
+-- 13. Conditionnements de vente (gros/détail) par produit
+-- ---------------------------------------------------------
+CREATE TABLE product_units (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_id          UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    merchant_id         UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
+    label               VARCHAR(50) NOT NULL,
+    price               NUMERIC(12,2) NOT NULL,
+    quantity_per_unit   INTEGER NOT NULL CHECK (quantity_per_unit > 0),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_product_units_product ON product_units(product_id);
+
+ALTER TABLE order_items ADD COLUMN packaging_label VARCHAR(50);
+ALTER TABLE order_items ADD COLUMN packaging_quantity INTEGER;
