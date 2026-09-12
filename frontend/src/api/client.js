@@ -96,6 +96,13 @@ export const api = {
   resetUserPassword: (id, newPassword) =>
     request(`/users/${id}/password`, { method: 'PATCH', body: JSON.stringify({ newPassword }) }),
 
+  getCreditRequests: (status) => request(`/credit-requests${status ? `?status=${status}` : ''}`),
+  createCreditRequest: (data) =>
+    request('/credit-requests', { method: 'POST', body: JSON.stringify(data) }),
+  approveCreditRequest: (id) => request(`/credit-requests/${id}/approve`, { method: 'PATCH' }),
+  rejectCreditRequest: (id, reason) =>
+    request(`/credit-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ reason }) }),
+
   getSuppliers: () => request('/suppliers'),
   getSupplier: (id) => request(`/suppliers/${id}`),
   createSupplier: (data) =>
