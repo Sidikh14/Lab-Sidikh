@@ -32,6 +32,24 @@ function IconRecherche() {
   );
 }
 
+function IconPlus() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function IconModifier() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
 function codeInterne(product) {
   return product.sku || product.id.slice(0, 6).toUpperCase();
 }
@@ -71,6 +89,8 @@ export function StockPage() {
   const [modaleEntreeOuverte, setModaleEntreeOuverte] = useState(false);
   const [entreeStock, setEntreeStock] = useState({ productId: '', quantity: '', supplierId: '', movementDate: new Date().toISOString().slice(0, 10) });
   const [enregistrementEntree, setEnregistrementEntree] = useState(false);
+  const [produitEnEdition, setProduitEnEdition] = useState(null);
+  const [enregistrementEdition, setEnregistrementEdition] = useState(false);
 
   function charger() {
     setChargement(true);
@@ -134,29 +154,43 @@ export function StockPage() {
     }
   }
 
-  async function handleVente(product) {
-    const saisie = window.prompt(`Quantité vendue pour "${product.name}" ?`, '1');
-    if (!saisie) return;
-    const quantite = Number(saisie);
-    if (!Number.isInteger(quantite) || quantite <= 0) {
-      setErreur('Quantité invalide.');
-      return;
-    }
+  async function handleSupprimer(product) {
+    if (!window.confirm(`Retirer "${product.name}" du catalogue ?`)) return;
     try {
-      await api.recordStockMovement(product.id, { movementType: 'sortie', quantity: quantite, reason: 'Vente comptoir' });
+      await api.deleteProduct(product.id);
+      setProduitEnEdition(null);
       charger();
     } catch (err) {
       setErreur(err.message);
     }
   }
 
-  async function handleSupprimer(product) {
-    if (!window.confirm(`Retirer "${product.name}" du catalogue ?`)) return;
+  function ouvrirEdition(product) {
+    setProduitEnEdition({
+      id: product.id,
+      name: product.name,
+      sku: product.sku || '',
+      unitPrice: product.unit_price,
+      quantityAlertThreshold: product.quantity_alert_threshold,
+    });
+  }
+
+  async function handleEnregistrerEdition(e) {
+    e.preventDefault();
+    setEnregistrementEdition(true);
     try {
-      await api.deleteProduct(product.id);
+      await api.updateProduct(produitEnEdition.id, {
+        name: produitEnEdition.name,
+        sku: produitEnEdition.sku || undefined,
+        unitPrice: Number(produitEnEdition.unitPrice),
+        quantityAlertThreshold: Number(produitEnEdition.quantityAlertThreshold),
+      });
+      setProduitEnEdition(null);
       charger();
     } catch (err) {
       setErreur(err.message);
+    } finally {
+      setEnregistrementEdition(false);
     }
   }
 
@@ -230,7 +264,12 @@ export function StockPage() {
       <div className="entete-page">
         <h1>Produits</h1>
         {peutGerer && onglet === 'catalogue' && (
-          <button className="btn btn-principal" onClick={() => setModaleOuverte(true)}>
+          <button
+            className="btn btn-principal"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
+            onClick={() => setModaleOuverte(true)}
+          >
+            <IconPlus />
             Nouveau produit
           </button>
         )}
@@ -265,11 +304,42 @@ export function StockPage() {
                 onChange={(e) => setRecherche(e.target.value)}
               />
             </div>
-            <select className="champ" style={{ width: 'auto' }} value={filtreStatut} onChange={(e) => setFiltreStatut(e.target.value)}>
-              {FILTRES_STATUT.map((f) => (
-                <option key={f.value} value={f.value}>{f.label}</option>
-              ))}
-            </select>
+            <div
+              style={{
+                display: 'flex',
+                gap: 4,
+                padding: 4,
+                background: 'var(--fond-alterne, rgba(0,0,0,0.03))',
+                borderRadius: 999,
+                border: '1px solid var(--trait)',
+              }}
+            >
+              {FILTRES_STATUT.map((f) => {
+                const actif = filtreStatut === f.value;
+                return (
+                  <button
+                    key={f.value}
+                    type="button"
+                    onClick={() => setFiltreStatut(f.value)}
+                    style={{
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: '7px 16px',
+                      borderRadius: 999,
+                      fontSize: 13,
+                      fontWeight: actif ? 600 : 500,
+                      color: actif ? '#fff' : 'var(--encre-douce)',
+                      background: actif ? 'var(--accent)' : 'transparent',
+                      boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
+                      transition: 'background 0.15s ease, color 0.15s ease',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
             <button className="btn" onClick={handleExportCsv}>Exporter CSV</button>
             <button className="btn" onClick={() => api.downloadProductsPdf().catch((err) => setErreur(err.message))}>Exporter PDF</button>
             {peutGerer && <button className="btn" onClick={() => setModaleEntreeOuverte(true)}>Entrée de stock</button>}
@@ -294,16 +364,18 @@ export function StockPage() {
                   <p className="carte-produit-sku">{codeInterne(p)}</p>
                   <p className="carte-produit-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
                   <p className="carte-produit-stock">{p.quantity_in_stock} en stock</p>
-                  <div className="carte-produit-actions">
-                    <button className="btn" style={{ flex: 1, justifyContent: 'center', fontSize: 13 }} onClick={() => handleVente(p)}>
-                      Vendre
-                    </button>
-                    {peutGerer && (
-                      <button className="btn" style={{ fontSize: 13 }} onClick={() => handleSupprimer(p)}>
-                        Retirer
+                  {peutGerer && (
+                    <div className="carte-produit-actions">
+                      <button
+                        className="btn"
+                        style={{ flex: 1, justifyContent: 'center', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        onClick={() => ouvrirEdition(p)}
+                      >
+                        <IconModifier />
+                        Modifier
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -526,6 +598,71 @@ export function StockPage() {
                 <button type="submit" className="btn btn-principal" disabled={enregistrementEntree}>
                   {enregistrementEntree ? 'Enregistrement…' : 'Ajouter au stock'}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {produitEnEdition && (
+        <div className="modale-fond" onClick={() => setProduitEnEdition(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Modifier le produit</h2>
+            <form onSubmit={handleEnregistrerEdition}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="pe-name">Nom du produit</label>
+                <input
+                  id="pe-name"
+                  className="champ"
+                  value={produitEnEdition.name}
+                  onChange={(e) => setProduitEnEdition({ ...produitEnEdition, name: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="pe-sku">Référence / code</label>
+                <input
+                  id="pe-sku"
+                  className="champ"
+                  value={produitEnEdition.sku}
+                  onChange={(e) => setProduitEnEdition({ ...produitEnEdition, sku: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="pe-price">Prix au détail (FCFA)</label>
+                <input
+                  id="pe-price"
+                  type="number"
+                  className="champ"
+                  value={produitEnEdition.unitPrice}
+                  onChange={(e) => setProduitEnEdition({ ...produitEnEdition, unitPrice: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="pe-alert">Seuil d'alerte</label>
+                <input
+                  id="pe-alert"
+                  type="number"
+                  className="champ"
+                  value={produitEnEdition.quantityAlertThreshold}
+                  onChange={(e) => setProduitEnEdition({ ...produitEnEdition, quantityAlertThreshold: e.target.value })}
+                />
+              </div>
+
+              <div className="actions-modale" style={{ justifyContent: user.role === 'manager' ? 'space-between' : 'flex-end' }}>
+                {user.role === 'manager' && (
+                  <button
+                    type="button"
+                    className="btn btn-brique"
+                    onClick={() => handleSupprimer(produitEnEdition)}
+                  >
+                    Supprimer ce produit
+                  </button>
+                )}
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button type="button" className="btn" onClick={() => setProduitEnEdition(null)}>Annuler</button>
+                  <button type="submit" className="btn btn-principal" disabled={enregistrementEdition}>
+                    {enregistrementEdition ? 'Enregistrement…' : 'Enregistrer'}
+                  </button>
+                </div>
               </div>
             </form>
           </div>
