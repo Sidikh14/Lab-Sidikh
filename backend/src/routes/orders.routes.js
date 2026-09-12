@@ -7,7 +7,7 @@ const { logActivity } = require('../utils/activityLog');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, traitSeparateur, enregistrerPolices } = require('../utils/pdfHelpers');
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
-const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
+const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement', 'a_credit'];
 
 const router = express.Router();
 router.use(authenticate);
@@ -254,7 +254,10 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
   }
-  if (typeof amountReceived !== 'number' || amountReceived < 0) {
+
+  const estACredit = paymentMethod === 'a_credit';
+
+  if (!estACredit && (typeof amountReceived !== 'number' || amountReceived < 0)) {
     return res.status(400).json({ error: 'Montant reçu invalide.' });
   }
 
@@ -268,11 +271,22 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
     if (order.status !== 'en_attente') {
       return res.status(400).json({ error: 'Cette commande a déjà été traitée.' });
     }
-    if (amountReceived < Number(order.total_amount)) {
+
+    // Une vente à crédit n'est autorisée que pour un client déjà enregistré
+    // — un client de passage doit d'abord être créé (via une demande de
+    // validation gérant/manager, à venir).
+    if (estACredit && !order.client_id) {
+      return res.status(400).json({ error: 'La vente à crédit n\'est autorisée que pour un client déjà enregistré.' });
+    }
+
+    if (!estACredit && amountReceived < Number(order.total_amount)) {
       return res.status(400).json({ error: 'Le montant reçu est inférieur au total à payer.' });
     }
 
-    const changeGiven = Math.round(amountReceived - Number(order.total_amount));
+    // À crédit : rien n'est reçu maintenant, le montant total devient une
+    // créance sur le client (visible sur sa fiche, réglable plus tard).
+    const montantRecuFinal = estACredit ? 0 : amountReceived;
+    const changeGiven = estACredit ? 0 : Math.round(amountReceived - Number(order.total_amount));
     // Un client de passage n'a pas de livraison à faire : la commande est
     // directement marquée comme livrée dès l'encaissement.
     const estClientDePassage = !order.client_id;
@@ -288,7 +302,7 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
          ${estClientDePassage ? ', delivered_by = $4, delivered_at = now()' : ''}
        WHERE id = $5 AND merchant_id = $6
        RETURNING *`,
-      [paymentMethod, amountReceived, changeGiven, req.user.id, req.params.id, req.user.merchantId, estClientDePassage ? 'livree' : 'validee']
+      [paymentMethod, montantRecuFinal, changeGiven, req.user.id, req.params.id, req.user.merchantId, estClientDePassage ? 'livree' : 'validee']
     );
     const orderMisAJour = result.rows[0];
 
@@ -298,6 +312,15 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
         userId: req.user.id,
         action: 'order_delivered',
         description: `a livré la commande ${formatOrderNumber(orderMisAJour)} (client de passage)`,
+      });
+    }
+
+    if (estACredit) {
+      await logActivity({
+        merchantId: req.user.merchantId,
+        userId: req.user.id,
+        action: 'order_credit_sale',
+        description: `a enregistré la commande ${formatOrderNumber(orderMisAJour)} à crédit (${formatMontant(order.total_amount)})`,
       });
     }
 
@@ -681,7 +704,7 @@ async function getOrderReceiptDetail(merchantId, id) {
 }
 
 const MOYENS_PAIEMENT_LABEL = {
-  especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement',
+  especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement', a_credit: 'À crédit',
 };
 
 // Mesure la hauteur réelle nécessaire pour le ticket (gère les noms de
