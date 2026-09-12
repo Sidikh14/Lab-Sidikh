@@ -7,6 +7,7 @@ const MOYENS_PAIEMENT = [
   { value: 'orange_money', label: 'Orange Money' },
   { value: 'cheque', label: 'Chèque' },
   { value: 'virement', label: 'Virement' },
+  { value: 'a_credit', label: 'À crédit' },
 ];
 
 // Détail en lecture seule de la facture : le caissier voit exactement ce
@@ -38,11 +39,16 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
   const [motifRetour, setMotifRetour] = useState('');
   const [enCours, setEnCours] = useState(false);
 
+  const estACredit = moyenPaiement === 'a_credit';
   const monnaieARendre = Math.max(0, Number(montantRecu || 0) - Number(commande.total_amount));
 
   async function handleEncaisser(e) {
     e.preventDefault();
-    if (Number(montantRecu) < Number(commande.total_amount)) {
+    if (estACredit && !commande.client_id) {
+      setErreur('Le paiement à crédit est réservé aux clients enregistrés.');
+      return;
+    }
+    if (!estACredit && Number(montantRecu) < Number(commande.total_amount)) {
       setErreur('Le montant reçu est inférieur au total à payer.');
       return;
     }
@@ -51,7 +57,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
     try {
       await api.recordOrderPayment(commande.id, {
         paymentMethod: moyenPaiement,
-        amountReceived: Number(montantRecu),
+        amountReceived: estACredit ? 0 : Number(montantRecu),
       });
       // Le reçu (ticket étroit pour un client de passage, facture A4 pour
       // un client enregistré) s'ouvre automatiquement dans un nouvel
@@ -159,29 +165,47 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
             <label className="etiquette" htmlFor="e-moyen">Moyen de paiement</label>
             <select id="e-moyen" className="champ" value={moyenPaiement} onChange={(e) => setMoyenPaiement(e.target.value)}>
               {MOYENS_PAIEMENT.map((m) => (
-                <option key={m.value} value={m.value}>{m.label}</option>
+                <option key={m.value} value={m.value} disabled={m.value === 'a_credit' && !commande.client_id}>
+                  {m.label}{m.value === 'a_credit' && !commande.client_id ? ' (client enregistré requis)' : ''}
+                </option>
               ))}
             </select>
           </div>
-          <div className="champ-groupe">
-            <label className="etiquette" htmlFor="e-recu">Montant reçu (FCFA)</label>
-            <input
-              id="e-recu"
-              type="number"
-              className="champ"
-              value={montantRecu}
-              onChange={(e) => setMontantRecu(e.target.value)}
-            />
-          </div>
-          <div style={{ fontSize: 14, marginBottom: 8 }}>
-            Monnaie à rendre : <strong className="chiffre">{Math.round(monnaieARendre).toLocaleString('fr-FR')} FCFA</strong>
-          </div>
+
+          {estACredit ? (
+            <div
+              style={{
+                background: 'var(--fond)', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)',
+                padding: '10px 14px', marginBottom: 12, fontSize: 13, color: 'var(--encre-douce)',
+              }}
+            >
+              Le montant total (<strong className="chiffre">{Math.round(commande.total_amount).toLocaleString('fr-FR')} FCFA</strong>) sera
+              ajouté à la créance de <strong>{commande.client_name}</strong>, à régler plus tard depuis sa fiche client.
+            </div>
+          ) : (
+            <>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="e-recu">Montant reçu (FCFA)</label>
+                <input
+                  id="e-recu"
+                  type="number"
+                  className="champ"
+                  value={montantRecu}
+                  onChange={(e) => setMontantRecu(e.target.value)}
+                />
+              </div>
+              <div style={{ fontSize: 14, marginBottom: 8 }}>
+                Monnaie à rendre : <strong className="chiffre">{Math.round(monnaieARendre).toLocaleString('fr-FR')} FCFA</strong>
+              </div>
+            </>
+          )}
+
           <div className="actions-modale" style={{ flexWrap: 'wrap' }}>
             <button type="button" className="btn" onClick={onClose} disabled={enCours}>Plus tard</button>
             <button type="button" className="btn btn-brique" onClick={handleAnnuler} disabled={enCours}>Annuler la vente</button>
             <button type="button" className="btn" onClick={() => setVueRetour(true)} disabled={enCours}>Retourner au vendeur</button>
             <button type="submit" className="btn btn-principal" disabled={enCours}>
-              {enCours ? 'Encaissement…' : "Confirmer l'encaissement"}
+              {enCours ? 'Encaissement…' : estACredit ? 'Confirmer la vente à crédit' : "Confirmer l'encaissement"}
             </button>
           </div>
         </form>
