@@ -38,7 +38,12 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
   const [vueRetour, setVueRetour] = useState(false);
   const [motifRetour, setMotifRetour] = useState('');
   const [enCours, setEnCours] = useState(false);
+  const [demandeNom, setDemandeNom] = useState('');
+  const [demandeTelephone, setDemandeTelephone] = useState('');
+  const [demandeAdresse, setDemandeAdresse] = useState('');
+  const [demandeEnvoyee, setDemandeEnvoyee] = useState(false);
 
+  const estClientDePassage = !commande.client_id;
   const estACredit = moyenPaiement === 'a_credit';
   const monnaieARendre = Math.max(0, Number(montantRecu || 0) - Number(commande.total_amount));
 
@@ -76,6 +81,29 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
     }
   }
 
+  async function handleEnvoyerDemandeCredit(e) {
+    e.preventDefault();
+    if (!demandeNom.trim()) {
+      setErreur('Le nom du client est requis.');
+      return;
+    }
+    setEnCours(true);
+    setErreur('');
+    try {
+      await api.createCreditRequest({
+        orderId: commande.id,
+        fullName: demandeNom.trim(),
+        phone: demandeTelephone || undefined,
+        address: demandeAdresse || undefined,
+      });
+      setDemandeEnvoyee(true);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnCours(false);
+    }
+  }
+
   async function handleAnnuler() {
     setEnCours(true);
     setErreur('');
@@ -99,6 +127,58 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
       setErreur(err.message);
       setEnCours(false);
     }
+  }
+
+  if (estACredit && estClientDePassage) {
+    if (demandeEnvoyee) {
+      return (
+        <div className="modale-fond" onClick={onClose}>
+          <div className="modale" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+            <h2 style={{ marginBottom: 6 }}>Demande envoyée</h2>
+            <p style={{ color: 'var(--encre-douce)', fontSize: 14, marginBottom: 16 }}>
+              Le manager ou le gérant doit valider la création du client avant que cette vente puisse être encaissée à crédit.
+              Reviens sur cette commande une fois la demande approuvée.
+            </p>
+            <button className="btn btn-principal" style={{ width: '100%', justifyContent: 'center' }} onClick={onClose}>
+              Compris
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="modale-fond" onClick={onClose}>
+        <div className="modale" onClick={(e) => e.stopPropagation()}>
+          <h2>Demander une vente à crédit</h2>
+          <p style={{ fontSize: 14, color: 'var(--encre-douce)', marginBottom: 16 }}>
+            La vente à crédit n'est autorisée que pour un client enregistré. Renseigne ses informations : le manager ou le
+            gérant devra valider la création du client avant que tu puisses encaisser cette commande à crédit.
+          </p>
+          {erreur && <div className="erreur">{erreur}</div>}
+          <form onSubmit={handleEnvoyerDemandeCredit}>
+            <div className="champ-groupe">
+              <label className="etiquette" htmlFor="dc-nom">Nom complet du client</label>
+              <input id="dc-nom" type="text" className="champ" value={demandeNom} onChange={(e) => setDemandeNom(e.target.value)} required />
+            </div>
+            <div className="champ-groupe">
+              <label className="etiquette" htmlFor="dc-tel">Téléphone (optionnel)</label>
+              <input id="dc-tel" type="text" className="champ" value={demandeTelephone} onChange={(e) => setDemandeTelephone(e.target.value)} />
+            </div>
+            <div className="champ-groupe">
+              <label className="etiquette" htmlFor="dc-adresse">Adresse (optionnel)</label>
+              <input id="dc-adresse" type="text" className="champ" value={demandeAdresse} onChange={(e) => setDemandeAdresse(e.target.value)} />
+            </div>
+            <div className="actions-modale">
+              <button type="button" className="btn" onClick={() => setMoyenPaiement('especes')} disabled={enCours}>Annuler</button>
+              <button type="submit" className="btn btn-principal" disabled={enCours}>
+                {enCours ? 'Envoi…' : 'Envoyer la demande'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
   }
 
   if (vueRetour) {
@@ -165,8 +245,8 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
             <label className="etiquette" htmlFor="e-moyen">Moyen de paiement</label>
             <select id="e-moyen" className="champ" value={moyenPaiement} onChange={(e) => setMoyenPaiement(e.target.value)}>
               {MOYENS_PAIEMENT.map((m) => (
-                <option key={m.value} value={m.value} disabled={m.value === 'a_credit' && !commande.client_id}>
-                  {m.label}{m.value === 'a_credit' && !commande.client_id ? ' (client enregistré requis)' : ''}
+                <option key={m.value} value={m.value}>
+                  {m.label}{m.value === 'a_credit' && estClientDePassage ? ' (client de passage → demande requise)' : ''}
                 </option>
               ))}
             </select>

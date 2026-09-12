@@ -88,6 +88,7 @@ export function DashboardPage() {
   const [commandeDetail, setCommandeDetail] = useState(null);
   const [chargementDetail, setChargementDetail] = useState(false);
   const [commandeAEncaisser, setCommandeAEncaisser] = useState(null);
+  const [demandesCredit, setDemandesCredit] = useState([]);
 
   function charger() {
     setChargement(true);
@@ -99,6 +100,10 @@ export function DashboardPage() {
       })
       .catch((err) => setErreur(err.message))
       .finally(() => setChargement(false));
+
+    if (vueEquipe) {
+      api.getCreditRequests('en_attente').then(setDemandesCredit).catch((err) => setErreur(err.message));
+    }
   }
 
   useEffect(charger, []);
@@ -144,6 +149,24 @@ export function DashboardPage() {
   async function annulerCommandeRenvoyee(order) {
     try {
       await api.updateOrderStatus(order.id, 'annulee');
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
+  async function approuverDemandeCredit(demande) {
+    try {
+      await api.approveCreditRequest(demande.id);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
+  async function rejeterDemandeCredit(demande) {
+    try {
+      await api.rejectCreditRequest(demande.id);
       charger();
     } catch (err) {
       setErreur(err.message);
@@ -314,7 +337,34 @@ export function DashboardPage() {
                 <span className="etiquette">À livrer</span>
                 <span className="valeur">{aLivrer.length}</span>
               </div>
+              <div className="stat">
+                <span className="stat-icone" style={demandesCredit.length > 0 ? { background: 'var(--danger-clair)', color: 'var(--danger)' } : undefined}><IconAlerte /></span>
+                <span className="etiquette">Demandes de crédit</span>
+                <span className="valeur">{demandesCredit.length}</span>
+              </div>
             </div>
+
+            {demandesCredit.length > 0 && (
+              <div style={{ marginBottom: 24 }}>
+                <h2 style={{ fontSize: 16, marginBottom: 12 }}>Demandes de vente à crédit</h2>
+                <div className="liste-a-encaisser">
+                  {demandesCredit.map((d) => (
+                    <div key={d.id} className="carte-a-encaisser">
+                      <div style={{ minWidth: 0 }}>
+                        <p className="carte-a-encaisser-numero">{d.full_name}</p>
+                        <p className="carte-a-encaisser-client">
+                          Commande CMD-{new Date(d.order_created_at).getFullYear()}-{String(d.order_seq).padStart(4, '0')}
+                          {d.phone && ` · ${d.phone}`} · demandé par {d.requested_by_name || '—'}
+                        </p>
+                      </div>
+                      <p className="carte-a-encaisser-montant">{Math.round(d.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                      <button className="btn btn-principal" onClick={() => approuverDemandeCredit(d)}>Approuver</button>
+                      <button className="btn btn-brique" onClick={() => rejeterDemandeCredit(d)}>Rejeter</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
               {(enRupture.length > 0 || enFaible.length > 0) && (
