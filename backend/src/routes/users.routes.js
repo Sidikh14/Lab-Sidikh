@@ -124,4 +124,36 @@ router.patch('/:id/permissions', requireRole('manager'), async (req, res) => {
   }
 });
 
+// PATCH /users/:id/password — le manager réinitialise le mot de passe d'un
+// membre de l'équipe (cas d'un employé qui a oublié le sien). Le manager ne
+// peut pas réinitialiser son propre mot de passe ici, ni celui d'un autre
+// manager.
+router.patch('/:id/password', requireRole('manager'), async (req, res) => {
+  const { newPassword } = req.body;
+
+  if (typeof newPassword !== 'string' || newPassword.length < 6) {
+    return res.status(400).json({ error: 'Le nouveau mot de passe doit contenir au moins 6 caractères.' });
+  }
+  if (req.params.id === req.user.id) {
+    return res.status(400).json({ error: 'Vous ne pouvez pas réinitialiser votre propre mot de passe ici.' });
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const result = await pool.query(
+      `UPDATE users SET password_hash = $1
+       WHERE id = $2 AND merchant_id = $3 AND role != 'manager'
+       RETURNING id, full_name, role`,
+      [passwordHash, req.params.id, req.user.merchantId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Membre introuvable.' });
+    }
+    res.json({ ...result.rows[0], message: 'Mot de passe réinitialisé avec succès.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la réinitialisation du mot de passe.' });
+  }
+});
+
 module.exports = router;

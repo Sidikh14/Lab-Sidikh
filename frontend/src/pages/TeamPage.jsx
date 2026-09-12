@@ -114,6 +114,31 @@ export function TeamPage() {
     }
   }
 
+  const [membreMotDePasse, setMembreMotDePasse] = useState(null);
+  const [nouveauMotDePasse, setNouveauMotDePasse] = useState('');
+  const [messageMotDePasse, setMessageMotDePasse] = useState('');
+
+  function ouvrirResetMotDePasse(membre) {
+    setMembreMotDePasse(membre);
+    setNouveauMotDePasse('');
+    setMessageMotDePasse('');
+  }
+
+  async function handleResetMotDePasse(e) {
+    e.preventDefault();
+    if (nouveauMotDePasse.length < 6) {
+      setErreur('Le nouveau mot de passe doit contenir au moins 6 caractères.');
+      return;
+    }
+    try {
+      await api.resetUserPassword(membreMotDePasse.id, nouveauMotDePasse);
+      setMessageMotDePasse(`Mot de passe de ${membreMotDePasse.full_name} réinitialisé avec succès.`);
+      setNouveauMotDePasse('');
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
   return (
     <>
       <div className="entete-page">
@@ -165,6 +190,13 @@ export function TeamPage() {
                           onClick={() => ouvrirPermissions(m)}
                         >
                           Permissions
+                        </button>
+                        <button
+                          className="btn"
+                          style={{ padding: '5px 10px', fontSize: 13 }}
+                          onClick={() => ouvrirResetMotDePasse(m)}
+                        >
+                          Réinitialiser mot de passe
                         </button>
                         <button
                           className="btn"
@@ -268,6 +300,42 @@ export function TeamPage() {
                 </button>
                 <button type="submit" className="btn btn-principal">
                   Enregistrer
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {membreMotDePasse && (
+        <div className="modale-fond" onClick={() => setMembreMotDePasse(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Réinitialiser le mot de passe de {membreMotDePasse.full_name}</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+              Communiquez ce nouveau mot de passe temporaire au membre concerné.
+            </p>
+            {messageMotDePasse && (
+              <div className="tampon tampon-sarcelle" style={{ display: 'block', marginBottom: 12 }}>
+                {messageMotDePasse}
+              </div>
+            )}
+            <form onSubmit={handleResetMotDePasse}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="m-nouveau-mdp">Nouveau mot de passe</label>
+                <input
+                  id="m-nouveau-mdp"
+                  type="password"
+                  className="champ"
+                  value={nouveauMotDePasse}
+                  onChange={(e) => setNouveauMotDePasse(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={() => setMembreMotDePasse(null)}>
+                  Fermer
+                </button>
+                <button type="submit" className="btn btn-principal">
+                  Réinitialiser
                 </button>
               </div>
             </form>

@@ -93,6 +93,8 @@ export const api = {
     request(`/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
   setUserPermissions: (id, modules) =>
     request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules }) }),
+  resetUserPassword: (id, newPassword) =>
+    request(`/users/${id}/password`, { method: 'PATCH', body: JSON.stringify({ newPassword }) }),
 
   getSuppliers: () => request('/suppliers'),
   createSupplier: (data) =>
