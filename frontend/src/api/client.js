@@ -82,6 +82,7 @@ export const api = {
     request(`/orders/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   recordOrderPayment: (id, data) =>
     request(`/orders/${id}/payment`, { method: 'PATCH', body: JSON.stringify(data) }),
+  previewOrderReceipt: (id) => previewFile(`/orders/${id}/receipt-pdf`),
   returnOrderToSeller: (id, reason) =>
     request(`/orders/${id}/return-to-seller`, { method: 'PATCH', body: JSON.stringify({ reason }) }),
 

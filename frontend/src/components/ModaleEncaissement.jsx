@@ -53,6 +53,15 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
         paymentMethod: moyenPaiement,
         amountReceived: Number(montantRecu),
       });
+      // Le reçu (ticket étroit pour un client de passage, facture A4 pour
+      // un client enregistré) s'ouvre automatiquement dans un nouvel
+      // onglet — l'échec de cet appel ne doit pas bloquer l'encaissement
+      // déjà enregistré, donc on l'isole dans son propre try/catch.
+      try {
+        await api.previewOrderReceipt(commande.id);
+      } catch (err) {
+        console.error('Impossible d\'ouvrir le reçu automatiquement :', err.message);
+      }
       onSuccess();
     } catch (err) {
       setErreur(err.message);

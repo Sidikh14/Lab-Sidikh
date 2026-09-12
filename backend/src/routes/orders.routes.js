@@ -1,8 +1,10 @@
 const express = require('express');
+const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
+const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, traitSeparateur, enregistrerPolices } = require('../utils/pdfHelpers');
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
@@ -558,6 +560,254 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
     res.status(500).json({ error: 'Erreur lors de la modification de la commande.' });
   } finally {
     client.release();
+  }
+});
+
+// Récupère toutes les données nécessaires au reçu : commande, client (si
+// enregistré), commerce, vendeur, caissier, et articles.
+async function getOrderReceiptDetail(merchantId, id) {
+  const orderResult = await pool.query(
+    `SELECT o.*, 
+            c.full_name AS client_name, c.phone AS client_phone, c.address AS client_address,
+            m.business_name, m.currency,
+            uv.full_name AS vendeur_name,
+            uc.full_name AS caissier_name
+     FROM orders o
+     JOIN merchants m ON m.id = o.merchant_id
+     LEFT JOIN clients c ON c.id = o.client_id
+     LEFT JOIN users uv ON uv.id = o.created_by
+     LEFT JOIN users uc ON uc.id = o.validated_by
+     WHERE o.id = $1 AND o.merchant_id = $2`,
+    [id, merchantId]
+  );
+  const order = orderResult.rows[0];
+  if (!order) return null;
+
+  const itemsResult = await pool.query(
+    `SELECT oi.id, oi.product_id, p.name AS product_name, oi.quantity, oi.unit_price, oi.line_total,
+            oi.packaging_label, oi.packaging_quantity
+     FROM order_items oi JOIN products p ON p.id = oi.product_id
+     WHERE oi.order_id = $1`,
+    [order.id]
+  );
+
+  return { ...order, items: itemsResult.rows, order_number: formatOrderNumber(order) };
+}
+
+const MOYENS_PAIEMENT_LABEL = {
+  especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement',
+};
+
+// Ticket de caisse étroit (format imprimante thermique 80mm), pour un
+// client de passage. La hauteur de page est calculée à l'avance en
+// fonction du nombre d'articles, PDFKit ne supportant pas les pages à
+// hauteur "automatique".
+function genererTicketEtroit(res, order) {
+  const LARGEUR = 227; // 80mm
+  const MARGE = 14;
+  const largeurContenu = LARGEUR - MARGE * 2;
+
+  let hauteur = 210; // en-tête + bloc totaux + pied de page
+  order.items.forEach((item) => {
+    hauteur += item.packaging_label ? 30 : 18;
+  });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="ticket-${order.order_number}.pdf"`);
+
+  const doc = new PDFDocument({ margin: MARGE, size: [LARGEUR, hauteur] });
+  doc.pipe(res);
+  enregistrerPolices(doc);
+
+  let y = MARGE;
+  doc.fillColor(COULEURS.encre).font('Titre').fontSize(13)
+    .text((order.business_name || 'Commerce').toUpperCase(), MARGE, y, { width: largeurContenu, align: 'center' });
+  y += 20;
+  doc.fillColor(COULEURS.muted).font('Helvetica').fontSize(7.5)
+    .text('TICKET DE CAISSE', MARGE, y, { width: largeurContenu, align: 'center', characterSpacing: 1 });
+  y += 16;
+  doc.fillColor(COULEURS.encre).fontSize(9).font('Helvetica-Bold')
+    .text(order.order_number, MARGE, y, { width: largeurContenu, align: 'center' });
+  y += 13;
+  doc.fillColor(COULEURS.muted).font('Helvetica').fontSize(7.5)
+    .text(new Date(order.validated_at || order.created_at).toLocaleString('fr-FR'), MARGE, y, { width: largeurContenu, align: 'center' });
+  y += 18;
+
+  traitSeparateur(doc, y);
+  y += 10;
+
+  order.items.forEach((item) => {
+    doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(8.5)
+      .text(item.product_name, MARGE, y, { width: largeurContenu });
+    y += 11;
+    if (item.packaging_label) {
+      doc.fillColor(COULEURS.muted).fontSize(7.5)
+        .text(item.packaging_label, MARGE, y, { width: largeurContenu });
+      y += 11;
+    }
+    const quantiteAffichee = item.packaging_label ? item.packaging_quantity : item.quantity;
+    doc.fillColor(COULEURS.muted).fontSize(8)
+      .text(`${quantiteAffichee} × ${formatMontant(item.unit_price * (item.packaging_label ? item.quantity / item.packaging_quantity : 1))}`, MARGE, y, { width: largeurContenu - 70 });
+    doc.fillColor(COULEURS.encre).font('Helvetica-Bold')
+      .text(formatMontant(item.line_total), MARGE, y, { width: largeurContenu, align: 'right' });
+    y += 14;
+  });
+
+  traitSeparateur(doc, y);
+  y += 10;
+
+  doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted);
+  doc.text('Sous-total', MARGE, y, { width: largeurContenu - 70 });
+  doc.fillColor(COULEURS.encre).text(`${formatMontant(order.subtotal_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
+  y += 13;
+
+  if (order.tva_applicable) {
+    doc.fillColor(COULEURS.muted).text(`TVA (${TVA_RATE} %)`, MARGE, y, { width: largeurContenu - 70 });
+    doc.fillColor(COULEURS.encre).text(`${formatMontant(order.tva_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
+    y += 13;
+  }
+
+  y += 3;
+  doc.font('Helvetica-Bold').fontSize(11).fillColor(COULEURS.encre);
+  doc.text('TOTAL', MARGE, y, { width: largeurContenu - 90 });
+  doc.text(`${formatMontant(order.total_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
+  y += 20;
+
+  doc.font('Helvetica').fontSize(8).fillColor(COULEURS.muted);
+  doc.text(MOYENS_PAIEMENT_LABEL[order.payment_method] || order.payment_method || '', MARGE, y, { width: largeurContenu - 90 });
+  doc.text(`Reçu : ${formatMontant(order.amount_received)}`, MARGE, y, { width: largeurContenu, align: 'right' });
+  y += 12;
+  if (Number(order.change_given) > 0) {
+    doc.text('Monnaie rendue', MARGE, y, { width: largeurContenu - 90 });
+    doc.text(formatMontant(order.change_given), MARGE, y, { width: largeurContenu, align: 'right' });
+    y += 12;
+  }
+
+  y += 14;
+  traitSeparateur(doc, y);
+  y += 12;
+  doc.font('Helvetica').fontSize(8).fillColor(COULEURS.muted)
+    .text('Merci de votre achat !', MARGE, y, { width: largeurContenu, align: 'center' });
+  if (order.caissier_name) {
+    y += 12;
+    doc.fontSize(7).text(`Servi par ${order.caissier_name}`, MARGE, y, { width: largeurContenu, align: 'center' });
+  }
+
+  doc.end();
+}
+
+// Facture A4, pour un client enregistré — téléchargeable/imprimable,
+// même identité visuelle que les autres documents de l'application.
+function genererFactureA4(res, order) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="facture-${order.order_number}.pdf"`);
+
+  const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  doc.pipe(res);
+
+  let y = dessinerEntete(doc, {
+    businessName: order.business_name,
+    titre: 'Facture',
+    sousTitre: `${order.order_number} · ${new Date(order.validated_at || order.created_at).toLocaleDateString('fr-FR')}`,
+  });
+
+  // Bloc client (gauche) et bloc vente (droite)
+  doc.fontSize(9).fillColor(COULEURS.muted).text('FACTURÉ À', 50, y);
+  doc.text('DÉTAILS DE LA VENTE', 320, y);
+  y += 14;
+
+  doc.fontSize(11).fillColor(COULEURS.encre).font('Helvetica-Bold').text(order.client_name, 50, y);
+  doc.font('Helvetica').fontSize(9).fillColor(COULEURS.muted);
+  doc.text(`Vendeur : ${order.vendeur_name || '—'}`, 320, y);
+  y += 15;
+
+  if (order.client_phone) { doc.text(order.client_phone, 50, y); }
+  doc.text(`Caissier : ${order.caissier_name || '—'}`, 320, y);
+  y += 13;
+
+  if (order.client_address) { doc.text(order.client_address, 50, y); }
+  doc.text(`Paiement : ${MOYENS_PAIEMENT_LABEL[order.payment_method] || '—'}`, 320, y);
+  y += 13;
+
+  y += 16;
+
+  y = dessinerEnteteTableau(doc, y, [
+    { texte: 'Produit', x: 56, largeur: 220 },
+    { texte: 'Qté', x: 290, largeur: 50, aligner: 'right' },
+    { texte: 'Prix unitaire', x: 360, largeur: 85, aligner: 'right' },
+    { texte: 'Total', x: 460, largeur: 85, aligner: 'right' },
+  ]);
+
+  order.items.forEach((item, index) => {
+    const hauteurLigne = item.packaging_label ? 28 : 20;
+    if (index % 2 === 1) {
+      doc.rect(50, y, doc.page.width - 100, hauteurLigne).fill(COULEURS.fondAlterne);
+      doc.fillColor(COULEURS.encre);
+    }
+    const quantiteAffichee = item.packaging_label ? item.packaging_quantity : item.quantity;
+    doc.fontSize(9.5).fillColor(COULEURS.encre);
+    doc.text(item.product_name, 56, y + 5, { width: 220 });
+    if (item.packaging_label) {
+      doc.fontSize(8).fillColor(COULEURS.muted).text(item.packaging_label, 56, y + 17, { width: 220 });
+      doc.fontSize(9.5).fillColor(COULEURS.encre);
+    }
+    doc.text(String(quantiteAffichee), 290, y + 5, { width: 50, align: 'right' });
+    doc.text(`${formatMontant(item.line_total / quantiteAffichee)} ${order.currency}`, 360, y + 5, { width: 85, align: 'right' });
+    doc.text(`${formatMontant(item.line_total)} ${order.currency}`, 460, y + 5, { width: 85, align: 'right' });
+    y += hauteurLigne;
+  });
+
+  traitSeparateur(doc, y + 4);
+  y += 16;
+
+  doc.fontSize(9).fillColor(COULEURS.muted).text('SOUS-TOTAL', 300, y, { width: 145, align: 'right' });
+  doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.subtotal_amount)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+  y += 16;
+
+  if (order.tva_applicable) {
+    doc.fontSize(9).fillColor(COULEURS.muted).text(`TVA (${TVA_RATE} %)`, 300, y, { width: 145, align: 'right' });
+    doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.tva_amount)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+    y += 16;
+  }
+
+  y += 4;
+  doc.fontSize(9).fillColor(COULEURS.muted).text('MONTANT TOTAL', 300, y, { width: 145, align: 'right' });
+  doc.fontSize(16).fillColor(COULEURS.encre).font('Titre')
+    .text(`${formatMontant(order.total_amount)} ${order.currency}`, 460, y - 4, { width: 85, align: 'right' });
+  doc.fillColor(COULEURS.encre).font('Helvetica');
+  y += 30;
+
+  doc.fontSize(9).fillColor(COULEURS.muted).text('MONTANT REÇU', 300, y, { width: 145, align: 'right' });
+  doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.amount_received)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+  y += 16;
+
+  if (Number(order.change_given) > 0) {
+    doc.fontSize(9).fillColor(COULEURS.muted).text('MONNAIE RENDUE', 300, y, { width: 145, align: 'right' });
+    doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.change_given)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+    y += 16;
+  }
+
+  doc.fontSize(9).fillColor(COULEURS.mutedClair)
+    .text('Merci pour votre confiance.', 50, doc.page.height - 70, { width: doc.page.width - 100, align: 'center' });
+
+  doc.end();
+}
+
+// GET /orders/:id/receipt-pdf — reçu de caisse : ticket étroit pour un
+// client de passage, facture A4 pour un client enregistré.
+router.get('/:id/receipt-pdf', async (req, res) => {
+  try {
+    const order = await getOrderReceiptDetail(req.user.merchantId, req.params.id);
+    if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+
+    if (order.client_id) {
+      genererFactureA4(res, order);
+    } else {
+      genererTicketEtroit(res, order);
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la génération du reçu.' });
   }
 });
 
