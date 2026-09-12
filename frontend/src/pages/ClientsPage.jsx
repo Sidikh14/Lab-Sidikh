@@ -12,6 +12,10 @@ export function ClientsPage() {
   const [clientSelectionne, setClientSelectionne] = useState(null);
   const [detailChargement, setDetailChargement] = useState(false);
   const [detailErreur, setDetailErreur] = useState('');
+  const [vueReglement, setVueReglement] = useState(false);
+  const [montantReglement, setMontantReglement] = useState('');
+  const [noteReglement, setNoteReglement] = useState('');
+  const [reglementEnCours, setReglementEnCours] = useState(false);
 
   function charger() {
     setChargement(true);
@@ -54,6 +58,38 @@ export function ClientsPage() {
     }
   }
 
+  async function rafraichirFiche(id) {
+    try {
+      const detail = await api.getClient(id);
+      setClientSelectionne(detail);
+      charger();
+    } catch (err) {
+      setDetailErreur(err.message);
+    }
+  }
+
+  async function handleEnregistrerReglement(e) {
+    e.preventDefault();
+    const montant = Number(montantReglement);
+    if (!montant || montant <= 0) {
+      setDetailErreur('Le montant du règlement doit être un nombre positif.');
+      return;
+    }
+    setReglementEnCours(true);
+    setDetailErreur('');
+    try {
+      await api.recordCreditPayment(clientSelectionne.id, { amount: montant, note: noteReglement || undefined });
+      setVueReglement(false);
+      setMontantReglement('');
+      setNoteReglement('');
+      await rafraichirFiche(clientSelectionne.id);
+    } catch (err) {
+      setDetailErreur(err.message);
+    } finally {
+      setReglementEnCours(false);
+    }
+  }
+
   const totalAchats = (clientSelectionne?.orderHistory || []).reduce(
     (sum, o) => sum + Number(o.total_amount),
     0
@@ -85,6 +121,7 @@ export function ClientsPage() {
               <th>Nom</th>
               <th>Téléphone</th>
               <th>Email</th>
+              <th>Créance</th>
               <th></th>
             </tr>
           </thead>
@@ -94,6 +131,9 @@ export function ClientsPage() {
                 <td>{c.full_name}</td>
                 <td className="chiffre">{c.phone || '—'}</td>
                 <td>{c.email || '—'}</td>
+                <td className="chiffre" style={Number(c.balance_due) > 0 ? { color: 'var(--danger)', fontWeight: 600 } : undefined}>
+                  {Number(c.balance_due) > 0 ? `${Math.round(c.balance_due).toLocaleString('fr-FR')} FCFA` : '—'}
+                </td>
                 <td>
                   <button
                     className="btn"
@@ -172,6 +212,45 @@ export function ClientsPage() {
 
             {detailChargement ? (
               <p style={{ color: 'var(--encre-douce)' }}>Chargement de l'historique…</p>
+            ) : vueReglement ? (
+              <>
+                <p style={{ fontSize: 14, marginBottom: 16 }}>
+                  Créance actuelle : <strong className="chiffre">{Math.round(clientSelectionne.balance_due).toLocaleString('fr-FR')} FCFA</strong>
+                </p>
+                {detailErreur && <div className="erreur">{detailErreur}</div>}
+                <form onSubmit={handleEnregistrerReglement}>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="r-montant">Montant réglé (FCFA)</label>
+                    <input
+                      id="r-montant"
+                      type="number"
+                      className="champ"
+                      value={montantReglement}
+                      onChange={(e) => setMontantReglement(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="r-note">Note (optionnel)</label>
+                    <input
+                      id="r-note"
+                      type="text"
+                      className="champ"
+                      value={noteReglement}
+                      onChange={(e) => setNoteReglement(e.target.value)}
+                      placeholder="Ex : versement en espèces le 12/09"
+                    />
+                  </div>
+                  <div className="actions-modale">
+                    <button type="button" className="btn" onClick={() => setVueReglement(false)} disabled={reglementEnCours}>
+                      Annuler
+                    </button>
+                    <button type="submit" className="btn btn-principal" disabled={reglementEnCours}>
+                      {reglementEnCours ? 'Enregistrement…' : 'Enregistrer le règlement'}
+                    </button>
+                  </div>
+                </form>
+              </>
             ) : (
               <>
                 <div className="ligne-stats" style={{ marginBottom: 20 }}>
@@ -187,7 +266,19 @@ export function ClientsPage() {
                       {totalAchats.toLocaleString('fr-FR')} FCFA
                     </span>
                   </div>
+                  <div className="stat" style={{ padding: '12px 16px' }}>
+                    <span className="etiquette">Créance</span>
+                    <span className="valeur" style={{ fontSize: 20, color: Number(clientSelectionne.balance_due) > 0 ? 'var(--danger)' : undefined }}>
+                      {Math.round(clientSelectionne.balance_due || 0).toLocaleString('fr-FR')} FCFA
+                    </span>
+                  </div>
                 </div>
+
+                {Number(clientSelectionne.balance_due) > 0 && (
+                  <button className="btn btn-principal" style={{ marginBottom: 20 }} onClick={() => setVueReglement(true)}>
+                    Enregistrer un règlement
+                  </button>
+                )}
 
                 <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Historique d'achats</p>
                 {(clientSelectionne.orderHistory || []).length === 0 ? (
@@ -212,11 +303,35 @@ export function ClientsPage() {
                     </tbody>
                   </table>
                 )}
+
+                {(clientSelectionne.creditPayments || []).length > 0 && (
+                  <>
+                    <p style={{ fontSize: 14, fontWeight: 500, margin: '20px 0 8px' }}>Règlements de créance</p>
+                    <table className="registre">
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          <th>Montant</th>
+                          <th>Enregistré par</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {clientSelectionne.creditPayments.map((r) => (
+                          <tr key={r.id}>
+                            <td>{new Date(r.created_at).toLocaleDateString('fr-FR')}</td>
+                            <td className="chiffre">{Number(r.amount).toLocaleString('fr-FR')} FCFA</td>
+                            <td>{r.recorded_by_name || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </>
+                )}
               </>
             )}
 
             <div className="actions-modale">
-              <button className="btn" onClick={() => setClientSelectionne(null)}>
+              <button className="btn" onClick={() => { setClientSelectionne(null); setVueReglement(false); }}>
                 Fermer
               </button>
             </div>
