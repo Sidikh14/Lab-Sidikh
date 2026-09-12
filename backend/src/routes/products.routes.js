@@ -271,12 +271,32 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
 // POST /products/:id/stock-movement
 // Entrée (réapprovisionnement, avec fournisseur/date facultatifs), sortie ou
 // ajustement. Accessible à tous les rôles (un vendeur enregistre ses ventes).
+// Une entrée peut être au comptant ou à crédit ; le crédit exige un
+// fournisseur enregistré (pour pouvoir suivre la dette) et un montant total.
 router.post('/:id/stock-movement', async (req, res) => {
-  const { movementType, quantity, reason, supplierId, movementDate } = req.body;
+  const { movementType, quantity, reason, supplierId, movementDate, paymentMethod, totalCost } = req.body;
   const validTypes = ['entree', 'sortie', 'ajustement'];
 
   if (!validTypes.includes(movementType) || !Number.isInteger(quantity) || quantity <= 0) {
     return res.status(400).json({ error: 'Mouvement de stock invalide.' });
+  }
+
+  let paiementFinal = null;
+  let coutFinal = null;
+  if (movementType === 'entree' && paymentMethod) {
+    if (!['comptant', 'a_credit'].includes(paymentMethod)) {
+      return res.status(400).json({ error: 'Mode de paiement invalide.' });
+    }
+    if (paymentMethod === 'a_credit') {
+      if (!supplierId) {
+        return res.status(400).json({ error: 'Un fournisseur est requis pour une entrée à crédit.' });
+      }
+      if (!Number(totalCost) || Number(totalCost) <= 0) {
+        return res.status(400).json({ error: "Le montant total de l'achat est requis pour une entrée à crédit." });
+      }
+    }
+    paiementFinal = paymentMethod;
+    coutFinal = totalCost ? Number(totalCost) : null;
   }
 
   const client = await pool.connect();
@@ -295,6 +315,17 @@ router.post('/:id/stock-movement', async (req, res) => {
       return res.status(404).json({ error: 'Produit introuvable.' });
     }
 
+    if (supplierId) {
+      const fournisseur = await client.query(
+        `SELECT id FROM suppliers WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+        [supplierId, req.user.merchantId]
+      );
+      if (fournisseur.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Fournisseur introuvable.' });
+      }
+    }
+
     const delta = movementType === 'sortie' ? -quantity : quantity;
     const newQuantity = product.quantity_in_stock + delta;
 
@@ -309,8 +340,8 @@ router.post('/:id/stock-movement', async (req, res) => {
     );
 
     await client.query(
-      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
         req.user.merchantId,
         product.id,
@@ -320,6 +351,8 @@ router.post('/:id/stock-movement', async (req, res) => {
         reason || null,
         supplierId || null,
         movementDate || null,
+        paiementFinal,
+        coutFinal,
       ]
     );
 

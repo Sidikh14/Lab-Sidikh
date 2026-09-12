@@ -87,8 +87,17 @@ export function StockPage() {
   const [augmentationGlobale, setAugmentationGlobale] = useState('');
   const [enregistrementPrix, setEnregistrementPrix] = useState(false);
   const [modaleEntreeOuverte, setModaleEntreeOuverte] = useState(false);
-  const [entreeStock, setEntreeStock] = useState({ productId: '', quantity: '', supplierId: '', movementDate: new Date().toISOString().slice(0, 10) });
+  const [entreeStock, setEntreeStock] = useState({
+    productId: '',
+    quantity: '',
+    supplierId: '',
+    movementDate: new Date().toISOString().slice(0, 10),
+    paymentMethod: 'comptant',
+    totalCost: '',
+  });
   const [enregistrementEntree, setEnregistrementEntree] = useState(false);
+  const [modaleFournisseurRapide, setModaleFournisseurRapide] = useState(false);
+  const [nouveauFournisseurRapide, setNouveauFournisseurRapide] = useState({ name: '', phone: '' });
   const [produitEnEdition, setProduitEnEdition] = useState(null);
   const [enregistrementEdition, setEnregistrementEdition] = useState(false);
 
@@ -200,6 +209,10 @@ export function StockPage() {
       setErreur('Choisissez un produit et une quantité.');
       return;
     }
+    if (entreeStock.paymentMethod === 'a_credit' && (!entreeStock.supplierId || !Number(entreeStock.totalCost))) {
+      setErreur('Une entrée à crédit nécessite un fournisseur et le montant total de l\'achat.');
+      return;
+    }
     setEnregistrementEntree(true);
     try {
       await api.recordStockMovement(entreeStock.productId, {
@@ -208,14 +221,40 @@ export function StockPage() {
         supplierId: entreeStock.supplierId || undefined,
         movementDate: entreeStock.movementDate || undefined,
         reason: 'Réapprovisionnement',
+        paymentMethod: entreeStock.paymentMethod,
+        totalCost: entreeStock.totalCost ? Number(entreeStock.totalCost) : undefined,
       });
       setModaleEntreeOuverte(false);
-      setEntreeStock({ productId: '', quantity: '', supplierId: '', movementDate: new Date().toISOString().slice(0, 10) });
+      setEntreeStock({
+        productId: '',
+        quantity: '',
+        supplierId: '',
+        movementDate: new Date().toISOString().slice(0, 10),
+        paymentMethod: 'comptant',
+        totalCost: '',
+      });
       charger();
     } catch (err) {
       setErreur(err.message);
     } finally {
       setEnregistrementEntree(false);
+    }
+  }
+
+  async function handleCreationRapideFournisseur(e) {
+    e.preventDefault();
+    if (!nouveauFournisseurRapide.name) {
+      setErreur('Le nom du fournisseur est requis.');
+      return;
+    }
+    try {
+      const fournisseur = await api.createSupplier(nouveauFournisseurRapide);
+      setSuppliers((prev) => [...prev, fournisseur].sort((a, b) => a.name.localeCompare(b.name)));
+      setEntreeStock((prev) => ({ ...prev, supplierId: fournisseur.id }));
+      setModaleFournisseurRapide(false);
+      setNouveauFournisseurRapide({ name: '', phone: '' });
+    } catch (err) {
+      setErreur(err.message);
     }
   }
 
@@ -571,18 +610,76 @@ export function StockPage() {
               </div>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="e-fournisseur">Fournisseur (facultatif)</label>
-                <select
-                  id="e-fournisseur"
-                  className="champ"
-                  value={entreeStock.supplierId}
-                  onChange={(e) => setEntreeStock({ ...entreeStock, supplierId: e.target.value })}
-                >
-                  <option value="">Non renseigné</option>
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <select
+                    id="e-fournisseur"
+                    className="champ"
+                    style={{ flex: 1 }}
+                    value={entreeStock.supplierId}
+                    onChange={(e) => setEntreeStock({ ...entreeStock, supplierId: e.target.value })}
+                  >
+                    <option value="">Non renseigné</option>
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <button type="button" className="btn" onClick={() => setModaleFournisseurRapide(true)}>
+                    + Nouveau
+                  </button>
+                </div>
+                {(() => {
+                  const fournisseurChoisi = suppliers.find((s) => String(s.id) === String(entreeStock.supplierId));
+                  if (!fournisseurChoisi || !(Number(fournisseurChoisi.debt) > 0)) return null;
+                  return (
+                    <p style={{ fontSize: 13, color: 'var(--brique, #b3423a)', marginTop: 6 }}>
+                      Dette actuelle envers {fournisseurChoisi.name} : {Math.round(fournisseurChoisi.debt).toLocaleString('fr-FR')} FCFA
+                    </p>
+                  );
+                })()}
               </div>
+              <div className="champ-groupe">
+                <label className="etiquette">Paiement de cet achat</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{
+                      flex: 1,
+                      justifyContent: 'center',
+                      background: entreeStock.paymentMethod === 'comptant' ? 'var(--accent)' : undefined,
+                      color: entreeStock.paymentMethod === 'comptant' ? '#fff' : undefined,
+                    }}
+                    onClick={() => setEntreeStock({ ...entreeStock, paymentMethod: 'comptant' })}
+                  >
+                    Au comptant
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{
+                      flex: 1,
+                      justifyContent: 'center',
+                      background: entreeStock.paymentMethod === 'a_credit' ? 'var(--accent)' : undefined,
+                      color: entreeStock.paymentMethod === 'a_credit' ? '#fff' : undefined,
+                    }}
+                    onClick={() => setEntreeStock({ ...entreeStock, paymentMethod: 'a_credit' })}
+                  >
+                    À crédit
+                  </button>
+                </div>
+              </div>
+              {entreeStock.paymentMethod === 'a_credit' && (
+                <div className="champ-groupe">
+                  <label className="etiquette" htmlFor="e-montant">Montant total de l'achat (FCFA)</label>
+                  <input
+                    id="e-montant"
+                    type="number"
+                    className="champ"
+                    value={entreeStock.totalCost}
+                    onChange={(e) => setEntreeStock({ ...entreeStock, totalCost: e.target.value })}
+                  />
+                </div>
+              )}
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="e-date">Date de réception</label>
                 <input
@@ -598,6 +695,39 @@ export function StockPage() {
                 <button type="submit" className="btn btn-principal" disabled={enregistrementEntree}>
                   {enregistrementEntree ? 'Enregistrement…' : 'Ajouter au stock'}
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {modaleFournisseurRapide && (
+        <div className="modale-fond" onClick={() => setModaleFournisseurRapide(false)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Nouveau fournisseur</h2>
+            <form onSubmit={handleCreationRapideFournisseur}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="fr-name">Nom</label>
+                <input
+                  id="fr-name"
+                  className="champ"
+                  value={nouveauFournisseurRapide.name}
+                  onChange={(e) => setNouveauFournisseurRapide({ ...nouveauFournisseurRapide, name: e.target.value })}
+                  placeholder="Grossiste Baol"
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="fr-phone">Téléphone (facultatif)</label>
+                <input
+                  id="fr-phone"
+                  className="champ"
+                  value={nouveauFournisseurRapide.phone}
+                  onChange={(e) => setNouveauFournisseurRapide({ ...nouveauFournisseurRapide, phone: e.target.value })}
+                />
+              </div>
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={() => setModaleFournisseurRapide(false)}>Annuler</button>
+                <button type="submit" className="btn btn-principal">Créer et sélectionner</button>
               </div>
             </form>
           </div>

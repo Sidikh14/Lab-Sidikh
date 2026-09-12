@@ -71,8 +71,6 @@ export const api = {
   getClient: (id) => request(`/clients/${id}`),
   createClient: (data) =>
     request('/clients', { method: 'POST', body: JSON.stringify(data) }),
-  recordCreditPayment: (clientId, data) =>
-    request(`/clients/${clientId}/credit-payments`, { method: 'POST', body: JSON.stringify(data) }),
 
   getOrders: () => request('/orders'),
   getOrder: (id) => request(`/orders/${id}`),
@@ -88,14 +86,6 @@ export const api = {
   returnOrderToSeller: (id, reason) =>
     request(`/orders/${id}/return-to-seller`, { method: 'PATCH', body: JSON.stringify({ reason }) }),
 
-  getCreditRequests: (status) => request(`/credit-requests${status ? `?status=${status}` : ''}`),
-  createCreditRequest: (data) =>
-    request('/credit-requests', { method: 'POST', body: JSON.stringify(data) }),
-  approveCreditRequest: (id) =>
-    request(`/credit-requests/${id}/approve`, { method: 'PATCH' }),
-  rejectCreditRequest: (id, reason) =>
-    request(`/credit-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ reason }) }),
-
   getUsers: () => request('/users'),
   createUser: (data) =>
     request('/users', { method: 'POST', body: JSON.stringify(data) }),
@@ -103,10 +93,15 @@ export const api = {
     request(`/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
   setUserPermissions: (id, modules) =>
     request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules }) }),
+  resetUserPassword: (id, newPassword) =>
+    request(`/users/${id}/password`, { method: 'PATCH', body: JSON.stringify({ newPassword }) }),
 
   getSuppliers: () => request('/suppliers'),
+  getSupplier: (id) => request(`/suppliers/${id}`),
   createSupplier: (data) =>
     request('/suppliers', { method: 'POST', body: JSON.stringify(data) }),
+  createSupplierPayment: (id, data) =>
+    request(`/suppliers/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }),
   deleteSupplier: (id) => request(`/suppliers/${id}`, { method: 'DELETE' }),
 
   getPurchaseOrders: () => request('/purchase-orders'),
