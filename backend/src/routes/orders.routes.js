@@ -76,11 +76,19 @@ router.get('/:id', async (req, res) => {
 // enregistre le mouvement de stock correspondant. Tout se fait dans une
 // transaction : si un produit n'a pas assez de stock, rien n'est enregistré.
 // Le caissier ne crée pas de vente, il encaisse celles créées par le vendeur.
+//
+// Deux actions sont réservées au manager, et bloquées pour tout autre rôle :
+// - customPrice sur un article : vendre à un prix différent du prix normal
+//   (réduction ou majoration).
+// - authorizeOutOfStock sur un article : vendre un produit dont le stock
+//   disponible est insuffisant (vente en rupture autorisée). Le stock ne
+//   descend jamais sous zéro : il est simplement ramené à 0.
 router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) => {
   const { clientId, items, notes, tvaApplicable } = req.body;
-  // items attendu : [{ productId, quantity, unitId }, ...]
+  // items attendu : [{ productId, quantity, unitId, customPrice, authorizeOutOfStock }, ...]
   // quantity = nombre de conditionnements vendus (ex: 2 cartons) ; unitId
   // facultatif = référence vers product_units (sinon vente au détail).
+  // customPrice et authorizeOutOfStock : réservés au manager (voir ci-dessus).
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'La commande doit contenir au moins un article.' });
@@ -91,6 +99,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
     await client.query('BEGIN');
 
     let subtotalAmount = 0;
+    let stockOverrideUtilise = false;
     const resolvedItems = [];
 
     for (const item of items) {
@@ -125,9 +134,26 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
         packagingLabel = unite.label;
       }
 
+      // Prix personnalisé (réduction ou majoration) : réservé au manager.
+      let originalUnitPrice = null;
+      if (item.customPrice !== undefined && item.customPrice !== null) {
+        if (req.user.role !== 'manager') {
+          throw { status: 403, message: 'Seul le manager peut vendre à un prix personnalisé.' };
+        }
+        if (typeof item.customPrice !== 'number' || item.customPrice < 0) {
+          throw { status: 400, message: `Prix personnalisé invalide pour ${product.name}.` };
+        }
+        originalUnitPrice = prixParConditionnement;
+        prixParConditionnement = item.customPrice;
+      }
+
       const baseQuantity = item.quantity * quantitePerUnite;
-      if (product.quantity_in_stock < baseQuantity) {
-        throw { status: 400, message: `Stock insuffisant pour ${product.name}.` };
+      const rupture = product.quantity_in_stock < baseQuantity;
+      if (rupture) {
+        if (req.user.role !== 'manager' || !item.authorizeOutOfStock) {
+          throw { status: 400, message: `Stock insuffisant pour ${product.name}.` };
+        }
+        stockOverrideUtilise = true;
       }
 
       const lineTotal = prixParConditionnement * item.quantity;
@@ -136,8 +162,10 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
         product,
         baseQuantity,
         unitPrice: prixParConditionnement / quantitePerUnite,
+        originalUnitPrice: originalUnitPrice !== null ? originalUnitPrice / quantitePerUnite : null,
         packagingLabel,
         packagingQuantity: packagingLabel ? item.quantity : null,
+        rupture,
       });
     }
 
@@ -147,8 +175,8 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
 
     const orderResult = await client.query(
-      `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes)
-       VALUES ($1, $2, $3, 'en_attente', $4, $5, $6, $7, $8, $9)
+      `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes, stock_override)
+       VALUES ($1, $2, $3, 'en_attente', $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -160,18 +188,20 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
         tvaAmount,
         totalAmount,
         notes || null,
+        stockOverrideUtilise,
       ]
     );
     const order = orderResult.rows[0];
 
     for (const resolved of resolvedItems) {
       await client.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, packaging_label, packaging_quantity)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.packagingLabel, resolved.packagingQuantity]
+        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity]
       );
 
-      const newQuantity = resolved.product.quantity_in_stock - resolved.baseQuantity;
+      // Le stock ne descend jamais sous zéro, même en vente autorisée en rupture.
+      const newQuantity = Math.max(0, resolved.product.quantity_in_stock - resolved.baseQuantity);
       await client.query(`UPDATE products SET quantity_in_stock = $1 WHERE id = $2`, [
         newQuantity,
         resolved.product.id,
@@ -182,6 +212,23 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
          VALUES ($1, $2, $3, 'sortie', $4, $5)`,
         [req.user.merchantId, resolved.product.id, req.user.id, resolved.baseQuantity, `Commande ${order.id}`]
       );
+
+      if (resolved.originalUnitPrice !== null) {
+        await logActivity({
+          merchantId: req.user.merchantId,
+          userId: req.user.id,
+          action: 'order_custom_price',
+          description: `a vendu ${resolved.product.name} à un prix personnalisé (${Math.round(resolved.originalUnitPrice)} → ${Math.round(resolved.unitPrice)} FCFA) sur la commande ${formatOrderNumber(order)}`,
+        });
+      }
+      if (resolved.rupture) {
+        await logActivity({
+          merchantId: req.user.merchantId,
+          userId: req.user.id,
+          action: 'order_stock_override',
+          description: `a autorisé une vente en rupture de stock pour ${resolved.product.name} sur la commande ${formatOrderNumber(order)}`,
+        });
+      }
     }
 
     await client.query('COMMIT');
@@ -451,6 +498,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
 
     // 2. On applique les nouveaux articles — même logique que la création.
     let subtotalAmount = 0;
+    let stockOverrideUtilise = false;
     const resolvedItems = [];
 
     for (const item of items) {
@@ -485,9 +533,26 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
         packagingLabel = unite.label;
       }
 
+      // Prix personnalisé (réduction ou majoration) : réservé au manager.
+      let originalUnitPrice = null;
+      if (item.customPrice !== undefined && item.customPrice !== null) {
+        if (req.user.role !== 'manager') {
+          throw { status: 403, message: 'Seul le manager peut vendre à un prix personnalisé.' };
+        }
+        if (typeof item.customPrice !== 'number' || item.customPrice < 0) {
+          throw { status: 400, message: `Prix personnalisé invalide pour ${product.name}.` };
+        }
+        originalUnitPrice = prixParConditionnement;
+        prixParConditionnement = item.customPrice;
+      }
+
       const baseQuantity = item.quantity * quantitePerUnite;
-      if (product.quantity_in_stock < baseQuantity) {
-        throw { status: 400, message: `Stock insuffisant pour ${product.name}.` };
+      const rupture = product.quantity_in_stock < baseQuantity;
+      if (rupture) {
+        if (req.user.role !== 'manager' || !item.authorizeOutOfStock) {
+          throw { status: 400, message: `Stock insuffisant pour ${product.name}.` };
+        }
+        stockOverrideUtilise = true;
       }
 
       const lineTotal = prixParConditionnement * item.quantity;
@@ -496,8 +561,10 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
         product,
         baseQuantity,
         unitPrice: prixParConditionnement / quantitePerUnite,
+        originalUnitPrice: originalUnitPrice !== null ? originalUnitPrice / quantitePerUnite : null,
         packagingLabel,
         packagingQuantity: packagingLabel ? item.quantity : null,
+        rupture,
       });
     }
 
@@ -506,12 +573,13 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
 
     for (const resolved of resolvedItems) {
       await client.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, packaging_label, packaging_quantity)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.packagingLabel, resolved.packagingQuantity]
+        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity]
       );
 
-      const newQuantity = resolved.product.quantity_in_stock - resolved.baseQuantity;
+      // Le stock ne descend jamais sous zéro, même en vente autorisée en rupture.
+      const newQuantity = Math.max(0, resolved.product.quantity_in_stock - resolved.baseQuantity);
       await client.query(`UPDATE products SET quantity_in_stock = $1 WHERE id = $2`, [
         newQuantity,
         resolved.product.id,
@@ -522,6 +590,23 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
          VALUES ($1, $2, $3, 'sortie', $4, $5)`,
         [req.user.merchantId, resolved.product.id, req.user.id, resolved.baseQuantity, `Commande ${formatOrderNumber(order)} (modifiée)`]
       );
+
+      if (resolved.originalUnitPrice !== null) {
+        await logActivity({
+          merchantId: req.user.merchantId,
+          userId: req.user.id,
+          action: 'order_custom_price',
+          description: `a vendu ${resolved.product.name} à un prix personnalisé (${Math.round(resolved.originalUnitPrice)} → ${Math.round(resolved.unitPrice)} FCFA) sur la commande ${formatOrderNumber(order)}`,
+        });
+      }
+      if (resolved.rupture) {
+        await logActivity({
+          merchantId: req.user.merchantId,
+          userId: req.user.id,
+          action: 'order_stock_override',
+          description: `a autorisé une vente en rupture de stock pour ${resolved.product.name} sur la commande ${formatOrderNumber(order)}`,
+        });
+      }
     }
 
     // 3. On remet la commande en attente d'encaissement.
@@ -534,10 +619,11 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
          subtotal_amount = $5,
          total_amount = $6,
          status = 'en_attente',
-         returned_reason = NULL
+         returned_reason = NULL,
+         stock_override = stock_override OR $8
        WHERE id = $7
        RETURNING *`,
-      [clientId || null, notes || null, Boolean(tvaApplicable), tvaAmount, subtotalAmount, totalAmount, order.id]
+      [clientId || null, notes || null, Boolean(tvaApplicable), tvaAmount, subtotalAmount, totalAmount, order.id, stockOverrideUtilise]
     );
     const orderMisAJour = updateResult.rows[0];
 
