@@ -202,8 +202,8 @@ router.get('/:id/pdf', async (req, res) => {
     traitSeparateur(doc, y + 4);
     y += 16;
     doc.fontSize(9).fillColor(COULEURS.muted).text('MONTANT TOTAL', 300, y, { width: 145, align: 'right' });
-    doc.fontSize(15).fillColor(COULEURS.accent).font('Helvetica-Bold')
-      .text(`${formatMontant(po.total_amount)} ${po.currency}`, 460, y - 2, { width: 85, align: 'right' });
+    doc.fontSize(16).fillColor(COULEURS.encre).font('Titre')
+      .text(`${formatMontant(po.total_amount)} ${po.currency}`, 460, y - 4, { width: 85, align: 'right' });
     doc.fillColor(COULEURS.encre).font('Helvetica');
 
     if (po.notes) {

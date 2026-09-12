@@ -42,8 +42,6 @@ router.get('/pdf', async (req, res) => {
     });
     y += 10;
 
-    const COULEUR_STATUT = { Rupture: '#dc2626', Faible: '#d97706', 'En stock': '#0891b2' };
-
     function entete() {
       y = dessinerEnteteTableau(doc, y, [
         { texte: 'Produit', x: 56, largeur: 190 },
@@ -70,9 +68,9 @@ router.get('/pdf', async (req, res) => {
       doc.fillColor(COULEURS.muted).text(p.sku || '—', 250, y + 5, { width: 90 });
       doc.fillColor(COULEURS.encre).text(`${formatMontant(p.unit_price)} FCFA`, 345, y + 5, { width: 80, align: 'right' });
       doc.text(String(p.quantity_in_stock), 435, y + 5, { width: 50, align: 'right' });
-      doc.fillColor(COULEUR_STATUT[p.status] || COULEURS.encre).font('Helvetica-Bold').fontSize(8.5)
+      doc.font(p.status === 'Rupture' ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5)
         .text(p.status, 495, y + 6, { width: 55 });
-      doc.fillColor(COULEURS.encre).font('Helvetica');
+      doc.font('Helvetica');
       y += 20;
     });
 
