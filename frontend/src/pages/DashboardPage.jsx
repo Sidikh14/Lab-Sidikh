@@ -125,6 +125,22 @@ export function DashboardPage() {
     }
   }
 
+  // Le widget "Ventes à encaisser" ne contient que les champs résumés de
+  // GET /orders (pas les articles) : on va chercher la commande complète
+  // avant d'ouvrir la modale, sinon le caissier voit une facture vide.
+  async function ouvrirEncaissementDepuisDashboard(order) {
+    setChargementDetail(true);
+    setErreur('');
+    try {
+      const detail = await api.getOrder(order.id);
+      setCommandeAEncaisser(detail);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setChargementDetail(false);
+    }
+  }
+
   const enRupture = products.filter((p) => p.status === 'rupture');
   const enFaible = products.filter((p) => p.status === 'faible');
   const commandesEnAttente = [...orders]
@@ -200,7 +216,7 @@ export function DashboardPage() {
                       <p className="carte-a-encaisser-client">{o.client_name || 'Client de passage'}</p>
                     </div>
                     <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
-                    <button className="btn btn-principal" onClick={() => setCommandeAEncaisser(o)}>Encaisser</button>
+                    <button className="btn btn-principal" disabled={chargementDetail} onClick={() => ouvrirEncaissementDepuisDashboard(o)}>Encaisser</button>
                   </div>
                 ))}
               </div>

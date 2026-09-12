@@ -1,14 +1,17 @@
--- Migration 006 : retour de facture au vendeur avant encaissement
+-- Migration 006 (corrigée) : retour de facture au vendeur avant encaissement
 --
--- Ajoute le nécessaire pour que le caissier puisse renvoyer une commande
--- au vendeur (pour modification ou annulation) avant de l'encaisser, et
--- pour qu'elle revienne ensuite directement au même caissier.
+-- Version précédente : assigned_cashier_id était en INTEGER, ce qui ne
+-- correspond pas au type UUID utilisé partout ailleurs dans ce schéma
+-- (orders.id, users.id, etc.) — la contrainte de clé étrangère échoue dans
+-- ce cas et aucune des 3 colonnes n'est créée.
 --
--- Le statut 'renvoyee_vendeur' est une simple valeur texte dans la colonne
--- orders.status existante (pas de contrainte CHECK détectée dans le code
--- fourni) : aucune modification de contrainte n'est donc nécessaire ici.
--- Si votre table orders a une contrainte CHECK sur status, ajoutez-la
--- séparément avant d'exécuter cette migration.
+-- Si vous avez déjà exécuté l'ancienne version 006 (celle avec INTEGER) et
+-- qu'elle a échoué, cette version peut être exécutée directement : les
+-- clauses IF NOT EXISTS/IF EXISTS gèrent les deux cas (rien n'a été créé,
+-- ou colonne créée avec le mauvais type).
+
+-- Au cas où l'ancienne version aurait partiellement réussi avec le mauvais type :
+ALTER TABLE orders DROP COLUMN IF EXISTS assigned_cashier_id;
 
 ALTER TABLE orders
   ADD COLUMN IF NOT EXISTS assigned_cashier_id UUID REFERENCES users(id),
