@@ -594,16 +594,19 @@ async function getOrderReceiptDetail(merchantId, id) {
   return { ...order, items: itemsResult.rows, order_number: formatOrderNumber(order) };
 }
 
+const MOYENS_PAIEMENT_LABEL = {
+  especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement',
+};
+
 // Mesure la hauteur réelle nécessaire pour le ticket (gère les noms de
 // produits qui passent sur plusieurs lignes) via un document PDFKit
 // jetable, jamais envoyé nulle part — juste utilisé pour heightOfString.
 function mesurerHauteurTicket(order, largeurContenu) {
   const mesure = new PDFDocument({ margin: 0 });
 
-  let hauteur = 196; // en-tête + bloc totaux fixe + pied de page + marge basse
+  let hauteur = 176; // en-tête + bloc totaux fixe + marge basse (sans pied de page)
   if (order.tva_applicable) hauteur += 13;
   if (Number(order.change_given) > 0) hauteur += 12;
-  if (order.caissier_name) hauteur += 12;
 
   order.items.forEach((item) => {
     mesure.font('Helvetica').fontSize(8.5);
@@ -627,12 +630,17 @@ function genererTicketEtroit(res, order) {
   const MARGE = 14;
   const largeurContenu = LARGEUR - MARGE * 2;
 
-  const hauteur = mesurerHauteurTicket(order, largeurContenu) + MARGE;
+  const hauteur = mesurerHauteurTicket(order, largeurContenu) + MARGE + 20; // marge de sécurité
 
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="ticket-${order.order_number}.pdf"`);
 
   const doc = new PDFDocument({ margin: MARGE, size: [LARGEUR, hauteur] });
+  // Le ticket doit impérativement tenir sur une seule page : si un
+  // débordement se produit malgré la marge de sécurité ci-dessus, on
+  // préfère ignorer l'ajout de page (au pire un léger chevauchement en
+  // bas) plutôt que de laisser PDFKit créer des pages Letter parasites.
+  doc.addPage = function () { return this; };
   doc.pipe(res);
   enregistrerPolices(doc);
 
@@ -705,14 +713,123 @@ function genererTicketEtroit(res, order) {
   }
 
   y += 14;
-  traitSeparateur(doc, y);
-  y += 12;
-  doc.font('Helvetica').fontSize(8).fillColor(COULEURS.muted)
-    .text('Merci de votre achat !', MARGE, y, { width: largeurContenu, align: 'center' });
-  if (order.caissier_name) {
-    y += 12;
-    doc.fontSize(7).text(`Servi par ${order.caissier_name}`, MARGE, y, { width: largeurContenu, align: 'center' });
-  }
 
   doc.end();
 }
+
+// Facture A4, pour un client enregistré — téléchargeable/imprimable,
+// même identité visuelle que les autres documents de l'application.
+function genererFactureA4(res, order) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="facture-${order.order_number}.pdf"`);
+
+  const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  doc.pipe(res);
+
+  let y = dessinerEntete(doc, {
+    businessName: order.business_name,
+    titre: 'Facture',
+    sousTitre: `${order.order_number} · ${new Date(order.validated_at || order.created_at).toLocaleDateString('fr-FR')}`,
+  });
+
+  // Bloc client (gauche) et bloc vente (droite)
+  doc.fontSize(9).fillColor(COULEURS.muted).text('FACTURÉ À', 50, y);
+  doc.text('DÉTAILS DE LA VENTE', 320, y);
+  y += 14;
+
+  doc.fontSize(11).fillColor(COULEURS.encre).font('Helvetica-Bold').text(order.client_name, 50, y);
+  doc.font('Helvetica').fontSize(9).fillColor(COULEURS.muted);
+  doc.text(`Vendeur : ${order.vendeur_name || '—'}`, 320, y);
+  y += 15;
+
+  if (order.client_phone) { doc.text(order.client_phone, 50, y); }
+  doc.text(`Caissier : ${order.caissier_name || '—'}`, 320, y);
+  y += 13;
+
+  if (order.client_address) { doc.text(order.client_address, 50, y); }
+  doc.text(`Paiement : ${MOYENS_PAIEMENT_LABEL[order.payment_method] || '—'}`, 320, y);
+  y += 13;
+
+  y += 16;
+
+  y = dessinerEnteteTableau(doc, y, [
+    { texte: 'Produit', x: 56, largeur: 220 },
+    { texte: 'Qté', x: 290, largeur: 50, aligner: 'right' },
+    { texte: 'Prix unitaire', x: 360, largeur: 85, aligner: 'right' },
+    { texte: 'Total', x: 460, largeur: 85, aligner: 'right' },
+  ]);
+
+  order.items.forEach((item, index) => {
+    const hauteurLigne = item.packaging_label ? 28 : 20;
+    if (index % 2 === 1) {
+      doc.rect(50, y, doc.page.width - 100, hauteurLigne).fill(COULEURS.fondAlterne);
+      doc.fillColor(COULEURS.encre);
+    }
+    const quantiteAffichee = item.packaging_label ? item.packaging_quantity : item.quantity;
+    doc.fontSize(9.5).fillColor(COULEURS.encre);
+    doc.text(item.product_name, 56, y + 5, { width: 220 });
+    if (item.packaging_label) {
+      doc.fontSize(8).fillColor(COULEURS.muted).text(item.packaging_label, 56, y + 17, { width: 220 });
+      doc.fontSize(9.5).fillColor(COULEURS.encre);
+    }
+    doc.text(String(quantiteAffichee), 290, y + 5, { width: 50, align: 'right' });
+    doc.text(`${formatMontant(item.line_total / quantiteAffichee)} ${order.currency}`, 360, y + 5, { width: 85, align: 'right' });
+    doc.text(`${formatMontant(item.line_total)} ${order.currency}`, 460, y + 5, { width: 85, align: 'right' });
+    y += hauteurLigne;
+  });
+
+  traitSeparateur(doc, y + 4);
+  y += 16;
+
+  doc.fontSize(9).fillColor(COULEURS.muted).text('SOUS-TOTAL', 300, y, { width: 145, align: 'right' });
+  doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.subtotal_amount)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+  y += 16;
+
+  if (order.tva_applicable) {
+    doc.fontSize(9).fillColor(COULEURS.muted).text(`TVA (${TVA_RATE} %)`, 300, y, { width: 145, align: 'right' });
+    doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.tva_amount)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+    y += 16;
+  }
+
+  y += 4;
+  doc.fontSize(9).fillColor(COULEURS.muted).text('MONTANT TOTAL', 300, y, { width: 145, align: 'right' });
+  doc.fontSize(16).fillColor(COULEURS.encre).font('Titre')
+    .text(`${formatMontant(order.total_amount)} ${order.currency}`, 460, y - 4, { width: 85, align: 'right' });
+  doc.fillColor(COULEURS.encre).font('Helvetica');
+  y += 30;
+
+  doc.fontSize(9).fillColor(COULEURS.muted).text('MONTANT REÇU', 300, y, { width: 145, align: 'right' });
+  doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.amount_received)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+  y += 16;
+
+  if (Number(order.change_given) > 0) {
+    doc.fontSize(9).fillColor(COULEURS.muted).text('MONNAIE RENDUE', 300, y, { width: 145, align: 'right' });
+    doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.change_given)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+    y += 16;
+  }
+
+  doc.fontSize(9).fillColor(COULEURS.mutedClair)
+    .text('Merci pour votre confiance.', 50, doc.page.height - 70, { width: doc.page.width - 100, align: 'center' });
+
+  doc.end();
+}
+
+// GET /orders/:id/receipt-pdf — reçu de caisse : ticket étroit pour un
+// client de passage, facture A4 pour un client enregistré.
+router.get('/:id/receipt-pdf', async (req, res) => {
+  try {
+    const order = await getOrderReceiptDetail(req.user.merchantId, req.params.id);
+    if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+
+    if (order.client_id) {
+      genererFactureA4(res, order);
+    } else {
+      genererTicketEtroit(res, order);
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la génération du reçu.' });
+  }
+});
+
+module.exports = router;
