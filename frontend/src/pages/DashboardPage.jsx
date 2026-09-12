@@ -141,11 +141,23 @@ export function DashboardPage() {
     }
   }
 
+  async function annulerCommandeRenvoyee(order) {
+    try {
+      await api.updateOrderStatus(order.id, 'annulee');
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
   const enRupture = products.filter((p) => p.status === 'rupture');
   const enFaible = products.filter((p) => p.status === 'faible');
   const commandesEnAttente = [...orders]
     .filter((o) => o.status === 'en_attente')
     .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+  const commandesRenvoyees = [...orders]
+    .filter((o) => o.status === 'renvoyee_vendeur')
+    .sort((a, b) => new Date(b.returned_at || b.created_at) - new Date(a.returned_at || a.created_at));
   const aLivrer = orders.filter((o) => o.status === 'validee');
   const valeurStock = products.reduce((sum, p) => sum + Number(p.unit_price) * Number(p.quantity_in_stock), 0);
   const aujourdHui = new Date().toDateString();
@@ -235,11 +247,38 @@ export function DashboardPage() {
                 <span className="valeur">{mesVentesAujourdhui.length}</span>
               </div>
               <div className="stat">
+                <span className="stat-icone" style={commandesRenvoyees.length > 0 ? { background: 'var(--danger-clair)', color: 'var(--danger)' } : undefined}><IconAlerte /></span>
+                <span className="etiquette">Factures renvoyées</span>
+                <span className="valeur">{commandesRenvoyees.length}</span>
+              </div>
+              <div className="stat">
                 <span className="stat-icone"><IconValeur /></span>
                 <span className="etiquette">Total réalisé aujourd'hui</span>
                 <span className="valeur">{Math.round(totalMesVentesAujourdhui).toLocaleString('fr-FR')} FCFA</span>
               </div>
             </div>
+
+            {commandesRenvoyees.length > 0 && (
+              <>
+                <h2 style={{ fontSize: 16, marginBottom: 12 }}>Factures renvoyées par la caisse</h2>
+                <div className="liste-a-encaisser" style={{ marginBottom: 24 }}>
+                  {commandesRenvoyees.map((o) => (
+                    <div key={o.id} className="carte-a-encaisser">
+                      <div style={{ minWidth: 0 }}>
+                        <p className="carte-a-encaisser-numero">{o.order_number}</p>
+                        <p className="carte-a-encaisser-client">
+                          {o.client_name || 'Client de passage'}
+                          {o.returned_reason && <span style={{ color: 'var(--danger)' }}> · {o.returned_reason}</span>}
+                        </p>
+                      </div>
+                      <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                      <button className="btn btn-principal" onClick={() => navigate(`/ventes?modifier=${o.id}`)}>Modifier</button>
+                      <button className="btn btn-brique" onClick={() => annulerCommandeRenvoyee(o)}>Annuler</button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
 
             <button className="btn btn-principal" style={{ marginBottom: 24 }} onClick={() => navigate('/ventes')}>
               + Nouvelle vente

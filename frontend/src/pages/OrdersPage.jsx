@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
@@ -158,6 +159,17 @@ export function OrdersPage() {
   }
 
   useEffect(charger, []);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const idAModifier = searchParams.get('modifier');
+    if (idAModifier && products.length > 0) {
+      demarrerModification({ id: idAModifier });
+      searchParams.delete('modifier');
+      setSearchParams(searchParams, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, products]);
 
   const produitsCaisse = useMemo(
     () => products.filter((p) => p.name.toLowerCase().includes(rechercheCaisse.toLowerCase())),
