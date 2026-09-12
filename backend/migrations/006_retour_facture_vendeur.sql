@@ -11,6 +11,6 @@
 -- séparément avant d'exécuter cette migration.
 
 ALTER TABLE orders
-  ADD COLUMN IF NOT EXISTS assigned_cashier_id INTEGER REFERENCES users(id),
+  ADD COLUMN IF NOT EXISTS assigned_cashier_id UUID REFERENCES users(id),
   ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP,
   ADD COLUMN IF NOT EXISTS returned_reason TEXT;
