@@ -9,10 +9,34 @@ const MOYENS_PAIEMENT = [
   { value: 'virement', label: 'Virement' },
 ];
 
-export function ModaleEncaissement({ commande, onClose, onSuccess }) {
+// Détail en lecture seule de la facture : le caissier voit exactement ce
+// que le vendeur a saisi, mais ne peut rien y changer directement.
+function DetailFacture({ commande }) {
+  return (
+    <div className="ticket-lignes" style={{ marginBottom: 16, border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)' }}>
+      {(commande.items || []).map((item) => (
+        <div key={item.id} className="ticket-ligne">
+          <div style={{ minWidth: 0 }}>
+            <p className="ticket-ligne-nom">
+              {item.product_name}
+              {item.packaging_label && <span style={{ color: 'var(--accent)' }}> · {item.packaging_label}</span>}
+            </p>
+            <p className="ticket-ligne-prix">{item.quantity} × {Math.round(item.unit_price).toLocaleString('fr-FR')} FCFA</p>
+          </div>
+          <span className="chiffre">{Math.round(item.line_total).toLocaleString('fr-FR')} FCFA</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned }) {
   const [moyenPaiement, setMoyenPaiement] = useState('especes');
   const [montantRecu, setMontantRecu] = useState(String(commande.total_amount));
   const [erreur, setErreur] = useState('');
+  const [vueRetour, setVueRetour] = useState(false);
+  const [motifRetour, setMotifRetour] = useState('');
+  const [enCours, setEnCours] = useState(false);
 
   const monnaieARendre = Math.max(0, Number(montantRecu || 0) - Number(commande.total_amount));
 
@@ -22,6 +46,8 @@ export function ModaleEncaissement({ commande, onClose, onSuccess }) {
       setErreur('Le montant reçu est inférieur au total à payer.');
       return;
     }
+    setEnCours(true);
+    setErreur('');
     try {
       await api.recordOrderPayment(commande.id, {
         paymentMethod: moyenPaiement,
@@ -30,18 +56,94 @@ export function ModaleEncaissement({ commande, onClose, onSuccess }) {
       onSuccess();
     } catch (err) {
       setErreur(err.message);
+    } finally {
+      setEnCours(false);
     }
+  }
+
+  async function handleAnnuler() {
+    setEnCours(true);
+    setErreur('');
+    try {
+      await api.updateOrderStatus(commande.id, 'annulee');
+      onSuccess();
+    } catch (err) {
+      setErreur(err.message);
+      setEnCours(false);
+    }
+  }
+
+  async function handleConfirmerRetour() {
+    setEnCours(true);
+    setErreur('');
+    try {
+      await api.returnOrderToSeller(commande.id, motifRetour || undefined);
+      if (onReturned) onReturned();
+      else onSuccess();
+    } catch (err) {
+      setErreur(err.message);
+      setEnCours(false);
+    }
+  }
+
+  if (vueRetour) {
+    return (
+      <div className="modale-fond" onClick={onClose}>
+        <div className="modale" onClick={(e) => e.stopPropagation()}>
+          <h2>Retourner {commande.order_number} au vendeur</h2>
+          <p style={{ fontSize: 14, color: 'var(--encre-douce)', marginBottom: 16 }}>
+            Le vendeur pourra modifier ou annuler cette facture. Elle vous reviendra directement une fois corrigée.
+          </p>
+          {erreur && <div className="erreur">{erreur}</div>}
+          <div className="champ-groupe">
+            <label className="etiquette" htmlFor="e-motif">Motif (optionnel)</label>
+            <input
+              id="e-motif"
+              type="text"
+              className="champ"
+              placeholder="Ex : erreur de quantité, mauvais produit…"
+              value={motifRetour}
+              onChange={(e) => setMotifRetour(e.target.value)}
+            />
+          </div>
+          <div className="actions-modale">
+            <button type="button" className="btn" onClick={() => setVueRetour(false)} disabled={enCours}>Retour</button>
+            <button type="button" className="btn btn-principal" onClick={handleConfirmerRetour} disabled={enCours}>
+              {enCours ? 'Envoi…' : 'Confirmer le retour au vendeur'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="modale-fond" onClick={onClose}>
       <div className="modale" onClick={(e) => e.stopPropagation()}>
         <h2>Encaisser {commande.order_number}</h2>
-        <p style={{ fontSize: 14, color: 'var(--encre-douce)', marginBottom: 16 }}>
-          Total à payer : <strong className="chiffre" style={{ color: 'var(--encre)' }}>
-            {Math.round(commande.total_amount).toLocaleString('fr-FR')} FCFA
-          </strong>
+        <p style={{ fontSize: 14, color: 'var(--encre-douce)', marginBottom: 8 }}>
+          {commande.client_name || 'Client de passage'}
         </p>
+
+        <DetailFacture commande={commande} />
+
+        <div className="ticket-totaux" style={{ marginBottom: 16 }}>
+          <div className="ticket-total-ligne">
+            <span>Sous-total</span>
+            <span className="chiffre">{Math.round(commande.subtotal_amount).toLocaleString('fr-FR')}</span>
+          </div>
+          {commande.tva_applicable && (
+            <div className="ticket-total-ligne">
+              <span>TVA ({commande.tva_rate ?? 18} %)</span>
+              <span className="chiffre">{Math.round(commande.tva_amount).toLocaleString('fr-FR')}</span>
+            </div>
+          )}
+          <div className="ticket-total-ligne ticket-total-ligne--principal">
+            <span>Total à payer</span>
+            <span className="chiffre">{Math.round(commande.total_amount).toLocaleString('fr-FR')} FCFA</span>
+          </div>
+        </div>
+
         {erreur && <div className="erreur">{erreur}</div>}
         <form onSubmit={handleEncaisser}>
           <div className="champ-groupe">
@@ -65,9 +167,13 @@ export function ModaleEncaissement({ commande, onClose, onSuccess }) {
           <div style={{ fontSize: 14, marginBottom: 8 }}>
             Monnaie à rendre : <strong className="chiffre">{Math.round(monnaieARendre).toLocaleString('fr-FR')} FCFA</strong>
           </div>
-          <div className="actions-modale">
-            <button type="button" className="btn" onClick={onClose}>Plus tard</button>
-            <button type="submit" className="btn btn-principal">Confirmer l'encaissement</button>
+          <div className="actions-modale" style={{ flexWrap: 'wrap' }}>
+            <button type="button" className="btn" onClick={onClose} disabled={enCours}>Plus tard</button>
+            <button type="button" className="btn btn-brique" onClick={handleAnnuler} disabled={enCours}>Annuler la vente</button>
+            <button type="button" className="btn" onClick={() => setVueRetour(true)} disabled={enCours}>Retourner au vendeur</button>
+            <button type="submit" className="btn btn-principal" disabled={enCours}>
+              {enCours ? 'Encaissement…' : "Confirmer l'encaissement"}
+            </button>
           </div>
         </form>
       </div>

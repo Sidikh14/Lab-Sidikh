@@ -119,6 +119,17 @@ textarea {
   transform: none;
 }
 
+.btn-brique {
+  background: var(--carte);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.btn-brique:hover {
+  background: var(--danger-clair);
+  border-color: var(--danger);
+}
+
 .champ {
   width: 100%;
   padding: 12px 14px;

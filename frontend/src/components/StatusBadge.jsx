@@ -3,6 +3,7 @@ const STYLES = {
   faible: { classe: 'tampon-laiton', texte: 'Faible' },
   rupture: { classe: 'tampon-brique', texte: 'Rupture' },
   en_attente: { classe: 'tampon-laiton', texte: 'En attente' },
+  renvoyee_vendeur: { classe: 'tampon-brique', texte: 'Renvoyée au vendeur' },
   validee: { classe: 'tampon-sarcelle', texte: 'Validée' },
   livree: { classe: 'tampon-sarcelle', texte: 'Livrée' },
   annulee: { classe: 'tampon-brique', texte: 'Annulée' },

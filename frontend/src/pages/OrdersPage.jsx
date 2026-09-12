@@ -73,6 +73,77 @@ export function OrdersPage() {
   const [choixConditionnement, setChoixConditionnement] = useState(null);
 
   const [commandeAEncaisser, setCommandeAEncaisser] = useState(null);
+  const [chargementDetail, setChargementDetail] = useState(false);
+  const [commandeEnEdition, setCommandeEnEdition] = useState(null);
+  const [confirmationModification, setConfirmationModification] = useState(null);
+
+  const peutTraiterRenvoi = ['manager', 'gerant', 'vendeur'].includes(user.role);
+
+  // La liste des commandes (GET /orders) ne contient pas le détail des
+  // articles : on va chercher la commande complète avant d'ouvrir la
+  // modale d'encaissement, pour que le caissier voie exactement ce qui a
+  // été vendu.
+  async function ouvrirEncaissement(order) {
+    setChargementDetail(true);
+    setErreur('');
+    try {
+      const detail = await api.getOrder(order.id);
+      setCommandeAEncaisser(detail);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setChargementDetail(false);
+    }
+  }
+
+  // Reconstruit le panier à partir d'une commande renvoyée par le caissier,
+  // pour que le vendeur reparte des articles déjà saisis plutôt que de zéro.
+  function construirePanierDepuisCommande(detail, produitsDisponibles) {
+    return (detail.items || []).map((item) => {
+      const produit = produitsDisponibles.find((p) => p.id === item.product_id);
+      let unitId = null;
+      if (item.packaging_label && produit) {
+        const unite = (produit.units || []).find((u) => u.label === item.packaging_label);
+        if (unite) unitId = unite.id;
+      }
+      const quantity = item.packaging_label ? item.packaging_quantity : item.quantity;
+      return { productId: item.product_id, unitId, quantity };
+    });
+  }
+
+  async function demarrerModification(order) {
+    setChargementDetail(true);
+    setErreur('');
+    try {
+      const detail = await api.getOrder(order.id);
+      setPanier(construirePanierDepuisCommande(detail, products));
+      setClientId(detail.client_id ? String(detail.client_id) : '');
+      setTvaApplicable(Boolean(detail.tva_applicable));
+      setCommandeEnEdition(detail);
+      setOnglet('caisse');
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setChargementDetail(false);
+    }
+  }
+
+  function annulerEdition() {
+    setPanier([]);
+    setClientId('');
+    setTvaApplicable(false);
+    setCommandeEnEdition(null);
+    setOnglet('historique');
+  }
+
+  async function annulerCommandeRenvoyee(order) {
+    try {
+      await api.updateOrderStatus(order.id, 'annulee');
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
 
   function charger() {
     setChargement(true);
@@ -151,20 +222,32 @@ export function OrdersPage() {
     if (lignesPanier.length === 0) return;
     setVenteEnCours(true);
     setErreur('');
+    const payload = {
+      clientId: clientId || null,
+      items: panier.map((l) => ({ productId: l.productId, quantity: l.quantity, unitId: l.unitId || undefined })),
+      tvaApplicable,
+    };
     try {
-      const commande = await api.createOrder({
-        clientId: clientId || null,
-        items: panier.map((l) => ({ productId: l.productId, quantity: l.quantity, unitId: l.unitId || undefined })),
-        tvaApplicable,
-      });
-      setPanier([]);
-      setClientId('');
-      setTvaApplicable(false);
-      charger();
-      if (peutEncaisser) {
-        setCommandeAEncaisser(commande);
+      if (commandeEnEdition) {
+        const commande = await api.updateOrder(commandeEnEdition.id, payload);
+        setPanier([]);
+        setClientId('');
+        setTvaApplicable(false);
+        setCommandeEnEdition(null);
+        setOnglet('historique');
+        charger();
+        setConfirmationModification(commande);
       } else {
-        setConfirmationVente(commande);
+        const commande = await api.createOrder(payload);
+        setPanier([]);
+        setClientId('');
+        setTvaApplicable(false);
+        charger();
+        if (peutEncaisser) {
+          ouvrirEncaissement(commande);
+        } else {
+          setConfirmationVente(commande);
+        }
       }
     } catch (err) {
       setErreur(err.message);
@@ -186,6 +269,12 @@ export function OrdersPage() {
     ? [...orders].sort((a, b) => {
         if (a.status === 'en_attente' && b.status !== 'en_attente') return -1;
         if (b.status === 'en_attente' && a.status !== 'en_attente') return 1;
+        return new Date(b.created_at) - new Date(a.created_at);
+      })
+    : peutTraiterRenvoi
+    ? [...orders].sort((a, b) => {
+        if (a.status === 'renvoyee_vendeur' && b.status !== 'renvoyee_vendeur') return -1;
+        if (b.status === 'renvoyee_vendeur' && a.status !== 'renvoyee_vendeur') return 1;
         return new Date(b.created_at) - new Date(a.created_at);
       })
     : orders;
@@ -247,6 +336,28 @@ export function OrdersPage() {
           </div>
 
           <div className="caisse-ticket">
+            {commandeEnEdition && (
+              <div
+                style={{
+                  background: 'var(--danger-clair)',
+                  color: 'var(--danger)',
+                  borderRadius: 'var(--rayon-petit)',
+                  padding: '10px 14px',
+                  marginBottom: 12,
+                  fontSize: 13,
+                }}
+              >
+                Modification de la commande <strong>{commandeEnEdition.order_number}</strong>, renvoyée par le caissier
+                {commandeEnEdition.returned_reason ? ` (${commandeEnEdition.returned_reason})` : ''}.{' '}
+                <button
+                  type="button"
+                  onClick={annulerEdition}
+                  style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', textDecoration: 'underline', cursor: 'pointer', fontSize: 13 }}
+                >
+                  Abandonner la modification
+                </button>
+              </div>
+            )}
             <div className="champ-groupe">
               <label className="etiquette" htmlFor="c-client">Client</label>
               <select id="c-client" className="champ" value={clientId} onChange={(e) => setClientId(e.target.value)}>
@@ -310,7 +421,11 @@ export function OrdersPage() {
               disabled={lignesPanier.length === 0 || venteEnCours}
               onClick={handlePayer}
             >
-              {venteEnCours ? 'Enregistrement…' : `Payer · ${Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA`}
+              {venteEnCours
+                ? 'Enregistrement…'
+                : commandeEnEdition
+                ? `Enregistrer les modifications · ${Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA`
+                : `Payer · ${Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA`}
             </button>
           </div>
         </div>
@@ -334,22 +449,53 @@ export function OrdersPage() {
                   <th>Client</th>
                   <th>Montant</th>
                   <th>Statut</th>
-                  {(peutEncaisser || peutGererStatut) && <th>Actions</th>}
+                  {(peutEncaisser || peutGererStatut || peutTraiterRenvoi) && <th>Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {ordersTries.map((o) => (
-                  <tr key={o.id} className={o.status === 'en_attente' && peutEncaisser ? 'ligne-prioritaire' : ''}>
+                  <tr
+                    key={o.id}
+                    className={
+                      (o.status === 'en_attente' && peutEncaisser) || (o.status === 'renvoyee_vendeur' && peutTraiterRenvoi)
+                        ? 'ligne-prioritaire'
+                        : ''
+                    }
+                  >
                     <td className="chiffre">{o.order_number}</td>
                     <td>{o.client_name || 'Client de passage'}</td>
                     <td className="chiffre">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
                     <td><StatusBadge status={o.status} /></td>
-                    {(peutEncaisser || peutGererStatut) && (
+                    {(peutEncaisser || peutGererStatut || peutTraiterRenvoi) && (
                       <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                         {peutEncaisser && o.status === 'en_attente' && (
-                          <button className="btn btn-principal" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => setCommandeAEncaisser(o)}>
+                          <button
+                            className="btn btn-principal"
+                            style={{ padding: '5px 10px', fontSize: 13 }}
+                            disabled={chargementDetail}
+                            onClick={() => ouvrirEncaissement(o)}
+                          >
                             Encaisser
                           </button>
+                        )}
+                        {peutTraiterRenvoi && o.status === 'renvoyee_vendeur' && (
+                          <>
+                            <button
+                              className="btn btn-principal"
+                              style={{ padding: '5px 10px', fontSize: 13 }}
+                              disabled={chargementDetail}
+                              onClick={() => demarrerModification(o)}
+                            >
+                              Modifier
+                            </button>
+                            <button
+                              className="btn btn-brique"
+                              style={{ padding: '5px 10px', fontSize: 13 }}
+                              onClick={() => annulerCommandeRenvoyee(o)}
+                            >
+                              Annuler
+                            </button>
+                          </>
                         )}
                         {peutGererStatut && o.status === 'validee' && o.client_name && (
                           <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handleStatut(o, 'livree')}>
@@ -426,6 +572,29 @@ export function OrdersPage() {
               </p>
             </div>
             <button className="btn btn-principal" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setConfirmationVente(null)}>
+              Compris
+            </button>
+          </div>
+        </div>
+      )}
+
+      {confirmationModification && (
+        <div className="modale-fond" onClick={() => setConfirmationModification(null)}>
+          <div className="modale" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ color: 'var(--vif)', margin: '0 auto 12px', width: 'fit-content' }}>
+              <IconCoche />
+            </div>
+            <h2 style={{ marginBottom: 6 }}>Commande modifiée</h2>
+            <p style={{ color: 'var(--encre-douce)', fontSize: 14, marginBottom: 16 }}>
+              Elle est repartie chez le caissier pour encaissement.
+            </p>
+            <div style={{ background: 'var(--fond)', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', padding: '14px', marginBottom: 16 }}>
+              <p className="chiffre" style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{confirmationModification.order_number}</p>
+              <p style={{ fontSize: 13, color: 'var(--encre-douce)', margin: '4px 0 0' }}>
+                Nouveau total : {Math.round(confirmationModification.total_amount).toLocaleString('fr-FR')} FCFA
+              </p>
+            </div>
+            <button className="btn btn-principal" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setConfirmationModification(null)}>
               Compris
             </button>
           </div>

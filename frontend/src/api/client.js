@@ -76,10 +76,14 @@ export const api = {
   getOrder: (id) => request(`/orders/${id}`),
   createOrder: (data) =>
     request('/orders', { method: 'POST', body: JSON.stringify(data) }),
+  updateOrder: (id, data) =>
+    request(`/orders/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   updateOrderStatus: (id, status) =>
     request(`/orders/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   recordOrderPayment: (id, data) =>
     request(`/orders/${id}/payment`, { method: 'PATCH', body: JSON.stringify(data) }),
+  returnOrderToSeller: (id, reason) =>
+    request(`/orders/${id}/return-to-seller`, { method: 'PATCH', body: JSON.stringify({ reason }) }),
 
   getUsers: () => request('/users'),
   createUser: (data) =>
