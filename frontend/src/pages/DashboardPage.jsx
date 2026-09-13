@@ -66,6 +66,12 @@ function dateAujourdHui() {
   return new Date().toISOString().slice(0, 10);
 }
 
+const NOMS_MOIS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+function formatMois(moisStr) {
+  const [annee, mois] = moisStr.split('-');
+  return `${NOMS_MOIS[Number(mois) - 1]} ${annee}`;
+}
+
 export function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -89,6 +95,7 @@ export function DashboardPage() {
   const [chargementDetail, setChargementDetail] = useState(false);
   const [commandeAEncaisser, setCommandeAEncaisser] = useState(null);
   const [demandesCredit, setDemandesCredit] = useState([]);
+  const [chiffreAffaires, setChiffreAffaires] = useState(null);
 
   function charger() {
     setChargement(true);
@@ -103,6 +110,7 @@ export function DashboardPage() {
 
     if (vueEquipe) {
       api.getCreditRequests('en_attente').then(setDemandesCredit).catch((err) => setErreur(err.message));
+      api.getRevenue().then(setChiffreAffaires).catch((err) => setErreur(err.message));
     }
   }
 
@@ -425,6 +433,34 @@ export function DashboardPage() {
 
       {onglet === 'activite' && (
         <>
+          {vueEquipe && chiffreAffaires && (
+            <div style={{ marginBottom: 24 }}>
+              <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 20 }}>
+                <div className="stat">
+                  <span className="stat-icone"><IconValeur /></span>
+                  <span className="etiquette">Chiffre d'affaires total</span>
+                  <span className="valeur">{Math.round(chiffreAffaires.total).toLocaleString('fr-FR')} FCFA</span>
+                </div>
+              </div>
+
+              {chiffreAffaires.byMonth.length > 0 && (
+                <>
+                  <h2 style={{ fontSize: 16, marginBottom: 12 }}>Chiffre d'affaires par mois</h2>
+                  <div className="grille-resume-equipe">
+                    {chiffreAffaires.byMonth.map((m) => (
+                      <div key={m.month} className="carte-resume-membre">
+                        <div style={{ minWidth: 0 }}>
+                          <p className="carte-resume-membre-nom">{formatMois(m.month)}</p>
+                        </div>
+                        <p className="carte-resume-membre-total">{Math.round(m.total).toLocaleString('fr-FR')} FCFA</p>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="barre-filtres">
             <div className="champ-groupe" style={{ marginBottom: 0 }}>
               <label className="etiquette" htmlFor="date-debut">Du</label>

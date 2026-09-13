@@ -2,6 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
+const { requireRole } = require('../middleware/roles');
 const { COULEURS, formatMontant, dessinerEntete } = require('../utils/pdfHelpers');
 
 const router = express.Router();
@@ -87,6 +88,39 @@ async function recupererActivite(req, dateDebut, dateFin) {
     ...journalResult.rows,
   ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 }
+
+// GET /activity/revenue — chiffre d'affaires total et par mois (manager/gérant
+// uniquement). Basé sur les commandes encaissées (validated_at renseigné),
+// pas sur les commandes simplement créées : une vente annulée ou pas encore
+// payée ne compte pas dans le chiffre d'affaires.
+router.get('/revenue', requireRole('manager', 'gerant'), async (req, res) => {
+  try {
+    const totalResult = await pool.query(
+      `SELECT COALESCE(SUM(total_amount), 0) AS total
+       FROM orders
+       WHERE merchant_id = $1 AND validated_at IS NOT NULL`,
+      [req.user.merchantId]
+    );
+
+    const parMoisResult = await pool.query(
+      `SELECT to_char(date_trunc('month', validated_at), 'YYYY-MM') AS month,
+              COALESCE(SUM(total_amount), 0) AS total
+       FROM orders
+       WHERE merchant_id = $1 AND validated_at IS NOT NULL
+       GROUP BY 1
+       ORDER BY 1 DESC`,
+      [req.user.merchantId]
+    );
+
+    res.json({
+      total: Number(totalResult.rows[0].total),
+      byMonth: parMoisResult.rows.map((r) => ({ month: r.month, total: Number(r.total) })),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors du calcul du chiffre d'affaires." });
+  }
+});
 
 // GET /activity/today — utilisé par le tableau de bord (Pilotage)
 router.get('/today', async (req, res) => {

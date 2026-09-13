@@ -123,6 +123,7 @@ export const api = {
   getActivityToday: () => request('/activity/today'),
   getActivityRange: (from, to) => request(`/activity/range?from=${from}&to=${to}`),
   downloadActivityPdf: (from, to) => previewFile(`/activity/pdf?from=${from}&to=${to}`),
+  getRevenue: () => request('/activity/revenue'),
   downloadProductsPdf: () => previewFile('/products/pdf'),
 
   getInventorySessions: () => request('/inventory-sessions'),
