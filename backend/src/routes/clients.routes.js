@@ -8,6 +8,9 @@ const { formatMontant } = require('../utils/pdfHelpers');
 const router = express.Router();
 router.use(authenticate);
 
+// Doit rester synchronisée avec MOYENS_PAIEMENT dans cash.routes.js
+const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
+
 // Calcule la créance d'un ou plusieurs clients : somme des ventes à crédit
 // (payment_method = 'a_credit') moins les règlements déjà enregistrés.
 // On ne stocke jamais ce montant en colonne pour éviter toute
@@ -74,10 +77,13 @@ router.get('/:id', async (req, res) => {
 // POST /clients/:id/credit-payments — enregistrer un règlement de créance
 // (partiel ou total). Accessible au caissier, au manager et au gérant.
 router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
-  const { amount, note } = req.body;
+  const { amount, note, paymentMethod } = req.body;
 
   if (typeof amount !== 'number' || amount <= 0) {
     return res.status(400).json({ error: 'Le montant du règlement doit être un nombre positif.' });
+  }
+  if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
+    return res.status(400).json({ error: 'Moyen de paiement invalide.' });
   }
 
   try {
@@ -93,9 +99,9 @@ router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier')
     }
 
     const result = await pool.query(
-      `INSERT INTO credit_payments (merchant_id, client_id, amount, recorded_by, note)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.user.merchantId, req.params.id, amount, req.user.id, note || null]
+      `INSERT INTO credit_payments (merchant_id, client_id, amount, payment_method, recorded_by, note)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [req.user.merchantId, req.params.id, amount, paymentMethod, req.user.id, note || null]
     );
 
     await logActivity({
