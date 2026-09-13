@@ -364,7 +364,10 @@ export function CaissePage() {
                 {mouvementsReleve.map((m) => {
                   const montantSigne = m.sens === 'entree' ? Number(m.amount) : -Number(m.amount);
                   let libelle = '';
-                  if (m.type === 'encaissement') libelle = `Encaissement ${m.order_number || ''}${m.client_name ? ` — ${m.client_name}` : ''}`;
+                  if (m.type === 'encaissement') {
+                    const numero = m.order_seq ? `CMD-${new Date(m.order_created_at).getFullYear()}-${String(m.order_seq).padStart(4, '0')}` : '';
+                    libelle = `Encaissement ${numero}${m.client_name ? ` — ${m.client_name}` : ''}`;
+                  }
                   else if (m.type === 'reglement_credit') libelle = `Règlement créance${m.client_name ? ` — ${m.client_name}` : ''}`;
                   else if (m.type === 'achat_stock') libelle = `Achat stock — ${m.product_name}${m.supplier_name ? ` (${m.supplier_name})` : ''}`;
                   else if (m.type === 'reglement_fournisseur') libelle = `Règlement fournisseur — ${m.supplier_name}`;

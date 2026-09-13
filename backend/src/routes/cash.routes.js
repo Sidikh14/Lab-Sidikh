@@ -101,7 +101,7 @@ async function recupererMouvementsDetailles(req, method, from, to) {
 
   const encaissements = await pool.query(
     `SELECT o.id, 'encaissement' AS type, o.validated_at AS date, o.total_amount AS amount,
-            o.order_number, c.full_name AS client_name
+            o.order_seq, o.created_at AS order_created_at, c.full_name AS client_name
      FROM orders o
      LEFT JOIN clients c ON c.id = o.client_id
      WHERE o.merchant_id = $1 AND o.validated_at >= $2 AND o.validated_at < $3 AND o.payment_method = $4
@@ -153,8 +153,14 @@ async function recupererMouvementsDetailles(req, method, from, to) {
   return [...entrees, ...dehors].sort((a, b) => new Date(a.date) - new Date(b.date));
 }
 
+function formatOrderNumber(m) {
+  if (!m.order_seq) return '';
+  const annee = new Date(m.order_created_at).getFullYear();
+  return `CMD-${annee}-${String(m.order_seq).padStart(4, '0')}`;
+}
+
 function texteMouvement(m) {
-  if (m.type === 'encaissement') return `Encaissement ${m.order_number || ''}${m.client_name ? ` — ${m.client_name}` : ''}`;
+  if (m.type === 'encaissement') return `Encaissement ${formatOrderNumber(m)}${m.client_name ? ` — ${m.client_name}` : ''}`;
   if (m.type === 'reglement_credit') return `Règlement créance${m.client_name ? ` — ${m.client_name}` : ''}`;
   if (m.type === 'achat_stock') return `Achat stock — ${m.product_name}${m.supplier_name ? ` (${m.supplier_name})` : ''}`;
   if (m.type === 'reglement_fournisseur') return `Règlement fournisseur — ${m.supplier_name}`;
