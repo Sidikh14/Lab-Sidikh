@@ -2,8 +2,6 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/StatusBadge';
 
-const LABEL_MOYEN = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
-
 export function ClientsPage() {
   const [clients, setClients] = useState([]);
   const [chargement, setChargement] = useState(true);
@@ -16,9 +14,24 @@ export function ClientsPage() {
   const [detailErreur, setDetailErreur] = useState('');
   const [vueReglement, setVueReglement] = useState(false);
   const [montantReglement, setMontantReglement] = useState('');
-  const [moyenReglement, setMoyenReglement] = useState('especes');
   const [noteReglement, setNoteReglement] = useState('');
   const [reglementEnCours, setReglementEnCours] = useState(false);
+  const [envoiReleveEnCours, setEnvoiReleveEnCours] = useState(false);
+  const [releveEnvoye, setReleveEnvoye] = useState(false);
+
+  async function handleEnvoyerReleve() {
+    setEnvoiReleveEnCours(true);
+    setDetailErreur('');
+    setReleveEnvoye(false);
+    try {
+      await api.sendClientStatement(clientSelectionne.id);
+      setReleveEnvoye(true);
+    } catch (err) {
+      setDetailErreur(err.message);
+    } finally {
+      setEnvoiReleveEnCours(false);
+    }
+  }
 
   function charger() {
     setChargement(true);
@@ -51,6 +64,7 @@ export function ClientsPage() {
     setClientSelectionne(client);
     setDetailChargement(true);
     setDetailErreur('');
+    setReleveEnvoye(false);
     try {
       const detail = await api.getClient(client.id);
       setClientSelectionne(detail);
@@ -81,14 +95,9 @@ export function ClientsPage() {
     setReglementEnCours(true);
     setDetailErreur('');
     try {
-      await api.recordCreditPayment(clientSelectionne.id, {
-        amount: montant,
-        paymentMethod: moyenReglement,
-        note: noteReglement || undefined,
-      });
+      await api.recordCreditPayment(clientSelectionne.id, { amount: montant, note: noteReglement || undefined });
       setVueReglement(false);
       setMontantReglement('');
-      setMoyenReglement('especes');
       setNoteReglement('');
       await rafraichirFiche(clientSelectionne.id);
     } catch (err) {
@@ -239,21 +248,6 @@ export function ClientsPage() {
                     />
                   </div>
                   <div className="champ-groupe">
-                    <label className="etiquette" htmlFor="r-moyen">Moyen de paiement</label>
-                    <select
-                      id="r-moyen"
-                      className="champ"
-                      value={moyenReglement}
-                      onChange={(e) => setMoyenReglement(e.target.value)}
-                    >
-                      <option value="especes">Espèces</option>
-                      <option value="wave">Wave</option>
-                      <option value="orange_money">Orange Money</option>
-                      <option value="cheque">Chèque</option>
-                      <option value="virement">Virement</option>
-                    </select>
-                  </div>
-                  <div className="champ-groupe">
                     <label className="etiquette" htmlFor="r-note">Note (optionnel)</label>
                     <input
                       id="r-note"
@@ -298,9 +292,18 @@ export function ClientsPage() {
                 </div>
 
                 {Number(clientSelectionne.balance_due) > 0 && (
-                  <button className="btn btn-principal" style={{ marginBottom: 20 }} onClick={() => setVueReglement(true)}>
-                    Enregistrer un règlement
-                  </button>
+                  <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button className="btn btn-principal" onClick={() => setVueReglement(true)}>
+                      Enregistrer un règlement
+                    </button>
+                    <button className="btn" onClick={handleEnvoyerReleve} disabled={envoiReleveEnCours || !clientSelectionne.email}>
+                      {envoiReleveEnCours ? 'Envoi…' : 'Envoyer le relevé par email'}
+                    </button>
+                    {!clientSelectionne.email && (
+                      <span style={{ fontSize: 12, color: 'var(--encre-douce)' }}>Aucun email enregistré pour ce client</span>
+                    )}
+                    {releveEnvoye && <span style={{ fontSize: 12, color: 'var(--vif)' }}>Relevé envoyé ✓</span>}
+                  </div>
                 )}
 
                 <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Historique d'achats</p>
@@ -335,7 +338,6 @@ export function ClientsPage() {
                         <tr>
                           <th>Date</th>
                           <th>Montant</th>
-                          <th>Moyen</th>
                           <th>Enregistré par</th>
                         </tr>
                       </thead>
@@ -344,7 +346,6 @@ export function ClientsPage() {
                           <tr key={r.id}>
                             <td>{new Date(r.created_at).toLocaleDateString('fr-FR')}</td>
                             <td className="chiffre">{Number(r.amount).toLocaleString('fr-FR')} FCFA</td>
-                            <td>{LABEL_MOYEN[r.payment_method] || r.payment_method}</td>
                             <td>{r.recorded_by_name || '—'}</td>
                           </tr>
                         ))}

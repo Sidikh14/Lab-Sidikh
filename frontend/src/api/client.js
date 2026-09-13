@@ -71,8 +71,10 @@ export const api = {
   getClient: (id) => request(`/clients/${id}`),
   createClient: (data) =>
     request('/clients', { method: 'POST', body: JSON.stringify(data) }),
-  recordCreditPayment: (id, data) =>
-    request(`/clients/${id}/credit-payments`, { method: 'POST', body: JSON.stringify(data) }),
+  recordCreditPayment: (clientId, data) =>
+    request(`/clients/${clientId}/credit-payments`, { method: 'POST', body: JSON.stringify(data) }),
+  sendClientStatement: (clientId) =>
+    request(`/clients/${clientId}/send-statement`, { method: 'POST' }),
 
   getOrders: () => request('/orders'),
   getOrder: (id) => request(`/orders/${id}`),
@@ -88,6 +90,14 @@ export const api = {
   returnOrderToSeller: (id, reason) =>
     request(`/orders/${id}/return-to-seller`, { method: 'PATCH', body: JSON.stringify({ reason }) }),
 
+  getCreditRequests: (status) => request(`/credit-requests${status ? `?status=${status}` : ''}`),
+  createCreditRequest: (data) =>
+    request('/credit-requests', { method: 'POST', body: JSON.stringify(data) }),
+  approveCreditRequest: (id) =>
+    request(`/credit-requests/${id}/approve`, { method: 'PATCH' }),
+  rejectCreditRequest: (id, reason) =>
+    request(`/credit-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ reason }) }),
+
   getUsers: () => request('/users'),
   createUser: (data) =>
     request('/users', { method: 'POST', body: JSON.stringify(data) }),
@@ -95,22 +105,10 @@ export const api = {
     request(`/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
   setUserPermissions: (id, modules) =>
     request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules }) }),
-  resetUserPassword: (id, newPassword) =>
-    request(`/users/${id}/password`, { method: 'PATCH', body: JSON.stringify({ newPassword }) }),
-
-  getCreditRequests: (status) => request(`/credit-requests${status ? `?status=${status}` : ''}`),
-  createCreditRequest: (data) =>
-    request('/credit-requests', { method: 'POST', body: JSON.stringify(data) }),
-  approveCreditRequest: (id) => request(`/credit-requests/${id}/approve`, { method: 'PATCH' }),
-  rejectCreditRequest: (id, reason) =>
-    request(`/credit-requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ reason }) }),
 
   getSuppliers: () => request('/suppliers'),
-  getSupplier: (id) => request(`/suppliers/${id}`),
   createSupplier: (data) =>
     request('/suppliers', { method: 'POST', body: JSON.stringify(data) }),
-  createSupplierPayment: (id, data) =>
-    request(`/suppliers/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }),
   deleteSupplier: (id) => request(`/suppliers/${id}`, { method: 'DELETE' }),
 
   getPurchaseOrders: () => request('/purchase-orders'),
@@ -125,18 +123,6 @@ export const api = {
   getActivityToday: () => request('/activity/today'),
   getActivityRange: (from, to) => request(`/activity/range?from=${from}&to=${to}`),
   downloadActivityPdf: (from, to) => previewFile(`/activity/pdf?from=${from}&to=${to}`),
-  getRevenue: () => request('/activity/revenue'),
-
-  getCashSummary: (date) => request(`/cash/summary${date ? `?date=${date}` : ''}`),
-  createCashClosing: (data) =>
-    request('/cash/closings', { method: 'POST', body: JSON.stringify(data) }),
-  getCashClosings: (from, to) => request(`/cash/closings?from=${from}&to=${to}`),
-  createCashExpense: (data) =>
-    request('/cash/expenses', { method: 'POST', body: JSON.stringify(data) }),
-  getCashExpenses: (from, to, method) =>
-    request(`/cash/expenses?from=${from}&to=${to}${method ? `&method=${method}` : ''}`),
-  getCashMovements: (method, from, to) => request(`/cash/movements?method=${method}&from=${from}&to=${to}`),
-  downloadCashMovementsPdf: (method, from, to) => previewFile(`/cash/movements/pdf?method=${method}&from=${from}&to=${to}`),
   downloadProductsPdf: () => previewFile('/products/pdf'),
 
   getInventorySessions: () => request('/inventory-sessions'),
