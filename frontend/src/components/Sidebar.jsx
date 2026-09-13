@@ -85,7 +85,7 @@ function IconEquipe() {
 
 const TOUS_LES_LIENS = [
   { to: '/stock', label: 'Produits', icone: IconStock, module: 'stock' },
-  { to: '/ventes', label: 'Ventes & caisse', icone: IconVentes, module: 'ventes' },
+  { to: '/ventes', label: 'Ventes', icone: IconVentes, module: 'ventes' },
   { to: '/clients', label: 'Clients', icone: IconClients, module: 'clients' },
   { to: '/fournisseurs', label: 'Fournisseurs', icone: IconFournisseurs, module: 'fournisseurs' },
   { to: '/achats', label: 'Achats', icone: IconAchats, module: 'achats' },
