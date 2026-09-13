@@ -274,8 +274,9 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
 // Une entrée peut être au comptant ou à crédit ; le crédit exige un
 // fournisseur enregistré (pour pouvoir suivre la dette) et un montant total.
 router.post('/:id/stock-movement', async (req, res) => {
-  const { movementType, quantity, reason, supplierId, movementDate, paymentMethod, totalCost } = req.body;
+  const { movementType, quantity, reason, supplierId, movementDate, paymentMethod, totalCost, cashMethod } = req.body;
   const validTypes = ['entree', 'sortie', 'ajustement'];
+  const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
 
   if (!validTypes.includes(movementType) || !Number.isInteger(quantity) || quantity <= 0) {
     return res.status(400).json({ error: 'Mouvement de stock invalide.' });
@@ -283,6 +284,7 @@ router.post('/:id/stock-movement', async (req, res) => {
 
   let paiementFinal = null;
   let coutFinal = null;
+  let cashMethodFinal = null;
   if (movementType === 'entree' && paymentMethod) {
     if (!['comptant', 'a_credit'].includes(paymentMethod)) {
       return res.status(400).json({ error: 'Mode de paiement invalide.' });
@@ -294,6 +296,15 @@ router.post('/:id/stock-movement', async (req, res) => {
       if (!Number(totalCost) || Number(totalCost) <= 0) {
         return res.status(400).json({ error: "Le montant total de l'achat est requis pour une entrée à crédit." });
       }
+    }
+    if (paymentMethod === 'comptant') {
+      if (!Number(totalCost) || Number(totalCost) <= 0) {
+        return res.status(400).json({ error: "Le montant total de l'achat est requis pour une entrée au comptant." });
+      }
+      if (!MOYENS_PAIEMENT.includes(cashMethod)) {
+        return res.status(400).json({ error: 'Le moyen de paiement de la caisse (espèces, Wave...) est requis pour une entrée au comptant.' });
+      }
+      cashMethodFinal = cashMethod;
     }
     paiementFinal = paymentMethod;
     coutFinal = totalCost ? Number(totalCost) : null;
@@ -340,8 +351,8 @@ router.post('/:id/stock-movement', async (req, res) => {
     );
 
     await client.query(
-      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, cash_method)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         req.user.merchantId,
         product.id,
@@ -353,6 +364,7 @@ router.post('/:id/stock-movement', async (req, res) => {
         movementDate || null,
         paiementFinal,
         coutFinal,
+        cashMethodFinal,
       ]
     );
 

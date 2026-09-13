@@ -7,6 +7,8 @@ const router = express.Router();
 router.use(authenticate);
 router.use(requireRole('manager', 'gerant'));
 
+const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
+
 // GET /suppliers — liste avec la dette (créance du fournisseur envers nous,
 // pour les achats à crédit) calculée à la volée : jamais stockée, pour
 // éviter toute désynchronisation.
@@ -61,7 +63,7 @@ router.get('/:id', async (req, res) => {
       [req.params.id, req.user.merchantId]
     );
     const paiementsResult = await pool.query(
-      `SELECT sp.id, sp.amount, sp.paid_at, sp.notes, u.full_name AS user_name
+      `SELECT sp.id, sp.amount, sp.payment_method, sp.paid_at, sp.notes, u.full_name AS user_name
        FROM supplier_payments sp
        JOIN users u ON u.id = sp.user_id
        WHERE sp.supplier_id = $1 AND sp.merchant_id = $2
@@ -86,9 +88,12 @@ router.get('/:id', async (req, res) => {
 
 // POST /suppliers/:id/payments — enregistrer un règlement de dette
 router.post('/:id/payments', async (req, res) => {
-  const { amount, notes } = req.body;
+  const { amount, notes, paymentMethod } = req.body;
   if (!Number(amount) || Number(amount) <= 0) {
     return res.status(400).json({ error: 'Montant de règlement invalide.' });
+  }
+  if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
+    return res.status(400).json({ error: 'Moyen de paiement invalide.' });
   }
   try {
     const supplier = await pool.query(
@@ -98,9 +103,9 @@ router.post('/:id/payments', async (req, res) => {
     if (supplier.rows.length === 0) return res.status(404).json({ error: 'Fournisseur introuvable.' });
 
     const result = await pool.query(
-      `INSERT INTO supplier_payments (merchant_id, supplier_id, user_id, amount, notes)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.user.merchantId, req.params.id, req.user.id, Number(amount), notes || null]
+      `INSERT INTO supplier_payments (merchant_id, supplier_id, user_id, amount, payment_method, notes)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [req.user.merchantId, req.params.id, req.user.id, Number(amount), paymentMethod, notes || null]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {

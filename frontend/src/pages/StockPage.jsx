@@ -94,6 +94,7 @@ export function StockPage() {
     movementDate: new Date().toISOString().slice(0, 10),
     paymentMethod: 'comptant',
     totalCost: '',
+    cashMethod: 'especes',
   });
   const [enregistrementEntree, setEnregistrementEntree] = useState(false);
   const [modaleFournisseurRapide, setModaleFournisseurRapide] = useState(false);
@@ -213,6 +214,10 @@ export function StockPage() {
       setErreur('Une entrée à crédit nécessite un fournisseur et le montant total de l\'achat.');
       return;
     }
+    if (entreeStock.paymentMethod === 'comptant' && !Number(entreeStock.totalCost)) {
+      setErreur('Le montant total de l\'achat est requis pour une entrée au comptant (pour le suivi de caisse).');
+      return;
+    }
     setEnregistrementEntree(true);
     try {
       await api.recordStockMovement(entreeStock.productId, {
@@ -223,6 +228,7 @@ export function StockPage() {
         reason: 'Réapprovisionnement',
         paymentMethod: entreeStock.paymentMethod,
         totalCost: entreeStock.totalCost ? Number(entreeStock.totalCost) : undefined,
+        cashMethod: entreeStock.paymentMethod === 'comptant' ? entreeStock.cashMethod : undefined,
       });
       setModaleEntreeOuverte(false);
       setEntreeStock({
@@ -232,6 +238,7 @@ export function StockPage() {
         movementDate: new Date().toISOString().slice(0, 10),
         paymentMethod: 'comptant',
         totalCost: '',
+        cashMethod: 'especes',
       });
       charger();
     } catch (err) {
@@ -668,7 +675,7 @@ export function StockPage() {
                   </button>
                 </div>
               </div>
-              {entreeStock.paymentMethod === 'a_credit' && (
+              {(entreeStock.paymentMethod === 'a_credit' || entreeStock.paymentMethod === 'comptant') && (
                 <div className="champ-groupe">
                   <label className="etiquette" htmlFor="e-montant">Montant total de l'achat (FCFA)</label>
                   <input
@@ -678,6 +685,23 @@ export function StockPage() {
                     value={entreeStock.totalCost}
                     onChange={(e) => setEntreeStock({ ...entreeStock, totalCost: e.target.value })}
                   />
+                </div>
+              )}
+              {entreeStock.paymentMethod === 'comptant' && (
+                <div className="champ-groupe">
+                  <label className="etiquette" htmlFor="e-cash-methode">Payé depuis (caisse)</label>
+                  <select
+                    id="e-cash-methode"
+                    className="champ"
+                    value={entreeStock.cashMethod}
+                    onChange={(e) => setEntreeStock({ ...entreeStock, cashMethod: e.target.value })}
+                  >
+                    <option value="especes">Espèces</option>
+                    <option value="wave">Wave</option>
+                    <option value="orange_money">Orange Money</option>
+                    <option value="cheque">Chèque</option>
+                    <option value="virement">Virement</option>
+                  </select>
                 </div>
               )}
               <div className="champ-groupe">

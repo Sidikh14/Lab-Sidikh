@@ -124,6 +124,17 @@ export const api = {
   getActivityRange: (from, to) => request(`/activity/range?from=${from}&to=${to}`),
   downloadActivityPdf: (from, to) => previewFile(`/activity/pdf?from=${from}&to=${to}`),
   getRevenue: () => request('/activity/revenue'),
+
+  getCashSummary: (date) => request(`/cash/summary${date ? `?date=${date}` : ''}`),
+  createCashClosing: (data) =>
+    request('/cash/closings', { method: 'POST', body: JSON.stringify(data) }),
+  getCashClosings: (from, to) => request(`/cash/closings?from=${from}&to=${to}`),
+  createCashExpense: (data) =>
+    request('/cash/expenses', { method: 'POST', body: JSON.stringify(data) }),
+  getCashExpenses: (from, to, method) =>
+    request(`/cash/expenses?from=${from}&to=${to}${method ? `&method=${method}` : ''}`),
+  getCashMovements: (method, from, to) => request(`/cash/movements?method=${method}&from=${from}&to=${to}`),
+  downloadCashMovementsPdf: (method, from, to) => previewFile(`/cash/movements/pdf?method=${method}&from=${from}&to=${to}`),
   downloadProductsPdf: () => previewFile('/products/pdf'),
 
   getInventorySessions: () => request('/inventory-sessions'),

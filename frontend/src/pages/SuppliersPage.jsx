@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 
+const LABEL_MOYEN = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
+
 export function SuppliersPage() {
   const [suppliers, setSuppliers] = useState([]);
   const [chargement, setChargement] = useState(true);
@@ -10,6 +12,7 @@ export function SuppliersPage() {
   const [fournisseurDette, setFournisseurDette] = useState(null);
   const [detailFournisseur, setDetailFournisseur] = useState(null);
   const [montantReglement, setMontantReglement] = useState('');
+  const [moyenReglement, setMoyenReglement] = useState('especes');
   const [enregistrementReglement, setEnregistrementReglement] = useState(false);
 
   function charger() {
@@ -52,6 +55,7 @@ export function SuppliersPage() {
   function ouvrirReglement(supplier) {
     setFournisseurDette(supplier);
     setMontantReglement('');
+    setMoyenReglement('especes');
     api
       .getSupplier(supplier.id)
       .then(setDetailFournisseur)
@@ -66,7 +70,7 @@ export function SuppliersPage() {
     }
     setEnregistrementReglement(true);
     try {
-      await api.createSupplierPayment(fournisseurDette.id, { amount: Number(montantReglement) });
+      await api.createSupplierPayment(fournisseurDette.id, { amount: Number(montantReglement), paymentMethod: moyenReglement });
       const detail = await api.getSupplier(fournisseurDette.id);
       setDetailFournisseur(detail);
       setMontantReglement('');
@@ -208,6 +212,21 @@ export function SuppliersPage() {
                       onChange={(e) => setMontantReglement(e.target.value)}
                     />
                   </div>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="fr-moyen">Moyen de paiement</label>
+                    <select
+                      id="fr-moyen"
+                      className="champ"
+                      value={moyenReglement}
+                      onChange={(e) => setMoyenReglement(e.target.value)}
+                    >
+                      <option value="especes">Espèces</option>
+                      <option value="wave">Wave</option>
+                      <option value="orange_money">Orange Money</option>
+                      <option value="cheque">Chèque</option>
+                      <option value="virement">Virement</option>
+                    </select>
+                  </div>
                   <div className="actions-modale">
                     <button type="button" className="btn" onClick={() => { setFournisseurDette(null); setDetailFournisseur(null); }}>
                       Fermer
@@ -224,7 +243,7 @@ export function SuppliersPage() {
                     <div style={{ maxHeight: 160, overflowY: 'auto' }}>
                       {detailFournisseur.payments.map((p) => (
                         <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, color: 'var(--encre-douce)' }}>
-                          <span>{new Date(p.paid_at).toLocaleDateString('fr-FR')} · {p.user_name}</span>
+                          <span>{new Date(p.paid_at).toLocaleDateString('fr-FR')} · {p.user_name} · {LABEL_MOYEN[p.payment_method] || p.payment_method}</span>
                           <span className="chiffre">{Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
                         </div>
                       ))}
