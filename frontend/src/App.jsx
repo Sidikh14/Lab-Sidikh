@@ -10,6 +10,7 @@ import { ClientsPage } from './pages/ClientsPage';
 import { TeamPage } from './pages/TeamPage';
 import { SuppliersPage } from './pages/SuppliersPage';
 import { PurchaseOrdersPage } from './pages/PurchaseOrdersPage';
+import { CaissePage } from './pages/CaissePage';
 
 export default function App() {
   return (
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/clients" element={<ProtectedRoute><ClientsPage /></ProtectedRoute>} />
           <Route path="/fournisseurs" element={<ProtectedRoute><SuppliersPage /></ProtectedRoute>} />
           <Route path="/achats" element={<ProtectedRoute><PurchaseOrdersPage /></ProtectedRoute>} />
+          <Route path="/caisse" element={<ProtectedRoute><CaissePage /></ProtectedRoute>} />
           <Route path="/equipe" element={<ProtectedRoute><TeamPage /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>

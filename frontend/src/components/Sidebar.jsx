@@ -63,6 +63,16 @@ function IconAchats() {
   );
 }
 
+function IconCaisse() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <rect x="2.5" y="6" width="19" height="13" rx="1.5" />
+      <path d="M2.5 11h19" />
+      <path d="M7 15h4" />
+    </svg>
+  );
+}
+
 function IconEquipe() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
@@ -79,15 +89,18 @@ const TOUS_LES_LIENS = [
   { to: '/clients', label: 'Clients', icone: IconClients, module: 'clients' },
   { to: '/fournisseurs', label: 'Fournisseurs', icone: IconFournisseurs, module: 'fournisseurs' },
   { to: '/achats', label: 'Achats', icone: IconAchats, module: 'achats' },
+  { to: '/caisse', label: 'Caisse', icone: IconCaisse, module: 'caisse' },
 ];
 
 // Modules visibles par défaut pour chaque rôle, tant que le manager n'a pas
 // personnalisé les permissions d'un membre précis (visibleModules).
+// "caisse" (clôture, sorties de caisse, relevés) suit les mêmes rôles que le
+// backend autorise sur ces routes : manager, gérant, caissier (pas vendeur).
 const MODULES_PAR_DEFAUT = {
-  manager: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats'],
-  gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats'],
+  manager: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
+  gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   vendeur: ['stock', 'ventes', 'clients'],
-  caissier: ['ventes'],
+  caissier: ['ventes', 'caisse'],
 };
 
 function modulesAutorises(user) {

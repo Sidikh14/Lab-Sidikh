@@ -13,6 +13,7 @@ const purchaseOrdersRoutes = require('./routes/purchase-orders.routes');
 const activityRoutes = require('./routes/activity.routes');
 const inventorySessionsRoutes = require('./routes/inventory-sessions.routes');
 const creditRequestsRoutes = require('./routes/credit-requests.routes');
+const cashRoutes = require('./routes/cash.routes');
 
 const app = express();
 
@@ -41,6 +42,7 @@ app.use('/purchase-orders', purchaseOrdersRoutes);
 app.use('/activity', activityRoutes);
 app.use('/inventory-sessions', inventorySessionsRoutes);
 app.use('/credit-requests', creditRequestsRoutes);
+app.use('/cash', cashRoutes);
 
 // Gestion des routes inconnues
 app.use((req, res) => {

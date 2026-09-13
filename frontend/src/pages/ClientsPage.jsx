@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/StatusBadge';
 
+const LABEL_MOYEN = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
+
 export function ClientsPage() {
   const [clients, setClients] = useState([]);
   const [chargement, setChargement] = useState(true);
@@ -14,6 +16,7 @@ export function ClientsPage() {
   const [detailErreur, setDetailErreur] = useState('');
   const [vueReglement, setVueReglement] = useState(false);
   const [montantReglement, setMontantReglement] = useState('');
+  const [moyenReglement, setMoyenReglement] = useState('especes');
   const [noteReglement, setNoteReglement] = useState('');
   const [reglementEnCours, setReglementEnCours] = useState(false);
 
@@ -78,9 +81,14 @@ export function ClientsPage() {
     setReglementEnCours(true);
     setDetailErreur('');
     try {
-      await api.recordCreditPayment(clientSelectionne.id, { amount: montant, note: noteReglement || undefined });
+      await api.recordCreditPayment(clientSelectionne.id, {
+        amount: montant,
+        paymentMethod: moyenReglement,
+        note: noteReglement || undefined,
+      });
       setVueReglement(false);
       setMontantReglement('');
+      setMoyenReglement('especes');
       setNoteReglement('');
       await rafraichirFiche(clientSelectionne.id);
     } catch (err) {
@@ -231,6 +239,21 @@ export function ClientsPage() {
                     />
                   </div>
                   <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="r-moyen">Moyen de paiement</label>
+                    <select
+                      id="r-moyen"
+                      className="champ"
+                      value={moyenReglement}
+                      onChange={(e) => setMoyenReglement(e.target.value)}
+                    >
+                      <option value="especes">Espèces</option>
+                      <option value="wave">Wave</option>
+                      <option value="orange_money">Orange Money</option>
+                      <option value="cheque">Chèque</option>
+                      <option value="virement">Virement</option>
+                    </select>
+                  </div>
+                  <div className="champ-groupe">
                     <label className="etiquette" htmlFor="r-note">Note (optionnel)</label>
                     <input
                       id="r-note"
@@ -312,6 +335,7 @@ export function ClientsPage() {
                         <tr>
                           <th>Date</th>
                           <th>Montant</th>
+                          <th>Moyen</th>
                           <th>Enregistré par</th>
                         </tr>
                       </thead>
@@ -320,6 +344,7 @@ export function ClientsPage() {
                           <tr key={r.id}>
                             <td>{new Date(r.created_at).toLocaleDateString('fr-FR')}</td>
                             <td className="chiffre">{Number(r.amount).toLocaleString('fr-FR')} FCFA</td>
+                            <td>{LABEL_MOYEN[r.payment_method] || r.payment_method}</td>
                             <td>{r.recorded_by_name || '—'}</td>
                           </tr>
                         ))}

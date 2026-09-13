@@ -98,7 +98,7 @@ router.patch('/:id/status', requireRole('manager'), async (req, res) => {
 
 // PATCH /users/:id/permissions — manager choisit les modules visibles pour un
 // gérant ou un vendeur. modules: null = accès complet par défaut du rôle.
-const MODULES_VALIDES = ['stock', 'ventes', 'clients', 'fournisseurs', 'achats'];
+const MODULES_VALIDES = ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'];
 
 router.patch('/:id/permissions', requireRole('manager'), async (req, res) => {
   const { modules } = req.body;

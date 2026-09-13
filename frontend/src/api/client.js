@@ -71,6 +71,8 @@ export const api = {
   getClient: (id) => request(`/clients/${id}`),
   createClient: (data) =>
     request('/clients', { method: 'POST', body: JSON.stringify(data) }),
+  recordCreditPayment: (id, data) =>
+    request(`/clients/${id}/credit-payments`, { method: 'POST', body: JSON.stringify(data) }),
 
   getOrders: () => request('/orders'),
   getOrder: (id) => request(`/orders/${id}`),

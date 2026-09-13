@@ -19,12 +19,13 @@ const MODULES = [
   { value: 'clients', label: 'Clients' },
   { value: 'fournisseurs', label: 'Fournisseurs' },
   { value: 'achats', label: 'Commandes fournisseurs' },
+  { value: 'caisse', label: 'Caisse' },
 ];
 
 const MODULES_PAR_DEFAUT = {
-  gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats'],
+  gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   vendeur: ['stock', 'ventes', 'clients'],
-  caissier: ['ventes'],
+  caissier: ['ventes', 'caisse'],
 };
 
 export function TeamPage() {
