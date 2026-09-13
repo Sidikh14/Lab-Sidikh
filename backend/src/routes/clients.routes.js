@@ -3,7 +3,6 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
-const { envoyerEmail } = require('../utils/mailer');
 const { formatMontant } = require('../utils/pdfHelpers');
 
 const router = express.Router();
@@ -146,87 +145,79 @@ async function calculerDetailCreances(merchantId, clientId) {
   });
 }
 
-function gabaritReleveCompte({ clientName, businessName, factures, totalRestant }) {
+function texteReleveCompte({ clientName, businessName, factures, totalRestant }) {
   const lignes = factures
-    .map((f) => `
-      <tr>
-        <td style="padding:6px 10px;border-bottom:1px solid #eee;">${new Date(f.created_at).toLocaleDateString('fr-FR')}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;">${formatMontant(f.montant)}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;">${f.avance > 0 ? formatMontant(f.avance) : '—'}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-weight:${f.reste > 0 ? 'bold' : 'normal'};">${formatMontant(f.reste)}</td>
-      </tr>
-    `)
-    .join('');
+    .map((f) => {
+      const date = new Date(f.created_at).toLocaleDateString('fr-FR');
+      const avance = f.avance > 0 ? `déjà réglé : ${formatMontant(f.avance)} FCFA — ` : '';
+      return `• ${date} : ${formatMontant(f.montant)} FCFA (${avance}reste ${formatMontant(f.reste)} FCFA)`;
+    })
+    .join('\n');
 
-  return `
-    <div style="font-family: Arial, sans-serif; color: #222; max-width: 520px;">
-      <p>Bonjour ${clientName},</p>
-      <p>Voici le relevé de votre compte auprès de ${businessName} :</p>
-      <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;">
-        <thead>
-          <tr style="background:#f5f5f5;">
-            <th style="padding:6px 10px;text-align:left;">Date</th>
-            <th style="padding:6px 10px;text-align:right;">Montant</th>
-            <th style="padding:6px 10px;text-align:right;">Déjà réglé</th>
-            <th style="padding:6px 10px;text-align:right;">Reste à payer</th>
-          </tr>
-        </thead>
-        <tbody>${lignes}</tbody>
-      </table>
-      <p style="font-size:18px;font-weight:bold;">Total restant dû : ${formatMontant(totalRestant)} FCFA</p>
-      <p>Merci de bien vouloir régulariser ce solde auprès de ${businessName}.</p>
-      <p style="color: #888; font-size: 13px;">Ce message vous a été envoyé par ${businessName} via Amaterasu.</p>
-    </div>
-  `;
+  return `Bonjour ${clientName},\n\nVoici votre relevé de compte chez ${businessName} :\n\n${lignes}\n\nTotal restant dû : ${formatMontant(totalRestant)} FCFA\n\nMerci de bien vouloir régulariser ce solde.`;
 }
 
-// POST /clients/:id/send-statement — envoie manuellement au client, par
-// email, le détail de ses factures à crédit (montant, avance déjà réglée,
-// reste à payer). Déclenché par un bouton, jamais automatique.
-router.post('/:id/send-statement', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+// Un numéro sénégalais est généralement enregistré sans indicatif (9
+// chiffres, ex: 77 123 45 67) : on ajoute 221 dans ce cas précis. S'il a
+// déjà un indicatif ou une forme différente, on le laisse tel quel (une
+// fois les espaces/tirets retirés) — wa.me accepte le numéro complet avec
+// indicatif, sans le "+".
+function normaliserNumeroWhatsapp(phone) {
+  const chiffres = (phone || '').replace(/\D/g, '');
+  if (!chiffres) return null;
+  if (chiffres.length === 9) return `221${chiffres}`;
+  return chiffres;
+}
+
+// POST /clients/:id/whatsapp-statement — prépare le relevé de compte du
+// client (détail facture par facture : montant, avance déjà imputée en
+// FIFO, reste à payer) sous forme de message texte, prêt à être envoyé via
+// WhatsApp. Ne contacte aucune API externe : c'est le frontend qui ouvre
+// ensuite wa.me avec ce message pré-rempli, et l'utilisateur clique
+// lui-même sur "Envoyer" dans WhatsApp.
+router.post('/:id/whatsapp-statement', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
   try {
     const clientResult = await pool.query(
-      `SELECT c.*, m.business_name, m.email AS merchant_email
+      `SELECT c.*, m.business_name
        FROM clients c JOIN merchants m ON m.id = c.merchant_id
        WHERE c.id = $1 AND c.merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
     const client = clientResult.rows[0];
     if (!client) return res.status(404).json({ error: 'Client introuvable.' });
-    if (!client.email) {
-      return res.status(400).json({ error: "Ce client n'a pas d'adresse email enregistrée." });
+    if (!client.phone) {
+      return res.status(400).json({ error: "Ce client n'a pas de numéro de téléphone enregistré." });
+    }
+
+    const numeroWhatsapp = normaliserNumeroWhatsapp(client.phone);
+    if (!numeroWhatsapp) {
+      return res.status(400).json({ error: 'Numéro de téléphone invalide.' });
     }
 
     const factures = await calculerDetailCreances(req.user.merchantId, client.id);
-    const totalRestant = factures.reduce((somme, f) => somme + f.reste, 0);
-
     if (factures.length === 0) {
       return res.status(400).json({ error: "Ce client n'a aucune facture à crédit à afficher." });
     }
+    const totalRestant = factures.reduce((somme, f) => somme + f.reste, 0);
 
-    await envoyerEmail({
-      to: client.email,
-      replyTo: client.merchant_email,
-      subject: `Relevé de compte — ${client.business_name}`,
-      html: gabaritReleveCompte({
-        clientName: client.full_name,
-        businessName: client.business_name,
-        factures,
-        totalRestant,
-      }),
+    const message = texteReleveCompte({
+      clientName: client.full_name,
+      businessName: client.business_name,
+      factures,
+      totalRestant,
     });
 
     await logActivity({
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'client_statement_sent',
-      description: `a envoyé un relevé de compte par email à ${client.full_name}`,
+      description: `a envoyé un relevé de compte via WhatsApp à ${client.full_name}`,
     });
 
-    res.json({ sent: true, totalRestant });
+    res.json({ phone: numeroWhatsapp, message, totalRestant });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Erreur lors de l'envoi du relevé de compte." });
+    res.status(500).json({ error: 'Erreur lors de la préparation du relevé.' });
   }
 });
 
@@ -248,6 +239,33 @@ router.post('/', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la création du client.' });
+  }
+});
+
+// PATCH /clients/:id — modifier les coordonnées d'un client (ex : ajouter un
+// numéro pour pouvoir lui envoyer des relances via WhatsApp). Ouvert à tous
+// les rôles, comme la création, pour rester pratique au comptoir.
+router.patch('/:id', async (req, res) => {
+  const { fullName, phone, email, address } = req.body;
+
+  try {
+    const result = await pool.query(
+      `UPDATE clients SET
+         full_name = COALESCE($1, full_name),
+         phone = COALESCE($2, phone),
+         email = COALESCE($3, email),
+         address = COALESCE($4, address)
+       WHERE id = $5 AND merchant_id = $6
+       RETURNING *`,
+      [fullName, phone, email, address, req.params.id, req.user.merchantId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Client introuvable.' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour du client.' });
   }
 });
 

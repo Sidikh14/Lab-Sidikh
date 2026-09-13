@@ -17,15 +17,16 @@ export function ClientsPage() {
   const [noteReglement, setNoteReglement] = useState('');
   const [reglementEnCours, setReglementEnCours] = useState(false);
   const [envoiReleveEnCours, setEnvoiReleveEnCours] = useState(false);
-  const [releveEnvoye, setReleveEnvoye] = useState(false);
+  const [clientEnEdition, setClientEnEdition] = useState(null);
+  const [enregistrementEdition, setEnregistrementEdition] = useState(false);
 
   async function handleEnvoyerReleve() {
     setEnvoiReleveEnCours(true);
     setDetailErreur('');
-    setReleveEnvoye(false);
     try {
-      await api.sendClientStatement(clientSelectionne.id);
-      setReleveEnvoye(true);
+      const { phone, message } = await api.getClientWhatsappStatement(clientSelectionne.id);
+      const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+      window.open(url, '_blank');
     } catch (err) {
       setDetailErreur(err.message);
     } finally {
@@ -64,7 +65,6 @@ export function ClientsPage() {
     setClientSelectionne(client);
     setDetailChargement(true);
     setDetailErreur('');
-    setReleveEnvoye(false);
     try {
       const detail = await api.getClient(client.id);
       setClientSelectionne(detail);
@@ -82,6 +82,33 @@ export function ClientsPage() {
       charger();
     } catch (err) {
       setDetailErreur(err.message);
+    }
+  }
+
+  function ouvrirEdition(client) {
+    setClientEnEdition({
+      fullName: client.full_name,
+      phone: client.phone || '',
+      email: client.email || '',
+      address: client.address || '',
+    });
+  }
+
+  async function handleEnregistrerEdition(e) {
+    e.preventDefault();
+    if (!clientEnEdition.fullName) {
+      setDetailErreur('Le nom du client est requis.');
+      return;
+    }
+    setEnregistrementEdition(true);
+    try {
+      await api.updateClient(clientSelectionne.id, clientEnEdition);
+      setClientEnEdition(null);
+      await rafraichirFiche(clientSelectionne.id);
+    } catch (err) {
+      setDetailErreur(err.message);
+    } finally {
+      setEnregistrementEdition(false);
     }
   }
 
@@ -220,9 +247,12 @@ export function ClientsPage() {
           <div className="modale" style={{ width: 480 }} onClick={(e) => e.stopPropagation()}>
             <h2>{clientSelectionne.full_name}</h2>
 
-            <div style={{ display: 'flex', gap: 24, marginBottom: 20, fontSize: 14, color: 'var(--encre-douce)' }}>
+            <div style={{ display: 'flex', gap: 24, marginBottom: 20, fontSize: 14, color: 'var(--encre-douce)', alignItems: 'center', flexWrap: 'wrap' }}>
               <span>{clientSelectionne.phone || 'Téléphone non renseigné'}</span>
               <span>{clientSelectionne.email || 'Email non renseigné'}</span>
+              <button className="btn" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => ouvrirEdition(clientSelectionne)}>
+                Modifier
+              </button>
             </div>
 
             {detailErreur && <div className="erreur">{detailErreur}</div>}
@@ -296,13 +326,12 @@ export function ClientsPage() {
                     <button className="btn btn-principal" onClick={() => setVueReglement(true)}>
                       Enregistrer un règlement
                     </button>
-                    <button className="btn" onClick={handleEnvoyerReleve} disabled={envoiReleveEnCours || !clientSelectionne.email}>
-                      {envoiReleveEnCours ? 'Envoi…' : 'Envoyer le relevé par email'}
+                    <button className="btn" onClick={handleEnvoyerReleve} disabled={envoiReleveEnCours || !clientSelectionne.phone}>
+                      {envoiReleveEnCours ? 'Préparation…' : 'Envoyer via WhatsApp'}
                     </button>
-                    {!clientSelectionne.email && (
-                      <span style={{ fontSize: 12, color: 'var(--encre-douce)' }}>Aucun email enregistré pour ce client</span>
+                    {!clientSelectionne.phone && (
+                      <span style={{ fontSize: 12, color: 'var(--encre-douce)' }}>Aucun numéro de téléphone enregistré pour ce client</span>
                     )}
-                    {releveEnvoye && <span style={{ fontSize: 12, color: 'var(--vif)' }}>Relevé envoyé ✓</span>}
                   </div>
                 )}
 
@@ -361,6 +390,59 @@ export function ClientsPage() {
                 Fermer
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {clientEnEdition && (
+        <div className="modale-fond" onClick={() => setClientEnEdition(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Modifier le client</h2>
+            <form onSubmit={handleEnregistrerEdition}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ce-name">Nom complet</label>
+                <input
+                  id="ce-name"
+                  className="champ"
+                  value={clientEnEdition.fullName}
+                  onChange={(e) => setClientEnEdition({ ...clientEnEdition, fullName: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ce-phone">Téléphone</label>
+                <input
+                  id="ce-phone"
+                  className="champ"
+                  value={clientEnEdition.phone}
+                  onChange={(e) => setClientEnEdition({ ...clientEnEdition, phone: e.target.value })}
+                  placeholder="77 123 45 67"
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ce-email">Email</label>
+                <input
+                  id="ce-email"
+                  type="email"
+                  className="champ"
+                  value={clientEnEdition.email}
+                  onChange={(e) => setClientEnEdition({ ...clientEnEdition, email: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ce-address">Adresse</label>
+                <input
+                  id="ce-address"
+                  className="champ"
+                  value={clientEnEdition.address}
+                  onChange={(e) => setClientEnEdition({ ...clientEnEdition, address: e.target.value })}
+                />
+              </div>
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={() => setClientEnEdition(null)}>Annuler</button>
+                <button type="submit" className="btn btn-principal" disabled={enregistrementEdition}>
+                  {enregistrementEdition ? 'Enregistrement…' : 'Enregistrer'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
