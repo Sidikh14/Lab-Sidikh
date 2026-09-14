@@ -45,10 +45,14 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
   const [demandeAdresse, setDemandeAdresse] = useState('');
   const [demandeEnvoyee, setDemandeEnvoyee] = useState(false);
   const [confirmationHorsLigne, setConfirmationHorsLigne] = useState(false);
+  const [prevoirLivraison, setPrevoirLivraison] = useState(false);
+  const [fraisLivraison, setFraisLivraison] = useState('');
 
   const estClientDePassage = !commande.client_id;
   const estACredit = moyenPaiement === 'a_credit';
-  const monnaieARendre = Math.max(0, Number(montantRecu || 0) - Number(commande.total_amount));
+  const fraisLivraisonNombre = prevoirLivraison ? Number(fraisLivraison || 0) : 0;
+  const totalAPayer = Number(commande.total_amount) + fraisLivraisonNombre;
+  const monnaieARendre = Math.max(0, Number(montantRecu || 0) - totalAPayer);
 
   async function handleEncaisser(e) {
     e.preventDefault();
@@ -56,7 +60,11 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
       setErreur('Le paiement à crédit est réservé aux clients enregistrés.');
       return;
     }
-    if (!estACredit && Number(montantRecu) < Number(commande.total_amount)) {
+    if (prevoirLivraison && (fraisLivraison !== '' && (Number.isNaN(Number(fraisLivraison)) || Number(fraisLivraison) < 0))) {
+      setErreur('Montant de livraison invalide.');
+      return;
+    }
+    if (!estACredit && Number(montantRecu) < totalAPayer) {
       setErreur('Le montant reçu est inférieur au total à payer.');
       return;
     }
@@ -66,6 +74,8 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
       const resultat = await recordPayment(commande.id, {
         paymentMethod: moyenPaiement,
         amountReceived: estACredit ? 0 : Number(montantRecu),
+        needsDelivery: prevoirLivraison,
+        deliveryFee: fraisLivraisonNombre,
       });
       if (resultat?.offline) {
         // Pas de réseau : l'encaissement est en file d'attente, on ne peut
@@ -265,10 +275,42 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
               <span className="chiffre">{Math.round(commande.tva_amount).toLocaleString('fr-FR')}</span>
             </div>
           )}
+          {prevoirLivraison && fraisLivraisonNombre > 0 && (
+            <div className="ticket-total-ligne">
+              <span>Frais de livraison</span>
+              <span className="chiffre">{Math.round(fraisLivraisonNombre).toLocaleString('fr-FR')}</span>
+            </div>
+          )}
           <div className="ticket-total-ligne ticket-total-ligne--principal">
             <span>Total à payer</span>
-            <span className="chiffre">{Math.round(commande.total_amount).toLocaleString('fr-FR')} FCFA</span>
+            <span className="chiffre">{Math.round(totalAPayer).toLocaleString('fr-FR')} FCFA</span>
           </div>
+        </div>
+
+        <div
+          className="champ-groupe"
+          style={{
+            background: 'var(--fond)', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)',
+            padding: '10px 14px', marginBottom: 12,
+          }}
+        >
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, marginBottom: prevoirLivraison ? 10 : 0, cursor: 'pointer' }}>
+            <input type="checkbox" checked={prevoirLivraison} onChange={(e) => setPrevoirLivraison(e.target.checked)} />
+            Prévoir une livraison
+          </label>
+          {prevoirLivraison && (
+            <div style={{ marginTop: 4 }}>
+              <label className="etiquette" htmlFor="e-frais-livraison">Frais de livraison (FCFA, optionnel)</label>
+              <input
+                id="e-frais-livraison"
+                type="number"
+                className="champ"
+                placeholder="0"
+                value={fraisLivraison}
+                onChange={(e) => setFraisLivraison(e.target.value)}
+              />
+            </div>
+          )}
         </div>
 
         {erreur && <div className="erreur">{erreur}</div>}
@@ -291,7 +333,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
                 padding: '10px 14px', marginBottom: 12, fontSize: 13, color: 'var(--encre-douce)',
               }}
             >
-              Le montant total (<strong className="chiffre">{Math.round(commande.total_amount).toLocaleString('fr-FR')} FCFA</strong>) sera
+              Le montant total (<strong className="chiffre">{Math.round(totalAPayer).toLocaleString('fr-FR')} FCFA</strong>) sera
               ajouté à la créance de <strong>{commande.client_name}</strong>, à régler plus tard depuis sa fiche client.
             </div>
           ) : (

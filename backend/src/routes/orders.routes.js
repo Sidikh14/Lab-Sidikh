@@ -290,7 +290,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
 // Enregistre le moyen de paiement, le montant reçu, calcule la monnaie à
 // rendre, et fait passer la commande au statut "validée".
 router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res) => {
-  const { paymentMethod, amountReceived } = req.body;
+  const { paymentMethod, amountReceived, needsDelivery, deliveryFee } = req.body;
 
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
@@ -300,6 +300,19 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
 
   if (!estACredit && (typeof amountReceived !== 'number' || amountReceived < 0)) {
     return res.status(400).json({ error: 'Montant reçu invalide.' });
+  }
+
+  // La livraison n'est prise en compte que si la case est cochée ; sinon on
+  // ignore tout montant envoyé par erreur (pas de frais sans livraison).
+  const aLivrer = Boolean(needsDelivery);
+  let fraisLivraison = 0;
+  if (aLivrer) {
+    if (deliveryFee !== undefined && deliveryFee !== null) {
+      if (typeof deliveryFee !== 'number' || deliveryFee < 0) {
+        return res.status(400).json({ error: 'Montant de livraison invalide.' });
+      }
+      fraisLivraison = deliveryFee;
+    }
   }
 
   try {
@@ -320,17 +333,21 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
       return res.status(400).json({ error: 'La vente à crédit n\'est autorisée que pour un client déjà enregistré.' });
     }
 
-    if (!estACredit && amountReceived < Number(order.total_amount)) {
+    // Montant total réellement dû, frais de livraison inclus.
+    const montantDu = Number(order.total_amount) + fraisLivraison;
+
+    if (!estACredit && amountReceived < montantDu) {
       return res.status(400).json({ error: 'Le montant reçu est inférieur au total à payer.' });
     }
 
-    // À crédit : rien n'est reçu maintenant, le montant total devient une
-    // créance sur le client (visible sur sa fiche, réglable plus tard).
+    // À crédit : rien n'est reçu maintenant, le montant total (livraison
+    // incluse) devient une créance sur le client, réglable plus tard.
     const montantRecuFinal = estACredit ? 0 : amountReceived;
-    const changeGiven = estACredit ? 0 : Math.round(amountReceived - Number(order.total_amount));
-    // Un client de passage n'a pas de livraison à faire : la commande est
-    // directement marquée comme livrée dès l'encaissement.
-    const estClientDePassage = !order.client_id;
+    const changeGiven = estACredit ? 0 : Math.round(amountReceived - montantDu);
+    // Pas de livraison prévue (case décochée) : la commande est directement
+    // marquée comme livrée dès l'encaissement, qu'il s'agisse d'un client de
+    // passage ou d'un client enregistré qui repart avec sa commande.
+    const marqueeLivreeTouteSuite = !aLivrer;
 
     const result = await pool.query(
       `UPDATE orders SET
@@ -339,20 +356,30 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
          amount_received = $2,
          change_given = $3,
          validated_by = $4,
-         validated_at = now()
-         ${estClientDePassage ? ', delivered_by = $4, delivered_at = now()' : ''}
+         validated_at = now(),
+         needs_delivery = $8,
+         delivery_fee = $9,
+         total_amount = total_amount + $9
+         ${marqueeLivreeTouteSuite ? ', delivered_by = $4, delivered_at = now()' : ''}
        WHERE id = $5 AND merchant_id = $6
        RETURNING *`,
-      [paymentMethod, montantRecuFinal, changeGiven, req.user.id, req.params.id, req.user.merchantId, estClientDePassage ? 'livree' : 'validee']
+      [paymentMethod, montantRecuFinal, changeGiven, req.user.id, req.params.id, req.user.merchantId, marqueeLivreeTouteSuite ? 'livree' : 'validee', aLivrer, fraisLivraison]
     );
     const orderMisAJour = result.rows[0];
 
-    if (estClientDePassage) {
+    if (marqueeLivreeTouteSuite) {
       await logActivity({
         merchantId: req.user.merchantId,
         userId: req.user.id,
         action: 'order_delivered',
-        description: `a livré la commande ${formatOrderNumber(orderMisAJour)} (client de passage)`,
+        description: `a livré la commande ${formatOrderNumber(orderMisAJour)}`,
+      });
+    } else {
+      await logActivity({
+        merchantId: req.user.merchantId,
+        userId: req.user.id,
+        action: 'order_delivery_scheduled',
+        description: `a planifié une livraison pour la commande ${formatOrderNumber(orderMisAJour)}${fraisLivraison > 0 ? ` (frais : ${fraisLivraison})` : ''}`,
       });
     }
 
@@ -361,7 +388,7 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
         merchantId: req.user.merchantId,
         userId: req.user.id,
         action: 'order_credit_sale',
-        description: `a enregistré la commande ${formatOrderNumber(orderMisAJour)} à crédit (${formatMontant(order.total_amount)})`,
+        description: `a enregistré la commande ${formatOrderNumber(orderMisAJour)} à crédit (${formatMontant(orderMisAJour.total_amount)})`,
       });
     }
 
