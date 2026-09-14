@@ -407,48 +407,49 @@ export function DashboardPage() {
               {(enRupture.length > 0 || enFaible.length > 0) && (
                 <div style={{ flex: 1, minWidth: 280 }}>
                   <h2 style={{ fontSize: 16, marginBottom: 12 }}>Alertes de seuil</h2>
-                  <table className="registre">
-                    <thead>
-                      <tr>
-                        <th>Produit</th>
-                        <th>Quantité</th>
-                        <th>Statut</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...enRupture, ...enFaible].map((p) => (
-                        <tr key={p.id}>
-                          <td>{p.name}</td>
-                          <td className="chiffre">{p.quantity_in_stock}</td>
-                          <td><StatusBadge status={p.status} /></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="liste-a-encaisser">
+                    {[...enRupture, ...enFaible].slice(0, 8).map((p) => (
+                      <div key={p.id} className="carte-a-encaisser">
+                        <span
+                          className="stat-icone"
+                          style={{
+                            width: 36,
+                            height: 36,
+                            flexShrink: 0,
+                            background: p.status === 'rupture' ? 'var(--danger-clair)' : 'var(--accent-clair)',
+                            color: p.status === 'rupture' ? 'var(--danger)' : 'var(--accent)',
+                          }}
+                        >
+                          <IconAlerte />
+                        </span>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <p className="carte-a-encaisser-numero">{p.name}</p>
+                          <p className="carte-a-encaisser-client">{p.quantity_in_stock} en stock</p>
+                        </div>
+                        <StatusBadge status={p.status} />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
               {aLivrer.length > 0 && (
                 <div style={{ flex: 1, minWidth: 280 }}>
                   <h2 style={{ fontSize: 16, marginBottom: 12 }}>Commandes à livrer</h2>
-                  <table className="registre">
-                    <thead>
-                      <tr>
-                        <th>N° commande</th>
-                        <th>Client</th>
-                        <th>Montant</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {aLivrer.slice(0, 8).map((o) => (
-                        <tr key={o.id} className="ligne-cliquable" onClick={() => ouvrirDetailCommande(o.id)}>
-                          <td className="chiffre">{o.order_number}</td>
-                          <td>{o.client_name || 'Client de passage'}</td>
-                          <td className="chiffre">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="liste-a-encaisser">
+                    {aLivrer.slice(0, 8).map((o) => (
+                      <div key={o.id} className="carte-a-encaisser ligne-cliquable" onClick={() => ouvrirDetailCommande(o.id)}>
+                        <span className="stat-icone" style={{ width: 36, height: 36, flexShrink: 0 }}>
+                          <IconCamion />
+                        </span>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <p className="carte-a-encaisser-numero">{o.order_number}</p>
+                          <p className="carte-a-encaisser-client">{o.client_name || 'Client de passage'}</p>
+                        </div>
+                        <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
