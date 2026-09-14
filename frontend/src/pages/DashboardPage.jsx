@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
 import { ActiviteListe, initiales, couleurPour } from '../components/ActiviteListe';
 import { ModaleEncaissement } from '../components/ModaleEncaissement';
+import { useLiveEvent } from '../offline/liveEvents';
 
 function IconValeur() {
   return (
@@ -115,6 +116,16 @@ export function DashboardPage() {
   }
 
   useEffect(charger, []);
+
+  // Temps réel : une vente créée par un vendeur (widget "à encaisser"), ou
+  // n'importe quelle activité journalisée ailleurs dans l'app (encaissement,
+  // annulation, retour vendeur, clôture de caisse…), met à jour le tableau
+  // de bord sans que l'utilisateur ait besoin d'actualiser la page.
+  useLiveEvent('order:created', () => charger());
+  useLiveEvent('activity:created', () => {
+    charger();
+    if (onglet === 'activite') chargerActivite();
+  });
 
   function chargerActivite() {
     setChargementActivite(true);

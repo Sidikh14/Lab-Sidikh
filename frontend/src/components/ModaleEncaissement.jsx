@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api/client';
+import { useOfflineSync } from '../offline/useOfflineSync';
 
 const MOYENS_PAIEMENT = [
   { value: 'especes', label: 'Espèces' },
@@ -32,6 +33,7 @@ function DetailFacture({ commande }) {
 }
 
 export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned }) {
+  const { isOnline, recordPayment } = useOfflineSync(api);
   const [moyenPaiement, setMoyenPaiement] = useState('especes');
   const [montantRecu, setMontantRecu] = useState(String(commande.total_amount));
   const [erreur, setErreur] = useState('');
@@ -42,6 +44,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
   const [demandeTelephone, setDemandeTelephone] = useState('');
   const [demandeAdresse, setDemandeAdresse] = useState('');
   const [demandeEnvoyee, setDemandeEnvoyee] = useState(false);
+  const [confirmationHorsLigne, setConfirmationHorsLigne] = useState(false);
 
   const estClientDePassage = !commande.client_id;
   const estACredit = moyenPaiement === 'a_credit';
@@ -60,10 +63,17 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
     setEnCours(true);
     setErreur('');
     try {
-      await api.recordOrderPayment(commande.id, {
+      const resultat = await recordPayment(commande.id, {
         paymentMethod: moyenPaiement,
         amountReceived: estACredit ? 0 : Number(montantRecu),
       });
+      if (resultat?.offline) {
+        // Pas de réseau : l'encaissement est en file d'attente, on ne peut
+        // pas générer le reçu PDF (ça nécessite le serveur) tant qu'il n'est
+        // pas synchronisé. On informe le caissier au lieu d'ouvrir un reçu.
+        setConfirmationHorsLigne(true);
+        return;
+      }
       // Le reçu (ticket étroit pour un client de passage, facture A4 pour
       // un client enregistré) s'ouvre automatiquement dans un nouvel
       // onglet — l'échec de cet appel ne doit pas bloquer l'encaissement
@@ -127,6 +137,23 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
       setErreur(err.message);
       setEnCours(false);
     }
+  }
+
+  if (confirmationHorsLigne) {
+    return (
+      <div className="modale-fond" onClick={onSuccess}>
+        <div className="modale" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+          <h2 style={{ marginBottom: 6 }}>Encaissement enregistré localement</h2>
+          <p style={{ color: 'var(--encre-douce)', fontSize: 14, marginBottom: 16 }}>
+            Pas de connexion — il sera envoyé automatiquement au retour du réseau. Le reçu ne pourra être imprimé
+            qu'une fois la synchronisation faite.
+          </p>
+          <button className="btn btn-principal" style={{ width: '100%', justifyContent: 'center' }} onClick={onSuccess}>
+            Compris
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (estACredit && estClientDePassage) {
@@ -216,6 +243,11 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
     <div className="modale-fond" onClick={onClose}>
       <div className="modale" onClick={(e) => e.stopPropagation()}>
         <h2>Encaisser {commande.order_number}</h2>
+        {!isOnline && (
+          <p style={{ fontSize: 12, color: 'var(--brique, #b45309)', marginBottom: 4 }}>
+            Hors-ligne — sera synchronisé au retour du réseau
+          </p>
+        )}
         <p style={{ fontSize: 14, color: 'var(--encre-douce)', marginBottom: 8 }}>
           {commande.client_name || 'Client de passage'}
         </p>

@@ -4,6 +4,9 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
 import { ModaleEncaissement } from '../components/ModaleEncaissement';
+import { useOfflineSync } from '../offline/useOfflineSync';
+import { cacheProducts, cacheClients } from '../offline/db';
+import { useLiveEvent } from '../offline/liveEvents';
 
 const PEUT_CREER = ['manager', 'gerant', 'vendeur'];
 const PEUT_ENCAISSER = ['manager', 'caissier'];
@@ -57,6 +60,7 @@ export function OrdersPage() {
   const peutCreer = PEUT_CREER.includes(user.role);
   const peutEncaisser = PEUT_ENCAISSER.includes(user.role);
   const peutGererStatut = PEUT_GERER_STATUT.includes(user.role);
+  const { isOnline, createOrder: creerVenteHorsLigne } = useOfflineSync(api);
 
   const [onglet, setOnglet] = useState(peutCreer ? 'caisse' : 'historique');
   const [orders, setOrders] = useState([]);
@@ -153,12 +157,24 @@ export function OrdersPage() {
         setOrders(o);
         setClients(c);
         setProducts(p);
+        // Copie locale pour pouvoir continuer à vendre hors-ligne : on ne
+        // met à jour ce cache que lorsqu'on a effectivement pu joindre le
+        // serveur (donc jamais avec des données déjà périmées).
+        cacheProducts(p);
+        cacheClients(c);
       })
       .catch((err) => setErreur(err.message))
       .finally(() => setChargement(false));
   }
 
   useEffect(charger, []);
+
+  // Temps réel : dès qu'une vente est créée (par un vendeur) ou qu'une
+  // activité est enregistrée quelque part dans l'app (encaissement, retour
+  // au vendeur, annulation…), on recharge la liste sans que l'utilisateur
+  // ait besoin d'actualiser la page.
+  useLiveEvent('order:created', () => charger());
+  useLiveEvent('activity:created', () => charger());
 
   const [searchParams, setSearchParams] = useSearchParams();
   useEffect(() => {
@@ -250,12 +266,18 @@ export function OrdersPage() {
         charger();
         setConfirmationModification(commande);
       } else {
-        const commande = await api.createOrder(payload);
+        // creerVenteHorsLigne (useOfflineSync) décide seul : envoi direct si
+        // en ligne, mise en file locale sinon. Dans ce dernier cas, la
+        // réponse n'a pas de vrai order_number/id serveur — voir le rendu
+        // de la modale de confirmation plus bas (order.offline).
+        const commande = await creerVenteHorsLigne(payload);
         setPanier([]);
         setClientId('');
         setTvaApplicable(false);
-        charger();
-        if (peutEncaisser) {
+        if (!commande.offline) charger();
+        if (commande.offline) {
+          setConfirmationVente(commande);
+        } else if (peutEncaisser) {
           ouvrirEncaissement(commande);
         } else {
           setConfirmationVente(commande);
@@ -572,16 +594,26 @@ export function OrdersPage() {
             <div style={{ color: 'var(--vif)', margin: '0 auto 12px', width: 'fit-content' }}>
               <IconCoche />
             </div>
-            <h2 style={{ marginBottom: 6 }}>Vente enregistrée</h2>
+            <h2 style={{ marginBottom: 6 }}>{confirmationVente.offline ? 'Vente enregistrée localement' : 'Vente enregistrée'}</h2>
             <p style={{ color: 'var(--encre-douce)', fontSize: 14, marginBottom: 16 }}>
-              Elle a été envoyée à la caisse pour encaissement.
+              {confirmationVente.offline
+                ? 'Pas de connexion — elle sera envoyée à la caisse automatiquement dès que le réseau revient.'
+                : 'Elle a été envoyée à la caisse pour encaissement.'}
             </p>
             <div style={{ background: 'var(--fond)', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', padding: '14px', marginBottom: 16 }}>
-              <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '0 0 4px' }}>Numéro à donner au client</p>
-              <p className="chiffre" style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{confirmationVente.order_number}</p>
-              <p style={{ fontSize: 13, color: 'var(--encre-douce)', margin: '4px 0 0' }}>
-                Total : {Math.round(confirmationVente.total_amount).toLocaleString('fr-FR')} FCFA
-              </p>
+              {confirmationVente.offline ? (
+                <p style={{ fontSize: 13, color: 'var(--encre-douce)', margin: 0 }}>
+                  En attente de synchronisation — le numéro définitif sera visible dans l'historique une fois envoyée.
+                </p>
+              ) : (
+                <>
+                  <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '0 0 4px' }}>Numéro à donner au client</p>
+                  <p className="chiffre" style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{confirmationVente.order_number}</p>
+                  <p style={{ fontSize: 13, color: 'var(--encre-douce)', margin: '4px 0 0' }}>
+                    Total : {Math.round(confirmationVente.total_amount).toLocaleString('fr-FR')} FCFA
+                  </p>
+                </>
+              )}
             </div>
             <button className="btn btn-principal" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setConfirmationVente(null)}>
               Compris

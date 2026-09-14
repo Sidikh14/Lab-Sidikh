@@ -11,11 +11,14 @@ import { TeamPage } from './pages/TeamPage';
 import { SuppliersPage } from './pages/SuppliersPage';
 import { PurchaseOrdersPage } from './pages/PurchaseOrdersPage';
 import { CaissePage } from './pages/CaissePage';
+import { api } from './api/client';
+import OfflineBanner from './offline/OfflineBanner';
 
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <OfflineBanner api={api} />
         <Routes>
           <Route path="/connexion" element={<LoginPage />} />
           <Route path="/inscription" element={<RegisterPage />} />

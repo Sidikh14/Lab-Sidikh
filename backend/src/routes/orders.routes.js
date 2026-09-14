@@ -4,6 +4,7 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
+const { broadcast } = require('../utils/eventsBus');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, traitSeparateur, enregistrerPolices } = require('../utils/pdfHelpers');
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
@@ -84,14 +85,32 @@ router.get('/:id', async (req, res) => {
 //   disponible est insuffisant (vente en rupture autorisée). Le stock ne
 //   descend jamais sous zéro : il est simplement ramené à 0.
 router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) => {
-  const { clientId, items, notes, tvaApplicable } = req.body;
+  const { clientId, items, notes, tvaApplicable, clientOrderId } = req.body;
   // items attendu : [{ productId, quantity, unitId, customPrice, authorizeOutOfStock }, ...]
   // quantity = nombre de conditionnements vendus (ex: 2 cartons) ; unitId
   // facultatif = référence vers product_units (sinon vente au détail).
   // customPrice et authorizeOutOfStock : réservés au manager (voir ci-dessus).
+  //
+  // clientOrderId (facultatif) : UUID généré côté navigateur pour une vente
+  // créée hors-ligne (voir useOfflineSync.js). Sert de clé d'idempotence :
+  // si la synchro renvoie deux fois la même vente (ex : coupure juste avant
+  // de recevoir la réponse du premier envoi), on renvoie la commande déjà
+  // créée au lieu d'en créer une deuxième.
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'La commande doit contenir au moins un article.' });
+  }
+
+  if (clientOrderId) {
+    const existante = await pool.query(
+      `SELECT * FROM orders WHERE client_order_id = $1 AND merchant_id = $2`,
+      [clientOrderId, req.user.merchantId]
+    );
+    if (existante.rows[0]) {
+      // Déjà synchronisée lors d'un essai précédent : on renvoie la même
+      // commande (200, pas 201, puisqu'on n'en crée pas de nouvelle).
+      return res.status(200).json({ ...existante.rows[0], order_number: formatOrderNumber(existante.rows[0]) });
+    }
   }
 
   const client = await pool.connect();
@@ -175,8 +194,8 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
 
     const orderResult = await client.query(
-      `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes, stock_override)
-       VALUES ($1, $2, $3, 'en_attente', $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes, stock_override, client_order_id)
+       VALUES ($1, $2, $3, 'en_attente', $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -189,6 +208,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
         totalAmount,
         notes || null,
         stockOverrideUtilise,
+        clientOrderId || null,
       ]
     );
     const order = orderResult.rows[0];
@@ -232,11 +252,27 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
     }
 
     await client.query('COMMIT');
-    res.status(201).json({ ...order, order_number: formatOrderNumber(order) });
+    const orderComplet = { ...order, order_number: formatOrderNumber(order) };
+    // Diffusion en temps réel : la caisse (OrdersPage.jsx côté caissier)
+    // n'a pas besoin d'actualiser la page pour voir apparaître cette vente.
+    broadcast(req.user.merchantId, 'order:created', orderComplet);
+    res.status(201).json(orderComplet);
   } catch (err) {
     await client.query('ROLLBACK');
     if (err.status) {
       return res.status(err.status).json({ error: err.message });
+    }
+    // Violation de la contrainte UNIQUE sur client_order_id : une synchro
+    // concurrente a inséré la commande entre notre vérification et notre
+    // insertion. On renvoie la commande existante plutôt qu'une erreur 500.
+    if (err.code === '23505' && clientOrderId) {
+      const existante = await pool.query(
+        `SELECT * FROM orders WHERE client_order_id = $1 AND merchant_id = $2`,
+        [clientOrderId, req.user.merchantId]
+      );
+      if (existante.rows[0]) {
+        return res.status(200).json({ ...existante.rows[0], order_number: formatOrderNumber(existante.rows[0]) });
+      }
     }
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la création de la commande.' });
