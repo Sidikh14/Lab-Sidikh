@@ -3,7 +3,7 @@
 // la notif s'affiche peu importe la page sur laquelle est le caissier.
 import { useState, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useLiveEvent } from '../liveEvents';
+import { useLiveEvent } from '../offline/liveEvents';
 
 export default function CreditRequestNotifications() {
   const { user } = useAuth();
