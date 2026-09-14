@@ -21,7 +21,15 @@ function IconCloche() {
   );
 }
 
-export function Topbar() {
+function IconMenu() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+  );
+}
+
+export function Topbar({ onOuvrirMenu }) {
   const { user, merchant, logout } = useAuth();
   const navigate = useNavigate();
   const [recherche, setRecherche] = useState('');
@@ -51,6 +59,9 @@ export function Topbar() {
 
   return (
     <header className="barre-haut">
+      <button type="button" className="bouton-menu-mobile" onClick={onOuvrirMenu} aria-label="Ouvrir le menu">
+        <IconMenu />
+      </button>
       <span className="barre-haut-commerce">{merchant?.businessName}</span>
 
       <form className="barre-haut-recherche" onSubmit={handleRecherche}>

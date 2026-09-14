@@ -229,6 +229,7 @@ export function ClientsPage() {
           />
         </div>
         <div
+          className="filtre-pilules"
           style={{
             display: 'flex',
             gap: 4,

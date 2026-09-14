@@ -247,6 +247,7 @@ export function TeamPage() {
           />
         </div>
         <div
+          className="filtre-pilules"
           style={{
             display: 'flex',
             gap: 4,

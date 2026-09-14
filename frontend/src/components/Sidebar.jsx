@@ -109,7 +109,15 @@ function modulesAutorises(user) {
   return MODULES_PAR_DEFAUT[user.role] || [];
 }
 
-export function Sidebar() {
+function IconFermer() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  );
+}
+
+export function Sidebar({ ouvert = false, onFermer }) {
   const { user, merchant, logout } = useAuth();
   const autorises = modulesAutorises(user);
   const liens = TOUS_LES_LIENS.filter((lien) => autorises.includes(lien.module));
@@ -123,14 +131,21 @@ export function Sidebar() {
     .toUpperCase();
 
   return (
-    <nav className="barre-laterale">
+    <nav className={'barre-laterale' + (ouvert ? ' ouverte' : '')}>
       <div className="marque">
-        {merchant?.businessName || 'Mon commerce'}
-        <span className="sous-titre">Amaterasu</span>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+          <span>
+            {merchant?.businessName || 'Mon commerce'}
+            <span className="sous-titre">Amaterasu</span>
+          </span>
+          <button type="button" className="bouton-fermer-menu" onClick={onFermer} aria-label="Fermer le menu">
+            <IconFermer />
+          </button>
+        </div>
       </div>
       <ul className="nav-liste">
         <li>
-          <NavLink to="/" end className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')}>
+          <NavLink to="/" end className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
             <IconDashboard />
             Tableau de bord
           </NavLink>
@@ -142,6 +157,7 @@ export function Sidebar() {
               <NavLink
                 to={lien.to}
                 className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')}
+                onClick={onFermer}
               >
                 <Icone />
                 {lien.label}
@@ -151,7 +167,7 @@ export function Sidebar() {
         })}
         {voitEquipe && (
           <li>
-            <NavLink to="/equipe" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')}>
+            <NavLink to="/equipe" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
               <IconEquipe />
               Équipe
             </NavLink>
