@@ -82,6 +82,37 @@ export function OrdersPage() {
   const [commandeEnEdition, setCommandeEnEdition] = useState(null);
   const [confirmationModification, setConfirmationModification] = useState(null);
 
+  const [detailCommande, setDetailCommande] = useState(null);
+  const [chargementDetailCommande, setChargementDetailCommande] = useState(false);
+  const [exportDebut, setExportDebut] = useState(() => new Date().toISOString().slice(0, 10));
+  const [exportFin, setExportFin] = useState(() => new Date().toISOString().slice(0, 10));
+  const [exportEnCours, setExportEnCours] = useState(false);
+
+  async function ouvrirDetailHistorique(order) {
+    setChargementDetailCommande(true);
+    setErreur('');
+    try {
+      const detail = await api.getOrder(order.id);
+      setDetailCommande(detail);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setChargementDetailCommande(false);
+    }
+  }
+
+  async function exporterVentesPdf() {
+    setExportEnCours(true);
+    setErreur('');
+    try {
+      await api.downloadOrdersPdf(exportDebut, exportFin);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setExportEnCours(false);
+    }
+  }
+
   const peutTraiterRenvoi = ['manager', 'gerant', 'vendeur'].includes(user.role);
 
   // La liste des commandes (GET /orders) ne contient pas le détail des
@@ -471,6 +502,20 @@ export function OrdersPage() {
             <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{orders.length} vente(s)</span>
           </div>
 
+          <div className="barre-filtres" style={{ marginBottom: 16 }}>
+            <div className="champ-groupe" style={{ marginBottom: 0 }}>
+              <label className="etiquette" htmlFor="ov-debut">Du</label>
+              <input id="ov-debut" type="date" className="champ" value={exportDebut} onChange={(e) => setExportDebut(e.target.value)} />
+            </div>
+            <div className="champ-groupe" style={{ marginBottom: 0 }}>
+              <label className="etiquette" htmlFor="ov-fin">Au</label>
+              <input id="ov-fin" type="date" className="champ" value={exportFin} onChange={(e) => setExportFin(e.target.value)} />
+            </div>
+            <button className="btn" style={{ alignSelf: 'flex-end' }} onClick={exporterVentesPdf} disabled={exportEnCours}>
+              {exportEnCours ? 'Génération…' : 'Exporter PDF'}
+            </button>
+          </div>
+
           {chargement ? (
             <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
           ) : orders.length === 0 ? (
@@ -491,17 +536,19 @@ export function OrdersPage() {
                   <tr
                     key={o.id}
                     className={
-                      (o.status === 'en_attente' && peutEncaisser) || (o.status === 'renvoyee_vendeur' && peutTraiterRenvoi)
-                        ? 'ligne-prioritaire'
-                        : ''
+                      'ligne-cliquable' +
+                      (((o.status === 'en_attente' && peutEncaisser) || (o.status === 'renvoyee_vendeur' && peutTraiterRenvoi))
+                        ? ' ligne-prioritaire'
+                        : '')
                     }
+                    onClick={() => ouvrirDetailHistorique(o)}
                   >
                     <td className="chiffre">{o.order_number}</td>
                     <td>{o.client_name || 'Client de passage'}</td>
                     <td className="chiffre">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
                     <td><StatusBadge status={o.status} /></td>
                     {(peutEncaisser || peutGererStatut || peutTraiterRenvoi) && (
-                      <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
                         {peutEncaisser && o.status === 'en_attente' && (
                           <button
                             className="btn btn-principal"
@@ -586,6 +633,53 @@ export function OrdersPage() {
             charger();
           }}
         />
+      )}
+
+      {(detailCommande || chargementDetailCommande) && (
+        <div className="modale-fond" onClick={() => setDetailCommande(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            {chargementDetailCommande && !detailCommande ? (
+              <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+            ) : (
+              <>
+                <h2>{detailCommande.order_number}</h2>
+                <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+                  {detailCommande.client_name || 'Client de passage'} · <StatusBadge status={detailCommande.status} />
+                </p>
+                <table className="registre" style={{ marginBottom: 16 }}>
+                  <thead>
+                    <tr>
+                      <th>Produit</th>
+                      <th>Qté</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detailCommande.items.map((it) => (
+                      <tr key={it.id}>
+                        <td>{it.product_name}</td>
+                        <td className="chiffre">{it.quantity}</td>
+                        <td className="chiffre">{Math.round(it.line_total).toLocaleString('fr-FR')} FCFA</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p style={{ fontWeight: 700, textAlign: 'right', marginBottom: 16 }}>
+                  Total : {Math.round(detailCommande.total_amount).toLocaleString('fr-FR')} FCFA
+                </p>
+                <div className="actions-modale">
+                  <button className="btn" onClick={() => setDetailCommande(null)}>Fermer</button>
+                  <button
+                    className="btn btn-principal"
+                    onClick={() => api.previewOrderReceipt(detailCommande.id).catch((err) => setErreur(err.message))}
+                  >
+                    Télécharger en PDF
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
       )}
 
       {confirmationVente && (

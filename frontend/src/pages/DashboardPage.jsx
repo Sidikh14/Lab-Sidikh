@@ -178,6 +178,15 @@ export function DashboardPage() {
     }
   }
 
+  async function marquerCommandeLivree(order) {
+    try {
+      await api.updateOrderStatus(order.id, 'livree');
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
   async function approuverDemandeCredit(demande) {
     try {
       await api.approveCreditRequest(demande.id);
@@ -455,15 +464,16 @@ export function DashboardPage() {
             ) : (
               <div className="liste-a-encaisser">
                 {aLivrer.map((o) => (
-                  <div key={o.id} className="carte-a-encaisser ligne-cliquable" onClick={() => ouvrirDetailCommande(o.id)}>
+                  <div key={o.id} className="carte-a-encaisser">
                     <span className="stat-icone" style={{ width: 36, height: 36, flexShrink: 0 }}>
                       <IconCamion />
                     </span>
-                    <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="ligne-cliquable" style={{ minWidth: 0, flex: 1 }} onClick={() => ouvrirDetailCommande(o.id)}>
                       <p className="carte-a-encaisser-numero">{o.order_number}</p>
                       <p className="carte-a-encaisser-client">{o.client_name || 'Client de passage'}</p>
                     </div>
                     <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                    <button className="btn btn-principal" onClick={() => marquerCommandeLivree(o)}>Marquer comme livrée</button>
                   </div>
                 ))}
               </div>

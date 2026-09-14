@@ -48,6 +48,36 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET /orders/pdf?from=YYYY-MM-DD&to=YYYY-MM-DD — export PDF de l'historique
+// des ventes sur une période, comme le journal d'activité. Placée avant
+// GET /:id pour que 'pdf' ne soit pas interprété comme un identifiant.
+router.get('/pdf', async (req, res) => {
+  const { from, to } = req.query;
+  if (!from || !to) {
+    return res.status(400).json({ error: 'La période (from/to) est requise.' });
+  }
+  try {
+    const merchantResult = await pool.query(`SELECT business_name FROM merchants WHERE id = $1`, [req.user.merchantId]);
+    const businessName = merchantResult.rows[0]?.business_name;
+
+    const result = await pool.query(
+      `SELECT o.order_seq, o.created_at, o.status, o.total_amount, o.payment_method,
+              c.full_name AS client_name
+       FROM orders o
+       LEFT JOIN clients c ON c.id = o.client_id
+       WHERE o.merchant_id = $1 AND o.created_at::date BETWEEN $2 AND $3
+       ORDER BY o.created_at ASC`,
+      [req.user.merchantId, from, to]
+    );
+    const rows = result.rows.map((o) => ({ ...o, order_number: formatOrderNumber(o) }));
+
+    genererListeVentesPdf(res, rows, from, to, businessName);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
+  }
+});
+
 // GET /orders/:id — détail d'une commande avec ses lignes
 router.get('/:id', async (req, res) => {
   try {
@@ -774,6 +804,71 @@ async function getOrderReceiptDetail(merchantId, id) {
 const MOYENS_PAIEMENT_LABEL = {
   especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement', a_credit: 'À crédit',
 };
+
+const LABEL_STATUT_PDF = {
+  en_attente: 'En attente', validee: 'À livrer', livree: 'Livrée', renvoyee_vendeur: 'Renvoyée au vendeur', annulee: 'Annulée',
+};
+
+// Historique des ventes sur une période, format liste (comme le journal
+// d'activité) — une ligne par commande, pagination automatique.
+function genererListeVentesPdf(res, orders, from, to, businessName) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="ventes-${from}-au-${to}.pdf"`);
+
+  const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  doc.pipe(res);
+
+  const COLONNES = [
+    { texte: 'N° commande', x: 56, largeur: 95 },
+    { texte: 'Date', x: 155, largeur: 75 },
+    { texte: 'Client', x: 235, largeur: 150 },
+    { texte: 'Statut', x: 390, largeur: 95 },
+    { texte: 'Montant', x: 485, largeur: 60, aligner: 'right' },
+  ];
+
+  function dessinerEnTete() {
+    let y0 = dessinerEntete(doc, {
+      businessName,
+      titre: 'Historique des ventes',
+      sousTitre: `Du ${new Date(from).toLocaleDateString('fr-FR')} au ${new Date(to).toLocaleDateString('fr-FR')}`,
+    });
+    return dessinerEnteteTableau(doc, y0, COLONNES);
+  }
+
+  let y = dessinerEnTete();
+
+  if (orders.length === 0) {
+    doc.fontSize(10).fillColor(COULEURS.muted).text('Aucune vente sur cette période.', 56, y + 10);
+  }
+
+  let totalGeneral = 0;
+  orders.forEach((o, index) => {
+    if (y > doc.page.height - 90) {
+      doc.addPage();
+      y = dessinerEnTete();
+    }
+    if (index % 2 === 1) {
+      doc.rect(50, y, doc.page.width - 100, 20).fill(COULEURS.fondAlterne);
+    }
+    doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(9);
+    doc.text(o.order_number, 56, y + 6, { width: 95 });
+    doc.text(new Date(o.created_at).toLocaleDateString('fr-FR'), 155, y + 6, { width: 75 });
+    doc.text(o.client_name || 'Client de passage', 235, y + 6, { width: 150 });
+    doc.text(LABEL_STATUT_PDF[o.status] || o.status, 390, y + 6, { width: 95 });
+    doc.text(formatMontant(o.total_amount), 485, y + 6, { width: 60, align: 'right' });
+    totalGeneral += Number(o.total_amount);
+    y += 20;
+  });
+
+  traitSeparateur(doc, y + 4);
+  y += 16;
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(COULEURS.encre);
+  doc.text(`${orders.length} vente${orders.length > 1 ? 's' : ''}`, 235, y, { width: 150 });
+  doc.text('TOTAL', 390, y, { width: 95 });
+  doc.text(formatMontant(totalGeneral), 485, y, { width: 60, align: 'right' });
+
+  doc.end();
+}
 
 // Mesure la hauteur réelle nécessaire pour le ticket (gère les noms de
 // produits qui passent sur plusieurs lignes) via un document PDFKit

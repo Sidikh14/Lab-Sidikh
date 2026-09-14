@@ -3,6 +3,21 @@ import { api } from '../api/client';
 
 const STATUTS = ['envoyee', 'recue', 'annulee'];
 const LABEL_STATUT = { envoyee: 'Envoyée', recue: 'Reçue', annulee: 'Annulée' };
+const COULEUR_STATUT = {
+  envoyee: { background: 'var(--accent-clair)', color: 'var(--accent)' },
+  recue: { background: 'var(--vif-clair, #d1fae5)', color: 'var(--vif, #059669)' },
+  annulee: { background: 'var(--danger-clair)', color: 'var(--danger)' },
+};
+
+function IconBonAchat() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M4 4h13l3 3v13H4z" />
+      <path d="M9 4v4H4" />
+      <path d="M8 13h8M8 17h5" />
+    </svg>
+  );
+}
 
 export function PurchaseOrdersPage() {
   const [commandes, setCommandes] = useState([]);
@@ -111,41 +126,32 @@ export function PurchaseOrdersPage() {
       ) : commandes.length === 0 ? (
         suppliers.length > 0 && <p className="etat-vide">Aucune commande fournisseur pour le moment.</p>
       ) : (
-        <table className="registre">
-          <thead>
-            <tr>
-              <th>Fournisseur</th>
-              <th>Montant</th>
-              <th>Statut</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {commandes.map((c) => (
-              <tr key={c.id}>
-                <td>{c.supplier_name}</td>
-                <td className="chiffre">{Number(c.total_amount).toLocaleString('fr-FR')} FCFA</td>
-                <td>
-                  <select
-                    className="champ"
-                    style={{ width: 'auto', padding: '5px 8px', fontSize: 13 }}
-                    value={c.status}
-                    onChange={(e) => handleStatut(c, e.target.value)}
-                  >
-                    {STATUTS.map((s) => (
-                      <option key={s} value={s}>{LABEL_STATUT[s]}</option>
-                    ))}
-                  </select>
-                </td>
-                <td>
-                  <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handlePdf(c)}>
-                    Télécharger le PDF
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="liste-a-encaisser">
+          {commandes.map((c) => (
+            <div key={c.id} className="carte-a-encaisser">
+              <span className="stat-icone" style={{ ...COULEUR_STATUT[c.status], width: 36, height: 36, flexShrink: 0 }}>
+                <IconBonAchat />
+              </span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p className="carte-a-encaisser-numero">{c.supplier_name}</p>
+                <p className="carte-a-encaisser-client">{Number(c.total_amount).toLocaleString('fr-FR')} FCFA</p>
+              </div>
+              <select
+                className="champ"
+                style={{ width: 'auto', padding: '5px 8px', fontSize: 13 }}
+                value={c.status}
+                onChange={(e) => handleStatut(c, e.target.value)}
+              >
+                {STATUTS.map((s) => (
+                  <option key={s} value={s}>{LABEL_STATUT[s]}</option>
+                ))}
+              </select>
+              <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handlePdf(c)}>
+                PDF
+              </button>
+            </div>
+          ))}
+        </div>
       )}
 
       {modaleOuverte && (
