@@ -3,6 +3,7 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
+const { broadcast } = require('../utils/eventsBus');
 
 const router = express.Router();
 router.use(authenticate);
@@ -130,6 +131,17 @@ router.patch('/:id/approve', requireRole('manager', 'gerant'), async (req, res) 
       description: `a approuvé la demande de crédit et créé le client ${demande.full_name}`,
     });
 
+    // Événement dédié (distinct de 'activity:created', qui est un signal
+    // générique de rafraîchissement) : porte le requestedBy pour que le
+    // frontend puisse notifier précisément le caissier concerné, même s'il
+    // est sur une autre page au moment où le manager valide.
+    broadcast(req.user.merchantId, 'credit_request:resolved', {
+      requestId: demande.id,
+      requestedBy: demande.requested_by,
+      fullName: demande.full_name,
+      status: 'approuvee',
+    });
+
     res.json({ client: nouveauClient.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -162,6 +174,14 @@ router.patch('/:id/reject', requireRole('manager', 'gerant'), async (req, res) =
       userId: req.user.id,
       action: 'credit_request_rejected',
       description: `a rejeté la demande de crédit pour ${result.rows[0].full_name}`,
+    });
+
+    broadcast(req.user.merchantId, 'credit_request:resolved', {
+      requestId: result.rows[0].id,
+      requestedBy: result.rows[0].requested_by,
+      fullName: result.rows[0].full_name,
+      status: 'rejetee',
+      reason: result.rows[0].rejection_reason,
     });
 
     res.json(result.rows[0]);

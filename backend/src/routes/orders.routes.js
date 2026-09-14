@@ -27,9 +27,14 @@ router.get('/', async (req, res) => {
       `SELECT o.id, o.order_seq, o.status, o.total_amount, o.subtotal_amount, o.tva_applicable,
               o.tva_amount, o.payment_method, o.amount_received, o.change_given,
               o.created_at, o.assigned_cashier_id, o.returned_at, o.returned_reason,
-              c.full_name AS client_name
+              c.full_name AS client_name,
+              cr.status AS credit_request_status, cr.rejection_reason AS credit_request_reason
        FROM orders o
        LEFT JOIN clients c ON c.id = o.client_id
+       LEFT JOIN LATERAL (
+         SELECT status, rejection_reason FROM credit_requests
+         WHERE order_id = o.id ORDER BY created_at DESC LIMIT 1
+       ) cr ON true
        WHERE o.merchant_id = $1
        ORDER BY o.created_at DESC
        LIMIT 100`,

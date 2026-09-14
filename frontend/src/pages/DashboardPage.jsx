@@ -126,6 +126,10 @@ export function DashboardPage() {
     charger();
     if (onglet === 'activite') chargerActivite();
   });
+  // Approbation/refus d'une demande de crédit : recharger tout de suite pour
+  // que le badge et le bouton "Encaisser" de la carte se mettent à jour sans
+  // attendre le prochain 'activity:created'.
+  useLiveEvent('credit_request:resolved', () => charger());
 
   function chargerActivite() {
     setChargementActivite(true);
@@ -268,9 +272,23 @@ export function DashboardPage() {
                     <div style={{ minWidth: 0 }}>
                       <p className="carte-a-encaisser-numero">{o.order_number}</p>
                       <p className="carte-a-encaisser-client">{o.client_name || 'Client de passage'}</p>
+                      {o.credit_request_status === 'en_attente' && (
+                        <p style={{ color: 'var(--accent)', fontSize: 12, marginTop: 2 }}>Demande de crédit en attente de validation…</p>
+                      )}
+                      {o.credit_request_status === 'rejetee' && (
+                        <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 2 }}>
+                          Demande de crédit refusée{o.credit_request_reason ? ` : ${o.credit_request_reason}` : ''}
+                        </p>
+                      )}
                     </div>
                     <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
-                    <button className="btn btn-principal" disabled={chargementDetail} onClick={() => ouvrirEncaissementDepuisDashboard(o)}>Encaisser</button>
+                    <button
+                      className="btn btn-principal"
+                      disabled={chargementDetail || o.credit_request_status === 'en_attente'}
+                      onClick={() => ouvrirEncaissementDepuisDashboard(o)}
+                    >
+                      Encaisser
+                    </button>
                   </div>
                 ))}
               </div>
