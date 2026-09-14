@@ -1,7 +1,62 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
+import { useLiveEvent } from '../offline/liveEvents';
 
 const LABEL_MOYEN = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
+
+function IconFournisseur() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M3 21V8l7-4 7 4v13" />
+      <path d="M13 21V13h5v8" />
+      <path d="M7 11h.01M7 15h.01" />
+    </svg>
+  );
+}
+
+function IconRecherche() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.3-4.3" />
+    </svg>
+  );
+}
+
+function IconPlus() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function IconReglement() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="6" width="20" height="13" rx="2" />
+      <path d="M2 10h20" />
+      <path d="M6 15h4" />
+    </svg>
+  );
+}
+
+function IconCorbeille() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 7h16" />
+      <path d="M9 7V4h6v3" />
+      <path d="M6 7l1 13h10l1-13" />
+    </svg>
+  );
+}
+
+const FILTRES_DETTE = [
+  { value: 'tous', label: 'Tous' },
+  { value: 'dette', label: 'Avec dette' },
+  { value: 'a_jour', label: 'À jour' },
+];
 
 export function SuppliersPage() {
   const [suppliers, setSuppliers] = useState([]);
@@ -25,6 +80,24 @@ export function SuppliersPage() {
   }
 
   useEffect(charger, []);
+
+  useLiveEvent('activity:created', () => charger());
+
+  const [recherche, setRecherche] = useState('');
+  const [filtreDette, setFiltreDette] = useState('tous');
+
+  const suppliersFiltres = useMemo(() => {
+    return suppliers.filter((s) => {
+      const correspondRecherche =
+        s.name.toLowerCase().includes(recherche.toLowerCase()) ||
+        (s.phone || '').toLowerCase().includes(recherche.toLowerCase());
+      const correspondDette =
+        filtreDette === 'tous' ||
+        (filtreDette === 'dette' && Number(s.debt) > 0) ||
+        (filtreDette === 'a_jour' && Number(s.debt) <= 0);
+      return correspondRecherche && correspondDette;
+    });
+  }, [suppliers, recherche, filtreDette]);
 
   async function handleCreate(e) {
     e.preventDefault();
@@ -86,53 +159,111 @@ export function SuppliersPage() {
     <>
       <div className="entete-page">
         <h1>Fournisseurs</h1>
+        <button
+          className="btn btn-principal"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
+          onClick={() => setModaleOuverte(true)}
+        >
+          <IconPlus />
+          Nouveau fournisseur
+        </button>
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
 
-      <div className="barre-outils">
-        <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{suppliers.length} fournisseur(s)</span>
-        <button className="btn btn-principal" onClick={() => setModaleOuverte(true)}>
-          Ajouter un fournisseur
-        </button>
+      <div className="barre-filtres">
+        <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
+          <span className="champ-icone"><IconRecherche /></span>
+          <input
+            type="text"
+            className="champ champ--avec-icone"
+            placeholder="Rechercher par nom ou téléphone…"
+            value={recherche}
+            onChange={(e) => setRecherche(e.target.value)}
+          />
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 4,
+            padding: 4,
+            background: 'var(--fond-alterne, rgba(0,0,0,0.03))',
+            borderRadius: 999,
+            border: '1px solid var(--trait)',
+          }}
+        >
+          {FILTRES_DETTE.map((f) => {
+            const actif = filtreDette === f.value;
+            return (
+              <button
+                key={f.value}
+                type="button"
+                onClick={() => setFiltreDette(f.value)}
+                style={{
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '7px 16px',
+                  borderRadius: 999,
+                  fontSize: 13,
+                  fontWeight: actif ? 600 : 500,
+                  color: actif ? '#fff' : 'var(--encre-douce)',
+                  background: actif ? 'var(--accent)' : 'transparent',
+                  boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
+                  transition: 'background 0.15s ease, color 0.15s ease',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {chargement ? (
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
-      ) : suppliers.length === 0 ? (
-        <p className="etat-vide">Aucun fournisseur enregistré pour le moment.</p>
+      ) : suppliersFiltres.length === 0 ? (
+        <p className="etat-vide">
+          {suppliers.length === 0 ? 'Aucun fournisseur enregistré pour le moment.' : 'Aucun fournisseur ne correspond à ces filtres.'}
+        </p>
       ) : (
-        <table className="registre">
-          <thead>
-            <tr>
-              <th>Nom</th>
-              <th>Téléphone</th>
-              <th>Email</th>
-              <th>Dette</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {suppliers.map((s) => (
-              <tr key={s.id}>
-                <td>{s.name}</td>
-                <td className="chiffre">{s.phone || '—'}</td>
-                <td>{s.email || '—'}</td>
-                <td className="chiffre" style={{ color: Number(s.debt) > 0 ? 'var(--brique, #b3423a)' : undefined, fontWeight: Number(s.debt) > 0 ? 600 : 400 }}>
+        <div className="grille-cartes">
+          {suppliersFiltres.map((s) => {
+            const aDette = Number(s.debt) > 0;
+            return (
+              <div key={s.id} className="carte-entite">
+                <div className="carte-entite-entete">
+                  <span className="carte-entite-icone"><IconFournisseur /></span>
+                  {aDette && <span className="tampon tampon-brique">Dette</span>}
+                </div>
+                <p className="carte-entite-nom">{s.name}</p>
+                <p className="carte-entite-detail">{s.phone || s.email || 'Aucun contact enregistré'}</p>
+                <p className="carte-entite-metrique" style={aDette ? { color: 'var(--danger)' } : undefined}>
                   {Math.round(Number(s.debt) || 0).toLocaleString('fr-FR')} FCFA
-                </td>
-                <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => ouvrirReglement(s)}>
-                    Enregistrer un règlement
+                </p>
+                <p className="carte-entite-souslegende">{aDette ? 'Dette en cours' : 'Aucune dette'}</p>
+                <div className="carte-entite-actions">
+                  <button
+                    className="btn"
+                    style={{ flex: 1, justifyContent: 'center', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    onClick={() => ouvrirReglement(s)}
+                  >
+                    <IconReglement />
+                    Règlement
                   </button>
-                  <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handleSupprimer(s)}>
-                    Retirer
+                  <button
+                    className="btn"
+                    style={{ padding: '7px 10px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    onClick={() => handleSupprimer(s)}
+                    title="Retirer ce fournisseur"
+                  >
+                    <IconCorbeille />
                   </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {modaleOuverte && (

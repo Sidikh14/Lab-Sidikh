@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
+const { logActivity } = require('../utils/activityLog');
 
 const router = express.Router();
 router.use(authenticate);
@@ -58,6 +59,14 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
        RETURNING id, full_name, email, role, is_active, created_at`,
       [req.user.merchantId, fullName, email, passwordHash, role]
     );
+
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'team_member_created',
+      description: `a ajouté ${fullName} à l'équipe (${role})`,
+    });
+
     res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.code === '23505') {
@@ -89,6 +98,14 @@ router.patch('/:id/status', requireRole('manager'), async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Membre introuvable.' });
     }
+
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'team_member_status_changed',
+      description: `a ${isActive ? 'réactivé' : 'désactivé'} ${result.rows[0].full_name}`,
+    });
+
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -117,6 +134,14 @@ router.patch('/:id/permissions', requireRole('manager'), async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Membre introuvable.' });
     }
+
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'team_member_permissions_changed',
+      description: `a modifié les permissions de ${result.rows[0].full_name}`,
+    });
+
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -149,6 +174,14 @@ router.patch('/:id/password', requireRole('manager'), async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Membre introuvable.' });
     }
+
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'team_member_password_reset',
+      description: `a réinitialisé le mot de passe de ${result.rows[0].full_name}`,
+    });
+
     res.json({ ...result.rows[0], message: 'Mot de passe réinitialisé avec succès.' });
   } catch (err) {
     console.error(err);

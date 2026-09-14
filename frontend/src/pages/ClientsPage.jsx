@@ -1,6 +1,47 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/StatusBadge';
+
+function IconClient() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7" />
+    </svg>
+  );
+}
+
+function IconRecherche() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.3-4.3" />
+    </svg>
+  );
+}
+
+function IconPlus() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function IconDossier() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+    </svg>
+  );
+}
+
+const FILTRES_CREANCE = [
+  { value: 'tous', label: 'Tous' },
+  { value: 'creance', label: 'Avec créance' },
+  { value: 'a_jour', label: 'À jour' },
+];
 
 export function ClientsPage() {
   const [clients, setClients] = useState([]);
@@ -20,6 +61,8 @@ export function ClientsPage() {
   const [envoiReleveEnCours, setEnvoiReleveEnCours] = useState(false);
   const [clientEnEdition, setClientEnEdition] = useState(null);
   const [enregistrementEdition, setEnregistrementEdition] = useState(false);
+  const [recherche, setRecherche] = useState('');
+  const [filtreCreance, setFiltreCreance] = useState('tous');
 
   async function handleEnvoyerReleve() {
     setEnvoiReleveEnCours(true);
@@ -45,6 +88,19 @@ export function ClientsPage() {
   }
 
   useEffect(charger, []);
+
+  const clientsFiltres = useMemo(() => {
+    return clients.filter((c) => {
+      const correspondRecherche =
+        c.full_name.toLowerCase().includes(recherche.toLowerCase()) ||
+        (c.phone || '').toLowerCase().includes(recherche.toLowerCase());
+      const correspondCreance =
+        filtreCreance === 'tous' ||
+        (filtreCreance === 'creance' && Number(c.balance_due) > 0) ||
+        (filtreCreance === 'a_jour' && Number(c.balance_due) <= 0);
+      return correspondRecherche && correspondCreance;
+    });
+  }, [clients, recherche, filtreCreance]);
 
   async function handleCreate(e) {
     e.preventDefault();
@@ -149,54 +205,103 @@ export function ClientsPage() {
     <>
       <div className="entete-page">
         <h1>Clients</h1>
+        <button
+          className="btn btn-principal"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
+          onClick={() => setModaleOuverte(true)}
+        >
+          <IconPlus />
+          Nouveau client
+        </button>
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
 
-      <div className="barre-outils">
-        <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{clients.length} client(s)</span>
-        <button className="btn btn-principal" onClick={() => setModaleOuverte(true)}>
-          Ajouter un client
-        </button>
+      <div className="barre-filtres">
+        <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
+          <span className="champ-icone"><IconRecherche /></span>
+          <input
+            type="text"
+            className="champ champ--avec-icone"
+            placeholder="Rechercher par nom ou téléphone…"
+            value={recherche}
+            onChange={(e) => setRecherche(e.target.value)}
+          />
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            gap: 4,
+            padding: 4,
+            background: 'var(--fond-alterne, rgba(0,0,0,0.03))',
+            borderRadius: 999,
+            border: '1px solid var(--trait)',
+          }}
+        >
+          {FILTRES_CREANCE.map((f) => {
+            const actif = filtreCreance === f.value;
+            return (
+              <button
+                key={f.value}
+                type="button"
+                onClick={() => setFiltreCreance(f.value)}
+                style={{
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '7px 16px',
+                  borderRadius: 999,
+                  fontSize: 13,
+                  fontWeight: actif ? 600 : 500,
+                  color: actif ? '#fff' : 'var(--encre-douce)',
+                  background: actif ? 'var(--accent)' : 'transparent',
+                  boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
+                  transition: 'background 0.15s ease, color 0.15s ease',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {chargement ? (
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
-      ) : clients.length === 0 ? (
-        <p className="etat-vide">Aucun client enregistré. Ajoutez votre premier client.</p>
+      ) : clientsFiltres.length === 0 ? (
+        <p className="etat-vide">
+          {clients.length === 0 ? 'Aucun client enregistré. Ajoutez votre premier client.' : 'Aucun client ne correspond à ces filtres.'}
+        </p>
       ) : (
-        <table className="registre">
-          <thead>
-            <tr>
-              <th>Nom</th>
-              <th>Téléphone</th>
-              <th>Email</th>
-              <th>Créance</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {clients.map((c) => (
-              <tr key={c.id}>
-                <td>{c.full_name}</td>
-                <td className="chiffre">{c.phone || '—'}</td>
-                <td>{c.email || '—'}</td>
-                <td className="chiffre" style={Number(c.balance_due) > 0 ? { color: 'var(--danger)', fontWeight: 600 } : undefined}>
-                  {Number(c.balance_due) > 0 ? `${Math.round(c.balance_due).toLocaleString('fr-FR')} FCFA` : '—'}
-                </td>
-                <td>
+        <div className="grille-cartes">
+          {clientsFiltres.map((c) => {
+            const aCreance = Number(c.balance_due) > 0;
+            return (
+              <div key={c.id} className="carte-entite">
+                <div className="carte-entite-entete">
+                  <span className="carte-entite-icone"><IconClient /></span>
+                  {aCreance && <span className="tampon tampon-brique">Créance</span>}
+                </div>
+                <p className="carte-entite-nom">{c.full_name}</p>
+                <p className="carte-entite-detail">{c.phone || c.email || 'Aucun contact enregistré'}</p>
+                <p className="carte-entite-metrique" style={aCreance ? { color: 'var(--danger)' } : undefined}>
+                  {aCreance ? `${Math.round(c.balance_due).toLocaleString('fr-FR')} FCFA` : 'À jour'}
+                </p>
+                <p className="carte-entite-souslegende">{aCreance ? 'Créance en cours' : 'Aucune créance'}</p>
+                <div className="carte-entite-actions">
                   <button
                     className="btn"
-                    style={{ padding: '5px 10px', fontSize: 13 }}
+                    style={{ flex: 1, justifyContent: 'center', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
                     onClick={() => ouvrirFiche(c)}
                   >
+                    <IconDossier />
                     Voir la fiche
                   </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {/* Modale d'ajout de client */}
