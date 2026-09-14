@@ -240,6 +240,11 @@ export function DashboardPage() {
         <button className={onglet === 'activite' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('activite')}>
           Journal d'activité
         </button>
+        {vueEquipe && (
+          <button className={onglet === 'suivi' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('suivi')}>
+            Stock &amp; livraisons
+          </button>
+        )}
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
@@ -354,7 +359,7 @@ export function DashboardPage() {
                 <span className="etiquette">Valeur du stock</span>
                 <span className="valeur">{Math.round(valeurStock).toLocaleString('fr-FR')} FCFA</span>
               </div>
-              <div className="stat">
+              <div className="stat" style={{ cursor: 'pointer' }} onClick={() => setOnglet('suivi')}>
                 <span className="stat-icone" style={enRupture.length + enFaible.length > 0 ? { background: 'var(--danger-clair)', color: 'var(--danger)' } : undefined}><IconAlerte /></span>
                 <span className="etiquette">Alertes de seuil</span>
                 <span className="valeur">{enRupture.length + enFaible.length}</span>
@@ -369,7 +374,7 @@ export function DashboardPage() {
                 <span className="etiquette">En attente</span>
                 <span className="valeur">{commandesEnAttente.length}</span>
               </div>
-              <div className="stat">
+              <div className="stat" style={{ cursor: 'pointer' }} onClick={() => setOnglet('suivi')}>
                 <span className="stat-icone"><IconCamion /></span>
                 <span className="etiquette">À livrer</span>
                 <span className="valeur">{aLivrer.length}</span>
@@ -403,62 +408,68 @@ export function DashboardPage() {
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-              {(enRupture.length > 0 || enFaible.length > 0) && (
-                <div style={{ flex: 1, minWidth: 280 }}>
-                  <h2 style={{ fontSize: 16, marginBottom: 12 }}>Alertes de seuil</h2>
-                  <div className="liste-a-encaisser">
-                    {[...enRupture, ...enFaible].slice(0, 8).map((p) => (
-                      <div key={p.id} className="carte-a-encaisser">
-                        <span
-                          className="stat-icone"
-                          style={{
-                            width: 36,
-                            height: 36,
-                            flexShrink: 0,
-                            background: p.status === 'rupture' ? 'var(--danger-clair)' : 'var(--accent-clair)',
-                            color: p.status === 'rupture' ? 'var(--danger)' : 'var(--accent)',
-                          }}
-                        >
-                          <IconAlerte />
-                        </span>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <p className="carte-a-encaisser-numero">{p.name}</p>
-                          <p className="carte-a-encaisser-client">{p.quantity_in_stock} en stock</p>
-                        </div>
-                        <StatusBadge status={p.status} />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {aLivrer.length > 0 && (
-                <div style={{ flex: 1, minWidth: 280 }}>
-                  <h2 style={{ fontSize: 16, marginBottom: 12 }}>Commandes à livrer</h2>
-                  <div className="liste-a-encaisser">
-                    {aLivrer.slice(0, 8).map((o) => (
-                      <div key={o.id} className="carte-a-encaisser ligne-cliquable" onClick={() => ouvrirDetailCommande(o.id)}>
-                        <span className="stat-icone" style={{ width: 36, height: 36, flexShrink: 0 }}>
-                          <IconCamion />
-                        </span>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <p className="carte-a-encaisser-numero">{o.order_number}</p>
-                          <p className="carte-a-encaisser-client">{o.client_name || 'Client de passage'}</p>
-                        </div>
-                        <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
             <div style={{ marginTop: 24 }}>
               <ActiviteListe activite={activiteAujourdhui.slice(0, 8)} titre="Activité récente" />
             </div>
           </>
         )
+      )}
+
+      {onglet === 'suivi' && vueEquipe && (
+        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 280 }}>
+            <h2 style={{ fontSize: 16, marginBottom: 12 }}>Alertes de seuil</h2>
+            {enRupture.length + enFaible.length === 0 ? (
+              <p className="etat-vide">Aucune alerte de seuil pour le moment.</p>
+            ) : (
+              <div className="liste-a-encaisser">
+                {[...enRupture, ...enFaible].map((p) => (
+                  <div key={p.id} className="carte-a-encaisser">
+                    <span
+                      className="stat-icone"
+                      style={{
+                        width: 36,
+                        height: 36,
+                        flexShrink: 0,
+                        background: p.status === 'rupture' ? 'var(--danger-clair)' : 'var(--accent-clair)',
+                        color: p.status === 'rupture' ? 'var(--danger)' : 'var(--accent)',
+                      }}
+                    >
+                      <IconAlerte />
+                    </span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <p className="carte-a-encaisser-numero">{p.name}</p>
+                      <p className="carte-a-encaisser-client">{p.quantity_in_stock} en stock</p>
+                    </div>
+                    <StatusBadge status={p.status} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{ flex: 1, minWidth: 280 }}>
+            <h2 style={{ fontSize: 16, marginBottom: 12 }}>Commandes à livrer</h2>
+            {aLivrer.length === 0 ? (
+              <p className="etat-vide">Aucune commande à livrer pour le moment.</p>
+            ) : (
+              <div className="liste-a-encaisser">
+                {aLivrer.map((o) => (
+                  <div key={o.id} className="carte-a-encaisser ligne-cliquable" onClick={() => ouvrirDetailCommande(o.id)}>
+                    <span className="stat-icone" style={{ width: 36, height: 36, flexShrink: 0 }}>
+                      <IconCamion />
+                    </span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <p className="carte-a-encaisser-numero">{o.order_number}</p>
+                      <p className="carte-a-encaisser-client">{o.client_name || 'Client de passage'}</p>
+                    </div>
+                    <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {onglet === 'activite' && (
