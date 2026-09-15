@@ -63,3 +63,22 @@ self.addEventListener('fetch', (event) => {
     );
   }
 });
+
+// --- Notifications push (système d'alertes manager) ---
+// Sans rapport avec l'app shell / le cache ci-dessus : gère uniquement
+// l'affichage des notifications reçues du serveur via l'API Push.
+
+self.addEventListener('push', (event) => {
+  const data = event.data ? event.data.json() : {};
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'Amaterasu', {
+      body: data.body || '',
+      icon: '/icon-192.png', // [À CONFIRMER] chemin réel de l'icône si elle existe
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(clients.openWindow('/'));
+});

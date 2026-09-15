@@ -5,6 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
+const { creerAlerte, getSeuilVenteElevee, getNomUtilisateur } = require('../services/alerts.service');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, traitSeparateur, enregistrerPolices } = require('../utils/pdfHelpers');
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
@@ -155,6 +156,11 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
     let subtotalAmount = 0;
     let stockOverrideUtilise = false;
     const resolvedItems = [];
+    // Produits passés sous leur seuil d'alerte pendant cette vente — les
+    // alertes correspondantes ne sont déclenchées qu'après le COMMIT, pour
+    // ne jamais notifier une rupture liée à une commande finalement annulée
+    // (rollback) par une erreur plus loin dans la boucle.
+    const produitsRuptureImminente = [];
 
     for (const item of items) {
       if (!item.productId || !Number.isInteger(item.quantity) || item.quantity <= 0) {
@@ -162,7 +168,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
       }
 
       const productResult = await client.query(
-        `SELECT id, name, unit_price, quantity_in_stock
+        `SELECT id, name, unit_price, quantity_in_stock, quantity_alert_threshold
          FROM products WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
         [item.productId, req.user.merchantId]
       );
@@ -268,6 +274,18 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
         [req.user.merchantId, resolved.product.id, req.user.id, resolved.baseQuantity, `Commande ${order.id}`]
       );
 
+      // Alerte rupture imminente : le produit vient de passer sous son seuil
+      // (ou l'était déjà). On note juste le fait ici, l'alerte réelle est
+      // envoyée après le COMMIT (voir plus bas).
+      if (newQuantity <= resolved.product.quantity_alert_threshold) {
+        produitsRuptureImminente.push({
+          id: resolved.product.id,
+          nom: resolved.product.name,
+          nouvelleQuantite: newQuantity,
+          seuil: resolved.product.quantity_alert_threshold,
+        });
+      }
+
       if (resolved.originalUnitPrice !== null) {
         await logActivity({
           merchantId: req.user.merchantId,
@@ -291,6 +309,27 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
     // Diffusion en temps réel : la caisse (OrdersPage.jsx côté caissier)
     // n'a pas besoin d'actualiser la page pour voir apparaître cette vente.
     broadcast(req.user.merchantId, 'order:created', orderComplet);
+
+    // Alertes rupture imminente — envoyées seulement maintenant que la vente
+    // est bien commitée. Anti-doublon 24h par produit pour ne pas spammer à
+    // chaque vente tant que le produit reste sous le seuil.
+    for (const p of produitsRuptureImminente) {
+      const dejaAlerte = await pool.query(
+        `SELECT 1 FROM alerts
+         WHERE reference_id = $1 AND type = 'rupture_imminente' AND created_at > now() - interval '24 hours'`,
+        [p.id]
+      );
+      if (dejaAlerte.rows.length === 0) {
+        await creerAlerte({
+          merchantId: req.user.merchantId,
+          type: 'rupture_imminente',
+          titre: 'Rupture de stock imminente',
+          message: `${p.nom} : il ne reste que ${p.nouvelleQuantite} unité(s) (seuil : ${p.seuil}).`,
+          referenceId: p.id,
+        });
+      }
+    }
+
     res.status(201).json(orderComplet);
   } catch (err) {
     await client.query('ROLLBACK');
@@ -419,6 +458,20 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
         userId: req.user.id,
         action: 'order_credit_sale',
         description: `a enregistré la commande ${formatOrderNumber(orderMisAJour)} à crédit (${formatMontant(orderMisAJour.total_amount)})`,
+      });
+    }
+
+    // Alerte vente d'un montant élevé.
+    const seuilVenteElevee = await getSeuilVenteElevee(req.user.merchantId);
+    if (Number(orderMisAJour.total_amount) >= seuilVenteElevee) {
+      const nomActeur = (await getNomUtilisateur(req.user.id)) || req.user.id;
+      await creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'vente_elevee',
+        titre: "Vente d'un montant élevé",
+        message: `Vente ${formatOrderNumber(orderMisAJour)} de ${formatMontant(orderMisAJour.total_amount)} encaissée par ${nomActeur}.`,
+        montant: orderMisAJour.total_amount,
+        referenceId: orderMisAJour.id,
       });
     }
 
@@ -557,6 +610,23 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
         action: 'order_cancelled',
         description: `a annulé la commande ${formatOrderNumber(order)}`,
       });
+
+      // Alerte annulation suspecte : la commande était déjà encaissée
+      // (statut 'validee' ou 'livree', donc PAS 'en_attente'/'renvoyee_vendeur'
+      // — les deux seuls statuts pour lesquels le stock est remis plus haut).
+      // Envoyée après le COMMIT, une fois l'annulation bien enregistrée.
+      const etaitDejaEncaissee = !['en_attente', 'renvoyee_vendeur'].includes(orderExistant.status);
+      if (etaitDejaEncaissee) {
+        const nomActeur = (await getNomUtilisateur(req.user.id)) || req.user.id;
+        await creerAlerte({
+          merchantId: req.user.merchantId,
+          type: 'annulation_suspecte',
+          titre: 'Annulation après encaissement',
+          message: `Commande ${formatOrderNumber(order)} (${formatMontant(order.total_amount)}) annulée après encaissement par ${nomActeur}.`,
+          montant: order.total_amount,
+          referenceId: order.id,
+        });
+      }
     }
 
     res.json({ ...order, order_number: formatOrderNumber(order) });
