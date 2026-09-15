@@ -388,11 +388,6 @@ export function DashboardPage() {
                 <span className="etiquette">À livrer</span>
                 <span className="valeur">{aLivrer.length}</span>
               </div>
-              <div className="stat">
-                <span className="stat-icone" style={demandesCredit.length > 0 ? { background: 'var(--danger-clair)', color: 'var(--danger)' } : undefined}><IconAlerte /></span>
-                <span className="etiquette">Demandes de crédit</span>
-                <span className="valeur">{demandesCredit.length}</span>
-              </div>
             </div>
 
             {demandesCredit.length > 0 && (
