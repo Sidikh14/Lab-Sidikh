@@ -13,9 +13,43 @@ function dateAujourdHui() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function IconEspeces() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="2" y="6" width="20" height="12" rx="2" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function IconTelephone() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="6" y="2" width="12" height="20" rx="2" />
+      <path d="M11 18h2" />
+    </svg>
+  );
+}
+
 export function CaissePage() {
   const [onglet, setOnglet] = useState('cloture');
   const [erreur, setErreur] = useState('');
+
+  // --- Soldes actuels par moyen de paiement (haut de page) ---
+  const [soldes, setSoldes] = useState(null);
+  const [chargementSoldes, setChargementSoldes] = useState(true);
+
+  useEffect(() => {
+    api
+      .getCashBalances()
+      .then(setSoldes)
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementSoldes(false));
+  }, []);
+
+  function soldeDe(method) {
+    return soldes?.find((s) => s.method === method)?.balance ?? 0;
+  }
 
   // --- Clôture du jour ---
   const [dateCloture, setDateCloture] = useState(dateAujourdHui());
@@ -138,6 +172,24 @@ export function CaissePage() {
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
+
+      <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 24 }}>
+        <div className="stat">
+          <span className="stat-icone"><IconEspeces /></span>
+          <span className="etiquette">Solde en caisse (espèces)</span>
+          <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('especes')).toLocaleString('fr-FR')} FCFA`}</span>
+        </div>
+        <div className="stat">
+          <span className="stat-icone"><IconTelephone /></span>
+          <span className="etiquette">Solde Wave</span>
+          <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('wave')).toLocaleString('fr-FR')} FCFA`}</span>
+        </div>
+        <div className="stat">
+          <span className="stat-icone"><IconTelephone /></span>
+          <span className="etiquette">Solde Orange Money</span>
+          <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('orange_money')).toLocaleString('fr-FR')} FCFA`}</span>
+        </div>
+      </div>
 
       <div className="onglets" style={{ marginBottom: 20 }}>
         <button className={`onglet ${onglet === 'cloture' ? 'onglet-actif' : ''}`} onClick={() => setOnglet('cloture')}>

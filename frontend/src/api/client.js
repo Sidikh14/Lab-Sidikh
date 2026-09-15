@@ -133,6 +133,7 @@ export const api = {
   getRevenue: () => request('/activity/revenue'),
 
   getCashSummary: (date) => request(`/cash/summary${date ? `?date=${date}` : ''}`),
+  getCashBalances: () => request('/cash/balances'),
   createCashClosing: (data) =>
     request('/cash/closings', { method: 'POST', body: JSON.stringify(data) }),
   getCashClosings: (from, to) => request(`/cash/closings?from=${from}&to=${to}`),

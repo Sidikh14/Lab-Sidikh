@@ -168,6 +168,28 @@ function texteMouvement(m) {
   return '';
 }
 
+// GET /cash/balances — solde théorique actuel en caisse pour chaque moyen
+// de paiement (cumul de tous les mouvements depuis le début de l'activité).
+// Affiché en haut de la page Caisse, comme les stats du tableau de bord —
+// c'est un solde calculé (comme la valeur du stock), pas le dernier solde
+// compté physiquement à une clôture.
+router.get('/balances', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+  try {
+    const debut = new Date(0).toISOString();
+    const fin = new Date().toISOString();
+    const mouvements = await calculerMouvements(req, debut, fin);
+    const soldes = MOYENS_PAIEMENT.map((m) => ({
+      method: m,
+      label: LABEL_METHODE[m],
+      balance: mouvements[m].theoretical,
+    }));
+    res.json(soldes);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du calcul des soldes de caisse.' });
+  }
+});
+
 // GET /cash/summary?date=AAAA-MM-JJ — mouvements du jour + clôture existante,
 // pour chaque moyen de paiement.
 router.get('/summary', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
