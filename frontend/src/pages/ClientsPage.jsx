@@ -59,6 +59,7 @@ export function ClientsPage() {
   const [noteReglement, setNoteReglement] = useState('');
   const [reglementEnCours, setReglementEnCours] = useState(false);
   const [envoiReleveEnCours, setEnvoiReleveEnCours] = useState(false);
+  const [telechargementFacturesEnCours, setTelechargementFacturesEnCours] = useState(false);
   const [clientEnEdition, setClientEnEdition] = useState(null);
   const [enregistrementEdition, setEnregistrementEdition] = useState(false);
   const [recherche, setRecherche] = useState('');
@@ -75,6 +76,18 @@ export function ClientsPage() {
       setDetailErreur(err.message);
     } finally {
       setEnvoiReleveEnCours(false);
+    }
+  }
+
+  async function handleTelechargerFacturesImpayees() {
+    setTelechargementFacturesEnCours(true);
+    setDetailErreur('');
+    try {
+      await api.downloadClientUnpaidInvoicesPdf(clientSelectionne.id);
+    } catch (err) {
+      setDetailErreur(err.message);
+    } finally {
+      setTelechargementFacturesEnCours(false);
     }
   }
 
@@ -456,6 +469,9 @@ export function ClientsPage() {
                     <button className="btn" onClick={handleEnvoyerReleve} disabled={envoiReleveEnCours || !clientSelectionne.phone}>
                       {envoiReleveEnCours ? 'Préparation…' : 'Envoyer via WhatsApp'}
                     </button>
+                    <button className="btn" onClick={handleTelechargerFacturesImpayees} disabled={telechargementFacturesEnCours}>
+                      {telechargementFacturesEnCours ? 'Préparation…' : 'Télécharger les factures impayées'}
+                    </button>
                     {!clientSelectionne.phone && (
                       <span style={{ fontSize: 12, color: 'var(--encre-douce)' }}>Aucun numéro de téléphone enregistré pour ce client</span>
                     )}
@@ -472,6 +488,7 @@ export function ClientsPage() {
                         <th>Date</th>
                         <th>Montant</th>
                         <th>Statut</th>
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -480,6 +497,15 @@ export function ClientsPage() {
                           <td>{new Date(o.created_at).toLocaleDateString('fr-FR')}</td>
                           <td className="chiffre">{Number(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
                           <td><StatusBadge status={o.status} /></td>
+                          <td>
+                            <button
+                              className="btn"
+                              style={{ padding: '4px 10px', fontSize: 12 }}
+                              onClick={() => api.previewOrderReceipt(o.id).catch((err) => setDetailErreur(err.message))}
+                            >
+                              Facture
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>

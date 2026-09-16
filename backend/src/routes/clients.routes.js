@@ -1,9 +1,10 @@
 const express = require('express');
+const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
-const { formatMontant } = require('../utils/pdfHelpers');
+const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, traitSeparateur } = require('../utils/pdfHelpers');
 
 const router = express.Router();
 router.use(authenticate);
@@ -224,6 +225,100 @@ router.post('/:id/whatsapp-statement', requireRole('manager', 'gerant', 'caissie
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la préparation du relevé.' });
+  }
+});
+
+// PDF listant les factures à crédit impayées ou partiellement payées d'un
+// client, avec pour chacune le montant, ce qui a déjà été réglé (versement)
+// et le reste à payer — à envoyer directement au client.
+function genererFacturesImpayeesPdf(res, { businessName, clientName, factures, totalRestant }) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="factures-impayees-${clientName.replace(/\s+/g, '-')}.pdf"`);
+
+  const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  doc.pipe(res);
+
+  let y = dessinerEntete(doc, {
+    businessName,
+    titre: 'Factures impayées',
+    sousTitre: `${clientName} · ${factures.length} facture(s) · Total restant dû : ${formatMontant(totalRestant)} FCFA`,
+  });
+  y += 10;
+
+  function entete() {
+    y = dessinerEnteteTableau(doc, y, [
+      { texte: 'Date', x: 56, largeur: 80 },
+      { texte: 'Montant', x: 150, largeur: 110, aligner: 'right' },
+      { texte: 'Déjà réglé', x: 280, largeur: 110, aligner: 'right' },
+      { texte: 'Reste à payer', x: 410, largeur: 120, aligner: 'right' },
+    ]);
+  }
+  entete();
+
+  factures.forEach((f, index) => {
+    if (y > 750) {
+      doc.addPage();
+      y = 50;
+      entete();
+    }
+    if (index % 2 === 1) {
+      doc.rect(50, y, doc.page.width - 100, 20).fill(COULEURS.fondAlterne);
+      doc.fillColor(COULEURS.encre);
+    }
+    doc.fontSize(9).fillColor(COULEURS.encre);
+    doc.text(new Date(f.created_at).toLocaleDateString('fr-FR'), 56, y + 5, { width: 80 });
+    doc.text(`${formatMontant(f.montant)} FCFA`, 150, y + 5, { width: 110, align: 'right' });
+    doc.text(`${formatMontant(f.avance)} FCFA`, 280, y + 5, { width: 110, align: 'right' });
+    doc.text(`${formatMontant(f.reste)} FCFA`, 410, y + 5, { width: 120, align: 'right' });
+    y += 20;
+  });
+
+  traitSeparateur(doc, y + 4);
+  y += 16;
+  doc.font('Helvetica-Bold').fontSize(10).fillColor(COULEURS.encre);
+  doc.text('TOTAL RESTANT DÛ', 280, y, { width: 130, align: 'right' });
+  doc.text(`${formatMontant(totalRestant)} FCFA`, 410, y, { width: 120, align: 'right' });
+  doc.font('Helvetica');
+
+  doc.end();
+}
+
+// GET /clients/:id/unpaid-invoices-pdf — export PDF des factures à crédit
+// impayées ou partiellement réglées du client (avec le détail des
+// versements déjà faits), à télécharger et envoyer au client.
+router.get('/:id/unpaid-invoices-pdf', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+  try {
+    const clientResult = await pool.query(
+      `SELECT c.*, m.business_name
+       FROM clients c JOIN merchants m ON m.id = c.merchant_id
+       WHERE c.id = $1 AND c.merchant_id = $2`,
+      [req.params.id, req.user.merchantId]
+    );
+    const client = clientResult.rows[0];
+    if (!client) return res.status(404).json({ error: 'Client introuvable.' });
+
+    const factures = (await calculerDetailCreances(req.user.merchantId, client.id)).filter((f) => f.reste > 0);
+    if (factures.length === 0) {
+      return res.status(400).json({ error: "Ce client n'a aucune facture impayée." });
+    }
+    const totalRestant = factures.reduce((somme, f) => somme + f.reste, 0);
+
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'client_unpaid_invoices_pdf',
+      description: `a exporté les factures impayées de ${client.full_name} en PDF`,
+    });
+
+    genererFacturesImpayeesPdf(res, {
+      businessName: client.business_name,
+      clientName: client.full_name,
+      factures,
+      totalRestant,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
   }
 });
 

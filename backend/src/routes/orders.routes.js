@@ -991,7 +991,36 @@ function genererTicketEtroit(res, order) {
 
 // Facture A4, pour un client enregistré — téléchargeable/imprimable,
 // même identité visuelle que les autres documents de l'application.
-function genererFactureA4(res, order) {
+// Calcule, pour UNE facture à crédit précise, la part déjà réglée (les
+// règlements sont enregistrés au niveau du client, imputés à la plus
+// ancienne facture d'abord — FIFO, même logique que clients.routes.js) et
+// le reste à payer. Utilisé pour l'afficher directement sur la facture PDF.
+async function calculerAvanceFacture(merchantId, clientId, orderId) {
+  const ventesResult = await pool.query(
+    `SELECT id, total_amount
+     FROM orders
+     WHERE client_id = $1 AND merchant_id = $2 AND payment_method = 'a_credit' AND status != 'annulee'
+     ORDER BY created_at, id`,
+    [clientId, merchantId]
+  );
+  const paiementsResult = await pool.query(
+    `SELECT COALESCE(SUM(amount), 0) AS total_paye FROM credit_payments WHERE client_id = $1 AND merchant_id = $2`,
+    [clientId, merchantId]
+  );
+  let totalPaye = Number(paiementsResult.rows[0].total_paye);
+
+  for (const vente of ventesResult.rows) {
+    const montant = Number(vente.total_amount);
+    const avanceImputee = Math.min(Math.max(totalPaye, 0), montant);
+    totalPaye -= avanceImputee;
+    if (vente.id === orderId) {
+      return { avance: avanceImputee, reste: montant - avanceImputee };
+    }
+  }
+  return { avance: 0, reste: 0 };
+}
+
+function genererFactureA4(res, order, creditInfo) {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="facture-${order.order_number}.pdf"`);
 
@@ -1070,14 +1099,25 @@ function genererFactureA4(res, order) {
   doc.fillColor(COULEURS.encre).font('Helvetica');
   y += 30;
 
-  doc.fontSize(9).fillColor(COULEURS.muted).text('MONTANT REÇU', 300, y, { width: 145, align: 'right' });
-  doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.amount_received)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
-  y += 16;
-
-  if (Number(order.change_given) > 0) {
-    doc.fontSize(9).fillColor(COULEURS.muted).text('MONNAIE RENDUE', 300, y, { width: 145, align: 'right' });
-    doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.change_given)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+  if (order.payment_method === 'a_credit' && creditInfo) {
+    doc.fontSize(9).fillColor(COULEURS.muted).text('DÉJÀ RÉGLÉ', 300, y, { width: 145, align: 'right' });
+    doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(creditInfo.avance)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
     y += 16;
+
+    doc.fontSize(9).fillColor(COULEURS.muted).text('RESTE À PAYER', 300, y, { width: 145, align: 'right' });
+    doc.fontSize(11).font('Helvetica-Bold').fillColor(COULEURS.encre).text(`${formatMontant(creditInfo.reste)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+    doc.font('Helvetica');
+    y += 16;
+  } else {
+    doc.fontSize(9).fillColor(COULEURS.muted).text('MONTANT REÇU', 300, y, { width: 145, align: 'right' });
+    doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.amount_received)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+    y += 16;
+
+    if (Number(order.change_given) > 0) {
+      doc.fontSize(9).fillColor(COULEURS.muted).text('MONNAIE RENDUE', 300, y, { width: 145, align: 'right' });
+      doc.fontSize(10).fillColor(COULEURS.encre).text(`${formatMontant(order.change_given)} ${order.currency}`, 460, y, { width: 85, align: 'right' });
+      y += 16;
+    }
   }
 
   doc.fontSize(9).fillColor(COULEURS.mutedClair)
@@ -1094,7 +1134,11 @@ router.get('/:id/receipt-pdf', async (req, res) => {
     if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
 
     if (order.client_id) {
-      genererFactureA4(res, order);
+      let creditInfo = null;
+      if (order.payment_method === 'a_credit') {
+        creditInfo = await calculerAvanceFacture(req.user.merchantId, order.client_id, order.id);
+      }
+      genererFactureA4(res, order, creditInfo);
     } else {
       genererTicketEtroit(res, order);
     }

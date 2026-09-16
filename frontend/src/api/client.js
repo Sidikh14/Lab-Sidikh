@@ -77,6 +77,7 @@ export const api = {
     request(`/clients/${id}/credit-payments`, { method: 'POST', body: JSON.stringify(data) }),
   getClientWhatsappStatement: (id) =>
     request(`/clients/${id}/whatsapp-statement`, { method: 'POST' }),
+  downloadClientUnpaidInvoicesPdf: (id) => previewFile(`/clients/${id}/unpaid-invoices-pdf`),
 
   getOrders: () => request('/orders'),
   getOrder: (id) => request(`/orders/${id}`),
@@ -98,6 +99,9 @@ export const api = {
     request('/users', { method: 'POST', body: JSON.stringify(data) }),
   setUserStatus: (id, isActive) =>
     request(`/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
+  setUserRole: (id, role) =>
+    request(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+  deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
   setUserPermissions: (id, modules) =>
     request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules }) }),
   resetUserPassword: (id, newPassword) =>
