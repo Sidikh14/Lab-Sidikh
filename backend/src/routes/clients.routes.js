@@ -237,16 +237,37 @@ function genererFacturesImpayeesPdf(res, { businessName, clientName, factures, t
 
   const doc = new PDFDocument({ margin: 50, size: 'A4' });
 
+  // Si le client coupe la connexion (onglet fermé, téléchargement annulé,
+  // timeout côté hébergeur), la réponse se ferme toute seule mais pdfkit,
+  // lui, continue de pousser ses chunks dans le pipe → écriture dans une
+  // réponse terminée → ERR_STREAM_WRITE_AFTER_END émis sur le
+  // ServerResponse → crash du processus entier. On arrête donc le document
+  // dès que la connexion se ferme.
+  res.on('close', () => {
+    if (!res.writableEnded) doc.destroy();
+  });
+
+  // Dernier filet : une erreur d'écriture sur la réponse ne doit jamais
+  // remonter en exception non catchée.
+  res.on('error', (err) => {
+    console.error('Erreur réponse HTTP (factures impayées) :', err);
+    doc.destroy();
+  });
+
   // Filet de sécurité : si pdfkit échoue en cours de flux (ex : image de
   // logo corrompue) APRÈS que l'en-tête HTTP "Content-Type: application/pdf"
   // soit déjà parti, il est trop tard pour répondre du JSON — on ne peut
   // qu'arrêter proprement la connexion, sans jamais laisser une exception
   // non catchée remonter et faire planter tout le processus Node.
   doc.on('error', (err) => {
-    console.error('Erreur pdfkit (facture impayées) :', err);
+    console.error('Erreur pdfkit (factures impayées) :', err);
     if (!res.headersSent) {
       res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
     } else if (!res.writableEnded) {
+      // IMPÉRATIF : débrancher le flux AVANT de fermer la réponse, sinon le
+      // chunk suivant est écrit dans une réponse déjà terminée et fait
+      // planter le processus.
+      doc.unpipe(res);
       res.end();
     }
   });
@@ -328,7 +349,7 @@ router.get('/:id/unpaid-invoices-pdf', requireRole('manager', 'gerant', 'caissie
       description: `a exporté les factures impayées de ${client.full_name} en PDF`,
     });
 
-    genererFacturesImpayeesPdf(res, {
+    return genererFacturesImpayeesPdf(res, {
       businessName: client.business_name,
       clientName: client.full_name,
       factures,
@@ -345,7 +366,14 @@ router.get('/:id/unpaid-invoices-pdf', requireRole('manager', 'gerant', 'caissie
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
+    // Si la génération a déjà commencé, l'en-tête "application/pdf" est
+    // parti : répondre du JSON ici déclencherait un second crash
+    // ("Cannot set headers after they are sent"). On coupe la connexion.
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
+    } else if (!res.writableEnded) {
+      res.destroy();
+    }
   }
 });
 
