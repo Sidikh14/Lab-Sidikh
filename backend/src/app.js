@@ -17,6 +17,7 @@ const cashRoutes = require('./routes/cash.routes');
 const eventsRoutes = require('./routes/events.routes');
 const alertsRoutes = require('./routes/alerts.routes');
 const pushRoutes = require('./routes/push.routes');
+const merchantRoutes = require('./routes/merchant.routes');
 
 const app = express();
 
@@ -49,6 +50,7 @@ app.use('/cash', cashRoutes);
 app.use('/events', eventsRoutes);
 app.use('/alerts', alertsRoutes);
 app.use('/push', pushRoutes);
+app.use('/merchant', merchantRoutes);
 
 // Gestion des routes inconnues
 app.use((req, res) => {
