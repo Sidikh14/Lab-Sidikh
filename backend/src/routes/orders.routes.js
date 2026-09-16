@@ -1062,81 +1062,84 @@ function genererFactureA4(res, order, creditInfo) {
   const largeurPage = doc.page.width;
   const largeurContenu = largeurPage - 100;
 
-  // Titre "FACTURE" en grand, aligné à droite en haut de page, avec le
-  // numéro de commande juste en dessous — maquette fournie par l'utilisateur.
-  doc.font('Titre').fontSize(34).fillColor(COULEURS.encre)
-    .text('FACTURE', 50, 46, { width: largeurContenu, align: 'right' });
-  doc.font('Helvetica').fontSize(11).fillColor(COULEURS.muted)
-    .text(order.order_number, 50, 90, { width: largeurContenu, align: 'right' });
+  // Titre "FACTURE" seul en haut de page, très grand, en gras sans-serif —
+  // exactement comme sur la maquette envoyée par l'utilisateur.
+  doc.font('Helvetica-Bold').fontSize(40).fillColor(COULEURS.encre)
+    .text('FACTURE', 50, 45, { width: largeurContenu, align: 'right' });
+  doc.font('Helvetica').fontSize(13).fillColor(COULEURS.muted)
+    .text(order.order_number, 50, 92, { width: largeurContenu, align: 'right' });
 
-  // Bloc émetteur (gauche) : identité du commerce.
-  let yG = 50;
-  doc.font('Helvetica-Bold').fontSize(16).fillColor(COULEURS.encre)
+  // Les deux blocs (émetteur à gauche, client à droite) démarrent tous les
+  // deux SOUS le titre, avec un espace net entre les deux zones.
+  let yG = 160;
+  doc.font('Helvetica-Bold').fontSize(15).fillColor(COULEURS.encre)
     .text(order.business_name || 'Commerce', 50, yG, { width: 260 });
-  yG += 23;
-  doc.font('Helvetica').fontSize(9).fillColor(COULEURS.muted);
+  yG += 24;
+  doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
   [merchant.address, merchant.ninea && `NINEA ${merchant.ninea}`, merchant.rccm && `RCCM ${merchant.rccm}`]
     .filter(Boolean)
-    .forEach((ligne) => { doc.text(ligne, 50, yG, { width: 260 }); yG += 13; });
+    .forEach((ligne) => { doc.text(ligne, 50, yG, { width: 260 }); yG += 15; });
 
-  // Bloc destinataire (droite) : client + détails de la vente.
-  let yD = 50;
+  let yD = 160;
   const droite = (texte, opts = {}) => {
     doc.text(texte, 320, yD, { width: 225, align: 'right', ...opts });
-    yD += opts.hauteur || 13;
+    yD += opts.hauteur || 15;
   };
-  doc.font('Helvetica').fontSize(9).fillColor(COULEURS.muted);
-  droite(`Date d'émission : ${new Date(order.validated_at || order.created_at).toLocaleDateString('fr-FR')}`, { hauteur: 16 });
-  doc.font('Helvetica-Bold').fontSize(11).fillColor(COULEURS.encre);
-  droite(order.client_name, { hauteur: 15 });
-  doc.font('Helvetica').fontSize(9).fillColor(COULEURS.muted);
+  doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
+  droite(`Date d'émission : ${new Date(order.validated_at || order.created_at).toLocaleDateString('fr-FR')}`, { hauteur: 18 });
+  doc.font('Helvetica-Bold').fontSize(13).fillColor(COULEURS.encre);
+  droite(order.client_name, { hauteur: 17 });
+  doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
   if (order.client_phone) droite(order.client_phone);
   if (order.client_address) droite(order.client_address);
   droite(`Vendeur : ${order.vendeur_name || '—'}`);
   droite(`Caissier : ${order.caissier_name || '—'}`);
   droite(`Paiement : ${MOYENS_PAIEMENT_LABEL[order.payment_method] || '—'}`);
 
-  let y = Math.max(yG, yD) + 22;
+  let y = Math.max(yG, yD) + 40;
 
-  // Grand titre de section, façon éditoriale, comme sur la maquette.
-  doc.font('Titre').fontSize(20).fillColor(COULEURS.encre).text('Articles', 50, y);
-  y += 32;
+  // Grand titre de section, gras sans-serif, comme sur la maquette.
+  doc.font('Helvetica-Bold').fontSize(28).fillColor(COULEURS.encre).text('Description', 50, y);
+  y += 42;
   traitSeparateur(doc, y);
-  y += 18;
+  y += 22;
 
   order.items.forEach((item) => {
     const quantiteAffichee = item.packaging_label ? item.packaging_quantity : item.quantity;
     const prixUnitaire = item.line_total / quantiteAffichee;
-
-    doc.font('Helvetica-Bold').fontSize(11).fillColor(COULEURS.encre)
-      .text(item.product_name, 50, y, { width: 300 });
     const sousLigne = item.packaging_label
       ? `${item.packaging_label} · ${quantiteAffichee} × ${formatMontant(prixUnitaire)} ${order.currency}`
       : `${quantiteAffichee} × ${formatMontant(prixUnitaire)} ${order.currency}`;
-    doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted).text(sousLigne, 50, y + 16, { width: 300 });
 
-    doc.font('Helvetica-Bold').fontSize(11).fillColor(COULEURS.encre)
-      .text(`${formatMontant(item.line_total)} ${order.currency}`, 350, y + 3, { width: 195, align: 'right' });
+    doc.font('Helvetica').fontSize(13).fillColor(COULEURS.encre)
+      .text(item.product_name, 50, y, { width: 320 });
+    doc.font('Helvetica').fontSize(13).fillColor(COULEURS.encre)
+      .text(`${formatMontant(item.line_total)} ${order.currency}`, 350, y, { width: 195, align: 'right' });
+    doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted).text(sousLigne, 50, y + 17, { width: 320 });
 
-    y += 38;
+    y += 42;
   });
 
   traitSeparateur(doc, y);
-  y += 20;
+  y += 24;
 
   // Bloc des totaux, aligné à droite, en gras — même esprit que la maquette
   // (libellé directement collé à sa valeur, hiérarchie par la taille).
   const xLabel = 280, wLabel = 165, xValeur = 445, wValeur = 100;
   const ligneTotal = (label, valeur, { grand = false, discret = false } = {}) => {
-    const taille = grand ? 15 : 10.5;
+    const taille = grand ? 20 : 12.5;
+    const xLbl = grand ? 260 : xLabel;
+    const wLbl = grand ? 115 : wLabel;
+    const xVal = grand ? 380 : xValeur;
+    const wVal = grand ? 165 : wValeur;
     doc.font('Helvetica-Bold').fontSize(taille).fillColor(discret ? COULEURS.muted : COULEURS.encre)
-      .text(label, xLabel, y, { width: wLabel, align: 'right' });
+      .text(label, xLbl, y, { width: wLbl, align: 'right' });
     doc.font('Helvetica-Bold').fontSize(taille).fillColor(discret ? COULEURS.muted : COULEURS.encre)
-      .text(`${formatMontant(valeur)} ${order.currency}`, xValeur, y, { width: wValeur, align: 'right' });
-    y += grand ? 26 : 18;
+      .text(`${formatMontant(valeur)} ${order.currency}`, xVal, y, { width: wVal, align: 'right' });
+    y += grand ? 30 : 20;
   };
 
-  ligneTotal('Sous-total :', order.subtotal_amount);
+  ligneTotal('Sous total :', order.subtotal_amount);
   if (order.tva_applicable) ligneTotal(`TVA (${TVA_RATE}%) :`, order.tva_amount);
   y += 4;
   ligneTotal('TOTAL :', order.total_amount, { grand: true });
@@ -1164,17 +1167,21 @@ function genererFactureA4(res, order, creditInfo) {
 
     let yFG = y;
     let yFD = y;
+    const largeurCol = 240;
     if (infosPaiement.length > 0) {
-      doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.encre).text('INFORMATIONS DE PAIEMENT', 50, yFG, { width: 260 });
-      yFG += 14;
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.encre).text('Informations de paiement', 50, yFG, { width: largeurCol });
+      yFG += 15;
       doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted);
-      infosPaiement.forEach((ligne) => { doc.text(ligne, 50, yFG, { width: 260 }); yFG += 12; });
+      infosPaiement.forEach((ligne) => {
+        doc.text(ligne, 50, yFG, { width: largeurCol });
+        yFG += doc.heightOfString(ligne, { width: largeurCol }) + 3;
+      });
     }
     if (conditions) {
-      doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.encre).text('CONDITIONS ET TERMES', 285, yFD, { width: 260, align: 'right' });
-      yFD += 14;
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.encre).text('Conditions et termes', 305, yFD, { width: largeurCol, align: 'right' });
+      yFD += 15;
       doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted)
-        .text(conditions, 285, yFD, { width: 260, align: 'right' });
+        .text(conditions, 305, yFD, { width: largeurCol, align: 'right' });
     }
   }
 
