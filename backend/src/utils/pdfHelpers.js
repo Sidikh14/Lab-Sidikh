@@ -25,38 +25,17 @@ function formatMontant(valeur) {
   return signe + String(Math.abs(entier)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
-const TAILLE_LOGO = 40; // hauteur en points
-
-// En-tête sobre : logo (si fourni) à gauche, nom du commerce en petites
-// capitales grises, titre du document en grand, en police éditoriale, une
-// ligne discrète d'informations légales (NINEA/RCCM/adresse) alignée à
-// droite si elle a été renseignée, un filet fin en dessous.
-// `merchant` est optionnel : { logo_data, ninea, rccm, address, ... } —
-// permet aussi d'activer le pied de page automatique sur les pages
-// suivantes (voir activerPiedDePageAuto).
+// En-tête sobre : nom du commerce en petites capitales grises, titre du
+// document en grand, en police éditoriale, une ligne discrète d'informations
+// légales (NINEA/RCCM/adresse) alignée à droite si elle a été renseignée,
+// un filet fin en dessous.
+// `merchant` est optionnel : { ninea, rccm, address, ... } — permet aussi
+// d'activer le pied de page automatique sur les pages suivantes (voir
+// activerPiedDePageAuto).
 function dessinerEntete(doc, { businessName, titre, sousTitre, merchant }) {
   enregistrerPolices(doc);
   const largeurPage = doc.page.width;
-  let xTexte = 50;
-
-  if (merchant?.logo_data) {
-    try {
-      // pdfkit reconstruit mal certaines chaînes data URI passées telles
-      // quelles selon la version installée (déjà rencontré : ça peut
-      // provoquer un RangeError "Maximum call stack size exceeded" lors de
-      // la finalisation du PDF). On décode donc nous-mêmes en Buffer, plus
-      // fiable quelle que soit la version de pdfkit.
-      const matchDataUri = /^data:image\/(png|jpe?g);base64,(.+)$/.exec(merchant.logo_data);
-      const bufferLogo = matchDataUri
-        ? Buffer.from(matchDataUri[2], 'base64')
-        : Buffer.from(merchant.logo_data, 'base64');
-      doc.image(bufferLogo, 50, 45, { height: TAILLE_LOGO });
-      xTexte = 50 + TAILLE_LOGO + 14;
-    } catch (err) {
-      // Logo corrompu ou format non supporté par pdfkit : on continue sans
-      // bloquer la génération du PDF pour autant.
-    }
-  }
+  const xTexte = 50;
 
   doc.fillColor(GRIS).font('Helvetica').fontSize(9)
     .text((businessName || 'Commerce').toUpperCase(), xTexte, 50, { characterSpacing: 1 });
