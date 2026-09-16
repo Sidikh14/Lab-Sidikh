@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 
 const MOYENS_PAIEMENT = [
   { value: 'especes', label: 'Espèces' },
@@ -32,6 +33,12 @@ function IconTelephone() {
 }
 
 export function CaissePage() {
+  const { user } = useAuth();
+  // Le caissier ne doit voir ni le solde théorique par moyen de paiement, ni
+  // l'écart à la clôture : il saisit juste son solde réel compté et valide.
+  // Tout le détail (théorique, écart) reste réservé à manager/gérant.
+  const estCaissier = user?.role === 'caissier';
+
   const [onglet, setOnglet] = useState('cloture');
   const [erreur, setErreur] = useState('');
 
@@ -40,12 +47,16 @@ export function CaissePage() {
   const [chargementSoldes, setChargementSoldes] = useState(true);
 
   useEffect(() => {
+    if (estCaissier) {
+      setChargementSoldes(false);
+      return;
+    }
     api
       .getCashBalances()
       .then(setSoldes)
       .catch((err) => setErreur(err.message))
       .finally(() => setChargementSoldes(false));
-  }, []);
+  }, [estCaissier]);
 
   function soldeDe(method) {
     return soldes?.find((s) => s.method === method)?.balance ?? 0;
@@ -173,23 +184,25 @@ export function CaissePage() {
 
       {erreur && <div className="erreur">{erreur}</div>}
 
-      <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 24 }}>
-        <div className="stat">
-          <span className="stat-icone"><IconEspeces /></span>
-          <span className="etiquette">Solde en caisse (espèces)</span>
-          <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('especes')).toLocaleString('fr-FR')} FCFA`}</span>
+      {!estCaissier && (
+        <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 24 }}>
+          <div className="stat">
+            <span className="stat-icone"><IconEspeces /></span>
+            <span className="etiquette">Solde en caisse (espèces)</span>
+            <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('especes')).toLocaleString('fr-FR')} FCFA`}</span>
+          </div>
+          <div className="stat">
+            <span className="stat-icone"><IconTelephone /></span>
+            <span className="etiquette">Solde Wave</span>
+            <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('wave')).toLocaleString('fr-FR')} FCFA`}</span>
+          </div>
+          <div className="stat">
+            <span className="stat-icone"><IconTelephone /></span>
+            <span className="etiquette">Solde Orange Money</span>
+            <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('orange_money')).toLocaleString('fr-FR')} FCFA`}</span>
+          </div>
         </div>
-        <div className="stat">
-          <span className="stat-icone"><IconTelephone /></span>
-          <span className="etiquette">Solde Wave</span>
-          <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('wave')).toLocaleString('fr-FR')} FCFA`}</span>
-        </div>
-        <div className="stat">
-          <span className="stat-icone"><IconTelephone /></span>
-          <span className="etiquette">Solde Orange Money</span>
-          <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('orange_money')).toLocaleString('fr-FR')} FCFA`}</span>
-        </div>
-      </div>
+      )}
 
       <div className="onglets" style={{ marginBottom: 20 }}>
         <button className={`onglet ${onglet === 'cloture' ? 'onglet-actif' : ''}`} onClick={() => setOnglet('cloture')}>
@@ -217,7 +230,7 @@ export function CaissePage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
                 {resume.methods.map((m) => {
                   const soldeReel = soldesReels[m.method];
-                  const ecart = soldeReel !== '' && soldeReel !== undefined ? Number(soldeReel) - m.theoretical : null;
+                  const ecart = !estCaissier && soldeReel !== '' && soldeReel !== undefined ? Number(soldeReel) - m.theoretical : null;
                   return (
                     <div
                       key={m.method}
@@ -226,19 +239,23 @@ export function CaissePage() {
                         borderRadius: 'var(--rayon-petit)',
                         padding: 16,
                         display: 'grid',
-                        gridTemplateColumns: '1fr auto auto',
+                        gridTemplateColumns: estCaissier ? '1fr auto' : '1fr auto auto',
                         gap: 16,
                         alignItems: 'center',
                       }}
                     >
                       <div>
                         <p style={{ fontWeight: 600, marginBottom: 4 }}>{m.label}</p>
-                        <p style={{ fontSize: 12, color: 'var(--encre-douce)' }}>
-                          Encaissements {Math.round(m.entrees).toLocaleString('fr-FR')} · Sorties {Math.round(m.sortiesTotal).toLocaleString('fr-FR')}
-                        </p>
-                        <p style={{ fontSize: 13, marginTop: 4 }}>
-                          Solde théorique : <strong className="chiffre">{Math.round(m.theoretical).toLocaleString('fr-FR')} FCFA</strong>
-                        </p>
+                        {!estCaissier && (
+                          <>
+                            <p style={{ fontSize: 12, color: 'var(--encre-douce)' }}>
+                              Encaissements {Math.round(m.entrees).toLocaleString('fr-FR')} · Sorties {Math.round(m.sortiesTotal).toLocaleString('fr-FR')}
+                            </p>
+                            <p style={{ fontSize: 13, marginTop: 4 }}>
+                              Solde théorique : <strong className="chiffre">{Math.round(m.theoretical).toLocaleString('fr-FR')} FCFA</strong>
+                            </p>
+                          </>
+                        )}
                       </div>
                       <div style={{ width: 160 }}>
                         <label className="etiquette" htmlFor={`solde-${m.method}`}>Solde réel compté</label>
@@ -250,16 +267,18 @@ export function CaissePage() {
                           onChange={(e) => setSoldesReels({ ...soldesReels, [m.method]: e.target.value })}
                         />
                       </div>
-                      <div style={{ width: 140, textAlign: 'right' }}>
-                        {ecart !== null && (
-                          <span
-                            className={`tampon ${ecart === 0 ? 'tampon-sarcelle' : 'tampon-brique'}`}
-                            title="Écart = réel - théorique"
-                          >
-                            {ecart === 0 ? 'Aucun écart' : `${ecart > 0 ? '+' : ''}${Math.round(ecart).toLocaleString('fr-FR')} FCFA`}
-                          </span>
-                        )}
-                      </div>
+                      {!estCaissier && (
+                        <div style={{ width: 140, textAlign: 'right' }}>
+                          {ecart !== null && (
+                            <span
+                              className={`tampon ${ecart === 0 ? 'tampon-sarcelle' : 'tampon-brique'}`}
+                              title="Écart = réel - théorique"
+                            >
+                              {ecart === 0 ? 'Aucun écart' : `${ecart > 0 ? '+' : ''}${Math.round(ecart).toLocaleString('fr-FR')} FCFA`}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

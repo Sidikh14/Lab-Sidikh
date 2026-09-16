@@ -173,7 +173,7 @@ function texteMouvement(m) {
 // Affiché en haut de la page Caisse, comme les stats du tableau de bord —
 // c'est un solde calculé (comme la valeur du stock), pas le dernier solde
 // compté physiquement à une clôture.
-router.get('/balances', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+router.get('/balances', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const debut = new Date(0).toISOString();
     const fin = new Date().toISOString();
@@ -206,14 +206,30 @@ router.get('/summary', requireRole('manager', 'gerant', 'caissier'), async (req,
     const closingsParMethode = {};
     closingsResult.rows.forEach((c) => { closingsParMethode[c.payment_method] = c; });
 
+    // Le caissier ne doit jamais voir le théorique, les entrées/sorties ou
+    // l'écart — seulement le solde réel qu'il a compté et déjà validé (pour
+    // qu'il ne puisse ni consulter ni falsifier le résultat de sa clôture).
+    // Ces informations complètes restent réservées à manager/gérant.
+    const estCaissier = req.user.role === 'caissier';
+
     res.json({
       date,
-      methods: MOYENS_PAIEMENT.map((m) => ({
-        method: m,
-        label: LABEL_METHODE[m],
-        ...mouvements[m],
-        closing: closingsParMethode[m] || null,
-      })),
+      methods: MOYENS_PAIEMENT.map((m) => {
+        const closing = closingsParMethode[m] || null;
+        if (estCaissier) {
+          return {
+            method: m,
+            label: LABEL_METHODE[m],
+            closing: closing ? { actual_balance: closing.actual_balance, created_at: closing.created_at } : null,
+          };
+        }
+        return {
+          method: m,
+          label: LABEL_METHODE[m],
+          ...mouvements[m],
+          closing,
+        };
+      }),
     });
   } catch (err) {
     console.error(err);
@@ -255,13 +271,18 @@ router.post('/closings', requireRole('manager', 'gerant', 'caissier'), async (re
         merchantId: req.user.merchantId,
         userId: req.user.id,
         action: 'cash_closing',
-        description: Math.abs(ecart) > 0
-          ? `a clôturé la caisse ${LABEL_METHODE[entree.paymentMethod]} du ${new Date(date).toLocaleDateString('fr-FR')} — écart de ${Math.round(ecart).toLocaleString('fr-FR')} FCFA`
-          : `a clôturé la caisse ${LABEL_METHODE[entree.paymentMethod]} du ${new Date(date).toLocaleDateString('fr-FR')} — aucun écart`,
+        description: `a clôturé la caisse ${LABEL_METHODE[entree.paymentMethod]} du ${new Date(date).toLocaleDateString('fr-FR')}`,
       });
     }
 
-    res.status(201).json(resultats);
+    // Le caissier ne doit pas recevoir le théorique ni l'écart dans la
+    // réponse (même logique que /cash/summary) : seul manager/gérant les voit.
+    const estCaissier = req.user.role === 'caissier';
+    res.status(201).json(
+      estCaissier
+        ? resultats.map((r) => ({ id: r.id, payment_method: r.payment_method, actual_balance: r.actual_balance, created_at: r.created_at }))
+        : resultats
+    );
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la clôture de caisse.' });
