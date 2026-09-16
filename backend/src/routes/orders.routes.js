@@ -1055,6 +1055,12 @@ function genererFactureA4(res, order, creditInfo) {
 
   const doc = new PDFDocument({ margin: 50, size: 'A4' });
   attacherFiletSecuritePdf(doc, res, 'facture A4');
+  // La facture doit tenir sur une seule page : PDFKit ajoute automatiquement
+  // une page dès qu'un texte positionné (même avec x/y explicites) risque
+  // de déborder du bas de la page en cours — même bug déjà rencontré et
+  // corrigé sur le ticket de caisse (voir genererTicketEtroit). On préfère
+  // un léger débordement en bas plutôt que des pages parasites quasi vides.
+  doc.addPage = function () { return this; };
   doc.pipe(res);
   enregistrerPolices(doc);
 
