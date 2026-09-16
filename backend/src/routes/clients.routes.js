@@ -4,7 +4,7 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
-const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, traitSeparateur } = require('../utils/pdfHelpers');
+const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerPiedDePage, traitSeparateur } = require('../utils/pdfHelpers');
 
 const router = express.Router();
 router.use(authenticate);
@@ -231,7 +231,7 @@ router.post('/:id/whatsapp-statement', requireRole('manager', 'gerant', 'caissie
 // PDF listant les factures à crédit impayées ou partiellement payées d'un
 // client, avec pour chacune le montant, ce qui a déjà été réglé (versement)
 // et le reste à payer — à envoyer directement au client.
-function genererFacturesImpayeesPdf(res, { businessName, clientName, factures, totalRestant }) {
+function genererFacturesImpayeesPdf(res, { businessName, clientName, factures, totalRestant, merchant }) {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="factures-impayees-${clientName.replace(/\s+/g, '-')}.pdf"`);
 
@@ -242,6 +242,7 @@ function genererFacturesImpayeesPdf(res, { businessName, clientName, factures, t
     businessName,
     titre: 'Factures impayées',
     sousTitre: `${clientName} · ${factures.length} facture(s) · Total restant dû : ${formatMontant(totalRestant)} FCFA`,
+    merchant,
   });
   y += 10;
 
@@ -280,6 +281,7 @@ function genererFacturesImpayeesPdf(res, { businessName, clientName, factures, t
   doc.text(`${formatMontant(totalRestant)} FCFA`, 410, y, { width: 120, align: 'right' });
   doc.font('Helvetica');
 
+  dessinerPiedDePage(doc, merchant);
   doc.end();
 }
 
@@ -289,7 +291,8 @@ function genererFacturesImpayeesPdf(res, { businessName, clientName, factures, t
 router.get('/:id/unpaid-invoices-pdf', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
   try {
     const clientResult = await pool.query(
-      `SELECT c.*, m.business_name
+      `SELECT c.*, m.business_name, m.logo_data, m.ninea, m.rccm,
+              m.address AS merchant_address, m.bank_details, m.mobile_money_details, m.payment_terms
        FROM clients c JOIN merchants m ON m.id = c.merchant_id
        WHERE c.id = $1 AND c.merchant_id = $2`,
       [req.params.id, req.user.merchantId]
@@ -315,6 +318,15 @@ router.get('/:id/unpaid-invoices-pdf', requireRole('manager', 'gerant', 'caissie
       clientName: client.full_name,
       factures,
       totalRestant,
+      merchant: {
+        logo_data: client.logo_data,
+        ninea: client.ninea,
+        rccm: client.rccm,
+        address: client.merchant_address,
+        bank_details: client.bank_details,
+        mobile_money_details: client.mobile_money_details,
+        payment_terms: client.payment_terms,
+      },
     });
   } catch (err) {
     console.error(err);

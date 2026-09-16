@@ -25,25 +25,79 @@ function formatMontant(valeur) {
   return signe + String(Math.abs(entier)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
-// En-tête sobre : nom du commerce en petites capitales grises, titre du
-// document en grand, en police éditoriale, un filet fin en dessous.
-function dessinerEntete(doc, { businessName, titre, sousTitre }) {
+const TAILLE_LOGO = 40; // hauteur en points
+
+// En-tête sobre : logo (si fourni) à gauche, nom du commerce en petites
+// capitales grises, titre du document en grand, en police éditoriale, une
+// ligne discrète d'informations légales (NINEA/RCCM/adresse) alignée à
+// droite si elle a été renseignée, un filet fin en dessous.
+// `merchant` est optionnel : { logo_data, ninea, rccm, address, ... } —
+// permet aussi d'activer le pied de page automatique sur les pages
+// suivantes (voir activerPiedDePageAuto).
+function dessinerEntete(doc, { businessName, titre, sousTitre, merchant }) {
   enregistrerPolices(doc);
   const largeurPage = doc.page.width;
+  let xTexte = 50;
+
+  if (merchant?.logo_data) {
+    try {
+      doc.image(merchant.logo_data, 50, 45, { height: TAILLE_LOGO });
+      xTexte = 50 + TAILLE_LOGO + 14;
+    } catch (err) {
+      // Logo corrompu ou format non supporté par pdfkit : on continue sans
+      // bloquer la génération du PDF pour autant.
+    }
+  }
 
   doc.fillColor(GRIS).font('Helvetica').fontSize(9)
-    .text((businessName || 'Commerce').toUpperCase(), 50, 50, { characterSpacing: 1 });
+    .text((businessName || 'Commerce').toUpperCase(), xTexte, 50, { characterSpacing: 1 });
 
-  doc.fillColor(NOIR).font('Titre').fontSize(26).text(titre, 50, 66);
+  doc.fillColor(NOIR).font('Titre').fontSize(26).text(titre, xTexte, 66);
 
   if (sousTitre) {
-    doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(9).text(sousTitre, 50, 98);
+    doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(9).text(sousTitre, xTexte, 98);
+  }
+
+  if (merchant && (merchant.ninea || merchant.rccm || merchant.address)) {
+    const parts = [merchant.address, merchant.ninea && `NINEA ${merchant.ninea}`, merchant.rccm && `RCCM ${merchant.rccm}`].filter(Boolean);
+    doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(7.5)
+      .text(parts.join(' · '), 50, 50, { width: largeurPage - 100, align: 'right' });
   }
 
   doc.moveTo(50, 122).lineTo(largeurPage - 50, 122).strokeColor(TRAIT).lineWidth(0.75).stroke();
 
+  if (merchant) activerPiedDePageAuto(doc, merchant);
+
   doc.fillColor(NOIR).font('Helvetica');
   return 142;
+}
+
+// Pied de page professionnel : coordonnées bancaires / Mobile Money et
+// conditions de règlement, centrées en bas de page, discrètes. N'affiche
+// rien si aucune de ces informations n'a été renseignée par le commerçant.
+// Le caller doit l'appeler une dernière fois juste avant doc.end() — voir
+// activerPiedDePageAuto pour les pages suivantes.
+function dessinerPiedDePage(doc, merchant) {
+  if (!merchant) return;
+  const lignes = [
+    merchant.bank_details && `Coordonnées bancaires : ${merchant.bank_details}`,
+    merchant.mobile_money_details && `Mobile Money : ${merchant.mobile_money_details}`,
+    merchant.payment_terms,
+  ].filter(Boolean);
+  if (lignes.length === 0) return;
+
+  const y = doc.page.height - 60;
+  doc.moveTo(50, y).lineTo(doc.page.width - 50, y).strokeColor(TRAIT).lineWidth(0.75).stroke();
+  doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(7.5)
+    .text(lignes.join('  ·  '), 50, y + 8, { width: doc.page.width - 100, align: 'center' });
+  doc.fillColor(NOIR).font('Helvetica');
+}
+
+// Redessine automatiquement le pied de page sur chaque nouvelle page
+// (déclenché par doc.addPage()) — évite d'avoir à l'appeler manuellement à
+// chaque saut de page dans le code appelant.
+function activerPiedDePageAuto(doc, merchant) {
+  doc.on('pageAdded', () => dessinerPiedDePage(doc, merchant));
 }
 
 // En-tête de tableau : simple filet, libellés en petites capitales grises.
@@ -68,6 +122,7 @@ module.exports = {
   formatMontant,
   dessinerEntete,
   dessinerEnteteTableau,
+  dessinerPiedDePage,
   traitSeparateur,
   enregistrerPolices,
 };

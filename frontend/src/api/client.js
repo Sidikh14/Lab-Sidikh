@@ -137,6 +137,10 @@ export const api = {
   downloadActivityPdf: (from, to) => previewFile(`/activity/pdf?from=${from}&to=${to}`),
   getRevenue: () => request('/activity/revenue'),
 
+  getMerchantProfile: () => request('/merchant/profile'),
+  updateMerchantProfile: (data) =>
+    request('/merchant/profile', { method: 'PATCH', body: JSON.stringify(data) }),
+
   getCashSummary: (date) => request(`/cash/summary${date ? `?date=${date}` : ''}`),
   getCashBalances: () => request('/cash/balances'),
   createCashClosing: (data) =>

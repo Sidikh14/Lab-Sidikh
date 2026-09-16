@@ -11,6 +11,7 @@ import { TeamPage } from './pages/TeamPage';
 import { SuppliersPage } from './pages/SuppliersPage';
 import { PurchaseOrdersPage } from './pages/PurchaseOrdersPage';
 import { CaissePage } from './pages/CaissePage';
+import { SettingsPage } from './pages/SettingsPage';
 import { api } from './api/client';
 import OfflineBanner from './offline/OfflineBanner';
 import CreditRequestNotifications from './components/CreditRequestNotifications';
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/fournisseurs" element={<ProtectedRoute><SuppliersPage /></ProtectedRoute>} />
           <Route path="/achats" element={<ProtectedRoute><PurchaseOrdersPage /></ProtectedRoute>} />
           <Route path="/caisse" element={<ProtectedRoute><CaissePage /></ProtectedRoute>} />
+          <Route path="/entreprise" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
           <Route path="/equipe" element={<ProtectedRoute><TeamPage /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>

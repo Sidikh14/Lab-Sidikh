@@ -83,6 +83,16 @@ function IconEquipe() {
   );
 }
 
+function IconEntreprise() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <rect x="4" y="8" width="16" height="13" rx="1.3" />
+      <path d="M9 21v-5h6v5" />
+      <path d="M9 8V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v3" />
+    </svg>
+  );
+}
+
 const TOUS_LES_LIENS = [
   { to: '/stock', label: 'Produits', icone: IconStock, module: 'stock' },
   { to: '/ventes', label: 'Ventes', icone: IconVentes, module: 'ventes' },
@@ -122,6 +132,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
   const autorises = modulesAutorises(user);
   const liens = TOUS_LES_LIENS.filter((lien) => autorises.includes(lien.module));
   const voitEquipe = ['manager', 'gerant'].includes(user?.role);
+  const estManager = user?.role === 'manager';
 
   const initiales = (user?.fullName || '?')
     .split(' ')
@@ -165,6 +176,14 @@ export function Sidebar({ ouvert = false, onFermer }) {
             </li>
           );
         })}
+        {estManager && (
+          <li>
+            <NavLink to="/entreprise" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
+              <IconEntreprise />
+              Entreprise
+            </NavLink>
+          </li>
+        )}
         {voitEquipe && (
           <li>
             <NavLink to="/equipe" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>

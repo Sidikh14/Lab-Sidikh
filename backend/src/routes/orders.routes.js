@@ -5,7 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
-const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, traitSeparateur, enregistrerPolices } = require('../utils/pdfHelpers');
+const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerPiedDePage, traitSeparateur, enregistrerPolices } = require('../utils/pdfHelpers');
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement', 'a_credit'];
@@ -776,7 +776,8 @@ async function getOrderReceiptDetail(merchantId, id) {
   const orderResult = await pool.query(
     `SELECT o.*, 
             c.full_name AS client_name, c.phone AS client_phone, c.address AS client_address,
-            m.business_name, m.currency,
+            m.business_name, m.currency, m.logo_data, m.ninea, m.rccm,
+            m.address AS merchant_address, m.bank_details, m.mobile_money_details, m.payment_terms,
             uv.full_name AS vendeur_name,
             uc.full_name AS caissier_name
      FROM orders o
@@ -1027,10 +1028,21 @@ function genererFactureA4(res, order, creditInfo) {
   const doc = new PDFDocument({ margin: 50, size: 'A4' });
   doc.pipe(res);
 
+  const merchant = {
+    logo_data: order.logo_data,
+    ninea: order.ninea,
+    rccm: order.rccm,
+    address: order.merchant_address,
+    bank_details: order.bank_details,
+    mobile_money_details: order.mobile_money_details,
+    payment_terms: order.payment_terms,
+  };
+
   let y = dessinerEntete(doc, {
     businessName: order.business_name,
     titre: 'Facture',
     sousTitre: `${order.order_number} · ${new Date(order.validated_at || order.created_at).toLocaleDateString('fr-FR')}`,
+    merchant,
   });
 
   // Bloc client (gauche) et bloc vente (droite)
@@ -1121,8 +1133,9 @@ function genererFactureA4(res, order, creditInfo) {
   }
 
   doc.fontSize(9).fillColor(COULEURS.mutedClair)
-    .text('Merci pour votre confiance.', 50, doc.page.height - 70, { width: doc.page.width - 100, align: 'center' });
+    .text('Merci pour votre confiance.', 50, doc.page.height - 85, { width: doc.page.width - 100, align: 'center' });
 
+  dessinerPiedDePage(doc, merchant);
   doc.end();
 }
 
