@@ -13,6 +13,24 @@ const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'
 const router = express.Router();
 router.use(authenticate);
 
+// Filet de sécurité commun à toutes les générations de PDF de ce fichier :
+// si pdfkit échoue en cours de flux (logo corrompu, débordement de texte,
+// etc.) APRÈS que l'en-tête HTTP "Content-Type: application/pdf" soit déjà
+// parti, il est trop tard pour répondre du JSON — on ne peut qu'arrêter
+// proprement la connexion, sans jamais laisser une exception non catchée
+// remonter et faire planter tout le processus Node (déjà rencontré :
+// RangeError pdfkit → ERR_STREAM_WRITE_AFTER_END → crash total du serveur).
+function attacherFiletSecuritePdf(doc, res, label) {
+  doc.on('error', (err) => {
+    console.error(`Erreur pdfkit (${label}) :`, err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
+    } else if (!res.writableEnded) {
+      res.end();
+    }
+  });
+}
+
 // Construit un numéro de commande lisible à partir du compteur interne (order_seq).
 function formatOrderNumber(order) {
   const annee = new Date(order.created_at).getFullYear();
@@ -817,6 +835,7 @@ function genererListeVentesPdf(res, orders, from, to, businessName) {
   res.setHeader('Content-Disposition', `inline; filename="ventes-${from}-au-${to}.pdf"`);
 
   const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  attacherFiletSecuritePdf(doc, res, 'liste des ventes');
   doc.pipe(res);
 
   const COLONNES = [
@@ -909,6 +928,7 @@ function genererTicketEtroit(res, order) {
   res.setHeader('Content-Disposition', `inline; filename="ticket-${order.order_number}.pdf"`);
 
   const doc = new PDFDocument({ margin: MARGE, size: [LARGEUR, hauteur] });
+  attacherFiletSecuritePdf(doc, res, 'ticket de caisse');
   // Le ticket doit impérativement tenir sur une seule page : si un
   // débordement se produit malgré la marge de sécurité ci-dessus, on
   // préfère ignorer l'ajout de page (au pire un léger chevauchement en
@@ -1026,6 +1046,7 @@ function genererFactureA4(res, order, creditInfo) {
   res.setHeader('Content-Disposition', `inline; filename="facture-${order.order_number}.pdf"`);
 
   const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  attacherFiletSecuritePdf(doc, res, 'facture A4');
   doc.pipe(res);
 
   const merchant = {

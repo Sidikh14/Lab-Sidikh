@@ -98,15 +98,34 @@ function dessinerPiedDePage(doc, merchant) {
   const y = doc.page.height - 60;
   doc.moveTo(50, y).lineTo(doc.page.width - 50, y).strokeColor(TRAIT).lineWidth(0.75).stroke();
   doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(7.5)
-    .text(lignes.join('  ·  '), 50, y + 8, { width: doc.page.width - 100, align: 'center' });
+    // `height` + `ellipsis` empêchent pdfkit de faire déborder ce texte sur
+    // une nouvelle page si les coordonnées bancaires/Mobile Money/conditions
+    // de règlement sont trop longues pour tenir sur une ligne à cet endroit
+    // (juste avant le bas de page) — un débordement ici déclenchait un
+    // addPage() automatique, qui redéclenchait ce même pied de page via
+    // pageAdded, qui débordait à nouveau, etc. : boucle infinie jusqu'au
+    // RangeError "Maximum call stack size exceeded".
+    .text(lignes.join('  ·  '), 50, y + 8, { width: doc.page.width - 100, height: 30, align: 'center', ellipsis: true });
   doc.fillColor(NOIR).font('Helvetica');
 }
 
 // Redessine automatiquement le pied de page sur chaque nouvelle page
 // (déclenché par doc.addPage()) — évite d'avoir à l'appeler manuellement à
 // chaque saut de page dans le code appelant.
+// Protégé contre la récursion : si dessinerPiedDePage() lui-même causait un
+// nouvel addPage() (débordement de texte notamment), le handler ci-dessous
+// ne se redéclenche pas en cascade.
 function activerPiedDePageAuto(doc, merchant) {
-  doc.on('pageAdded', () => dessinerPiedDePage(doc, merchant));
+  let enCours = false;
+  doc.on('pageAdded', () => {
+    if (enCours) return;
+    enCours = true;
+    try {
+      dessinerPiedDePage(doc, merchant);
+    } finally {
+      enCours = false;
+    }
+  });
 }
 
 // En-tête de tableau : simple filet, libellés en petites capitales grises.
