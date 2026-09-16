@@ -52,6 +52,27 @@ function IconCle() {
   );
 }
 
+function IconRole() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 3l4 4-4 4" />
+      <path d="M21 7H9" />
+      <path d="M7 21l-4-4 4-4" />
+      <path d="M3 17h12" />
+    </svg>
+  );
+}
+
+function IconSupprimer() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 7h16" />
+      <path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13" />
+      <path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" />
+    </svg>
+  );
+}
+
 const FILTRES_STATUT = [
   { value: 'tous', label: 'Tous' },
   { value: 'actifs', label: 'Actifs' },
@@ -83,6 +104,14 @@ const MODULES_PAR_DEFAUT = {
   vendeur: ['stock', 'ventes', 'clients'],
   caissier: ['ventes', 'caisse'],
 };
+
+// Rôles vers lesquels un manager peut faire évoluer un membre existant
+// (ex : un caissier qui devient gérant, un vendeur qui devient caissier).
+const TOUS_LES_ROLES = [
+  { value: 'gerant', label: 'Gérant' },
+  { value: 'vendeur', label: 'Vendeur' },
+  { value: 'caissier', label: 'Caissier' },
+];
 
 export function TeamPage() {
   const { user } = useAuth();
@@ -217,6 +246,46 @@ export function TeamPage() {
     }
   }
 
+  const [membreRole, setMembreRole] = useState(null);
+  const [nouveauRole, setNouveauRole] = useState('');
+  const [enregistrementRole, setEnregistrementRole] = useState(false);
+
+  function ouvrirChangerRole(membre) {
+    setMembreRole(membre);
+    setNouveauRole(membre.role);
+  }
+
+  async function handleChangerRole(e) {
+    e.preventDefault();
+    if (nouveauRole === membreRole.role) {
+      setMembreRole(null);
+      return;
+    }
+    setEnregistrementRole(true);
+    try {
+      await api.setUserRole(membreRole.id, nouveauRole);
+      setMembreRole(null);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnregistrementRole(false);
+    }
+  }
+
+  async function handleSupprimer(membre) {
+    const confirme = window.confirm(
+      `Supprimer définitivement ${membre.full_name} de l'équipe ? Cette action est irréversible.`
+    );
+    if (!confirme) return;
+    try {
+      await api.deleteUser(membre.id);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
   return (
     <>
       <div className="entete-page">
@@ -317,6 +386,15 @@ export function TeamPage() {
                   <button
                     className="btn"
                     style={{ padding: '7px 10px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    onClick={() => ouvrirChangerRole(m)}
+                    title="Changer le rôle"
+                  >
+                    <IconRole />
+                    Rôle
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ padding: '7px 10px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
                     onClick={() => ouvrirResetMotDePasse(m)}
                     title="Réinitialiser le mot de passe"
                   >
@@ -331,6 +409,15 @@ export function TeamPage() {
                   >
                     <IconCadenas />
                     {m.is_active ? 'Désactiver' : 'Réactiver'}
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ padding: '7px 10px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--danger, #b3423a)' }}
+                    onClick={() => handleSupprimer(m)}
+                    title="Supprimer définitivement ce membre"
+                  >
+                    <IconSupprimer />
+                    Supprimer
                   </button>
                 </div>
               )}
@@ -460,6 +547,39 @@ export function TeamPage() {
                 </button>
                 <button type="submit" className="btn btn-principal">
                   Réinitialiser
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {membreRole && (
+        <div className="modale-fond" onClick={() => setMembreRole(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Changer le rôle de {membreRole.full_name}</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+              Rôle actuel : <strong style={{ textTransform: 'capitalize' }}>{membreRole.role}</strong>. Les permissions personnalisées seront réinitialisées sur les modules par défaut du nouveau rôle.
+            </p>
+            <form onSubmit={handleChangerRole}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="m-nouveau-role">Nouveau rôle</label>
+                <select
+                  id="m-nouveau-role"
+                  className="champ"
+                  value={nouveauRole}
+                  onChange={(e) => setNouveauRole(e.target.value)}
+                >
+                  {TOUS_LES_ROLES.map((r) => (
+                    <option key={r.value} value={r.value}>{r.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={() => setMembreRole(null)}>
+                  Annuler
+                </button>
+                <button type="submit" className="btn btn-principal" disabled={enregistrementRole}>
+                  {enregistrementRole ? 'Enregistrement…' : 'Enregistrer'}
                 </button>
               </div>
             </form>

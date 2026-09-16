@@ -189,4 +189,83 @@ router.patch('/:id/password', requireRole('manager'), async (req, res) => {
   }
 });
 
+// PATCH /users/:id/role — manager change le rôle d'un membre (ex : caissier
+// devient gérant, vendeur devient caissier). Réinitialise les permissions
+// personnalisées (visible_modules) car les modules par défaut du nouveau
+// rôle ne correspondent plus forcément à l'ancienne sélection.
+const ROLES_MODIFIABLES = ['gerant', 'vendeur', 'caissier'];
+
+router.patch('/:id/role', requireRole('manager'), async (req, res) => {
+  const { role } = req.body;
+
+  if (!ROLES_MODIFIABLES.includes(role)) {
+    return res.status(400).json({ error: 'Rôle invalide.' });
+  }
+  if (req.params.id === req.user.id) {
+    return res.status(400).json({ error: 'Vous ne pouvez pas modifier votre propre rôle ici.' });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE users SET role = $1, visible_modules = NULL
+       WHERE id = $2 AND merchant_id = $3 AND role != 'manager'
+       RETURNING id, full_name, role, visible_modules`,
+      [role, req.params.id, req.user.merchantId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Membre introuvable.' });
+    }
+
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'team_member_role_changed',
+      description: `a changé le rôle de ${result.rows[0].full_name} en ${result.rows[0].role}`,
+    });
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du changement de rôle.' });
+  }
+});
+
+// DELETE /users/:id — manager supprime définitivement un membre de l'équipe.
+// Si ce membre a un historique lié (ventes, mouvements de stock, clôtures de
+// caisse…), la contrainte de clé étrangère bloque la suppression : on
+// renvoie alors un message invitant à désactiver le compte à la place,
+// plutôt que de casser l'historique.
+router.delete('/:id', requireRole('manager'), async (req, res) => {
+  if (req.params.id === req.user.id) {
+    return res.status(400).json({ error: 'Vous ne pouvez pas supprimer votre propre compte.' });
+  }
+
+  try {
+    const result = await pool.query(
+      `DELETE FROM users WHERE id = $1 AND merchant_id = $2 AND role != 'manager' RETURNING id, full_name`,
+      [req.params.id, req.user.merchantId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Membre introuvable.' });
+    }
+
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'team_member_deleted',
+      description: `a supprimé ${result.rows[0].full_name} de l'équipe`,
+    });
+
+    res.json({ message: 'Membre supprimé avec succès.' });
+  } catch (err) {
+    if (err.code === '23503') {
+      return res.status(409).json({
+        error: "Ce membre a un historique lié (ventes, mouvements de stock, clôtures de caisse…) et ne peut pas être supprimé. Désactivez-le plutôt.",
+      });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la suppression du membre.' });
+  }
+});
+
 module.exports = router;
