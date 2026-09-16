@@ -338,7 +338,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
 // Enregistre le moyen de paiement, le montant reçu, calcule la monnaie à
 // rendre, et fait passer la commande au statut "validée".
 router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res) => {
-  const { paymentMethod, amountReceived, needsDelivery, deliveryFee } = req.body;
+  const { paymentMethod, amountReceived, needsDelivery, deliveryFee, deliveryAddress } = req.body;
 
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
@@ -351,9 +351,12 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
   }
 
   // La livraison n'est prise en compte que si la case est cochée ; sinon on
-  // ignore tout montant envoyé par erreur (pas de frais sans livraison).
+  // ignore tout montant/adresse envoyé par erreur (pas de frais ni d'adresse
+  // sans livraison). L'adresse est obligatoire dès que la livraison est
+  // prévue — c'est elle qui apparaît sur la facture.
   const aLivrer = Boolean(needsDelivery);
   let fraisLivraison = 0;
+  let adresseLivraison = null;
   if (aLivrer) {
     if (deliveryFee !== undefined && deliveryFee !== null) {
       if (typeof deliveryFee !== 'number' || deliveryFee < 0) {
@@ -361,6 +364,10 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
       }
       fraisLivraison = deliveryFee;
     }
+    if (typeof deliveryAddress !== 'string' || !deliveryAddress.trim()) {
+      return res.status(400).json({ error: "L'adresse de livraison est requise." });
+    }
+    adresseLivraison = deliveryAddress.trim();
   }
 
   try {
@@ -407,11 +414,12 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
          validated_at = now(),
          needs_delivery = $8,
          delivery_fee = $9,
+         delivery_address = $10,
          total_amount = total_amount + $9
          ${marqueeLivreeTouteSuite ? ', delivered_by = $4, delivered_at = now()' : ''}
        WHERE id = $5 AND merchant_id = $6
        RETURNING *`,
-      [paymentMethod, montantRecuFinal, changeGiven, req.user.id, req.params.id, req.user.merchantId, marqueeLivreeTouteSuite ? 'livree' : 'validee', aLivrer, fraisLivraison]
+      [paymentMethod, montantRecuFinal, changeGiven, req.user.id, req.params.id, req.user.merchantId, marqueeLivreeTouteSuite ? 'livree' : 'validee', aLivrer, fraisLivraison, adresseLivraison]
     );
     const orderMisAJour = result.rows[0];
 
@@ -1095,8 +1103,24 @@ function genererFactureA4(res, order, creditInfo) {
   droite(`Vendeur : ${order.vendeur_name || '—'}`);
   droite(`Caissier : ${order.caissier_name || '—'}`);
   droite(`Paiement : ${MOYENS_PAIEMENT_LABEL[order.payment_method] || '—'}`);
+  droite(`Livraison : ${order.needs_delivery ? 'à livrer' : 'remise en main propre'}`);
 
-  let y = Math.max(yG, yD) + 40;
+  let y = Math.max(yG, yD) + 30;
+
+  // Encart "Adresse de livraison" bien visible, juste avant les articles —
+  // uniquement si une livraison est prévue sur cette commande.
+  if (order.needs_delivery && order.delivery_address) {
+    const largeurTexte = largeurContenu - 24;
+    doc.font('Helvetica').fontSize(10.5);
+    const hauteurTexte = doc.heightOfString(order.delivery_address, { width: largeurTexte });
+    const hauteurEncart = 28 + hauteurTexte;
+    doc.roundedRect(50, y, largeurContenu, hauteurEncart, 4).fillAndStroke('#f6f6f6', COULEURS.bordure);
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.muted)
+      .text('ADRESSE DE LIVRAISON', 62, y + 8, { characterSpacing: 0.5 });
+    doc.font('Helvetica').fontSize(10.5).fillColor(COULEURS.encre)
+      .text(order.delivery_address, 62, y + 21, { width: largeurTexte });
+    y += hauteurEncart + 20;
+  }
 
   // Grand titre de section, gras sans-serif, comme sur la maquette.
   doc.font('Helvetica-Bold').fontSize(28).fillColor(COULEURS.encre).text('Description', 50, y);
@@ -1141,6 +1165,9 @@ function genererFactureA4(res, order, creditInfo) {
 
   ligneTotal('Sous total :', order.subtotal_amount);
   if (order.tva_applicable) ligneTotal(`TVA (${TVA_RATE}%) :`, order.tva_amount);
+  if (order.needs_delivery && Number(order.delivery_fee) > 0) {
+    ligneTotal('Frais de livraison :', order.delivery_fee);
+  }
   y += 4;
   ligneTotal('TOTAL :', order.total_amount, { grand: true });
   y += 8;

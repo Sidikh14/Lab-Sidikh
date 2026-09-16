@@ -47,6 +47,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
   const [confirmationHorsLigne, setConfirmationHorsLigne] = useState(false);
   const [prevoirLivraison, setPrevoirLivraison] = useState(false);
   const [fraisLivraison, setFraisLivraison] = useState('');
+  const [adresseLivraison, setAdresseLivraison] = useState(commande.client_address || '');
 
   const estClientDePassage = !commande.client_id;
   const estACredit = moyenPaiement === 'a_credit';
@@ -64,6 +65,10 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
       setErreur('Montant de livraison invalide.');
       return;
     }
+    if (prevoirLivraison && !adresseLivraison.trim()) {
+      setErreur("L'adresse de livraison est requise.");
+      return;
+    }
     if (!estACredit && Number(montantRecu) < totalAPayer) {
       setErreur('Le montant reçu est inférieur au total à payer.');
       return;
@@ -76,6 +81,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
         amountReceived: estACredit ? 0 : Number(montantRecu),
         needsDelivery: prevoirLivraison,
         deliveryFee: fraisLivraisonNombre,
+        deliveryAddress: prevoirLivraison ? adresseLivraison.trim() : '',
       });
       if (resultat?.offline) {
         // Pas de réseau : l'encaissement est en file d'attente, on ne peut
@@ -300,6 +306,17 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
           </label>
           {prevoirLivraison && (
             <div style={{ marginTop: 4 }}>
+              <label className="etiquette" htmlFor="e-adresse-livraison">Adresse de livraison</label>
+              <input
+                id="e-adresse-livraison"
+                type="text"
+                className="champ"
+                placeholder="Ex : Villa 42, Cité Keur Gorgui, Dakar"
+                value={adresseLivraison}
+                onChange={(e) => setAdresseLivraison(e.target.value)}
+                required
+                style={{ marginBottom: 10 }}
+              />
               <label className="etiquette" htmlFor="e-frais-livraison">Frais de livraison (FCFA, optionnel)</label>
               <input
                 id="e-frais-livraison"
