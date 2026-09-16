@@ -236,6 +236,21 @@ function genererFacturesImpayeesPdf(res, { businessName, clientName, factures, t
   res.setHeader('Content-Disposition', `inline; filename="factures-impayees-${clientName.replace(/\s+/g, '-')}.pdf"`);
 
   const doc = new PDFDocument({ margin: 50, size: 'A4' });
+
+  // Filet de sécurité : si pdfkit échoue en cours de flux (ex : image de
+  // logo corrompue) APRÈS que l'en-tête HTTP "Content-Type: application/pdf"
+  // soit déjà parti, il est trop tard pour répondre du JSON — on ne peut
+  // qu'arrêter proprement la connexion, sans jamais laisser une exception
+  // non catchée remonter et faire planter tout le processus Node.
+  doc.on('error', (err) => {
+    console.error('Erreur pdfkit (facture impayées) :', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
+    } else if (!res.writableEnded) {
+      res.end();
+    }
+  });
+
   doc.pipe(res);
 
   let y = dessinerEntete(doc, {
