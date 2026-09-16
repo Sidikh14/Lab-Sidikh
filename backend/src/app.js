@@ -31,7 +31,9 @@ app.use(
     origin: allowedOrigins.length > 0 ? allowedOrigins : true,
   })
 );
-app.use(express.json());
+// Limite relevée à 3 Mo (au lieu des 100 Ko par défaut d'Express) pour
+// accepter le logo de l'entreprise encodé en base64 dans le JSON.
+app.use(express.json({ limit: '3mb' }));
 app.use(morgan('dev'));
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
