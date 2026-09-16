@@ -41,7 +41,16 @@ function dessinerEntete(doc, { businessName, titre, sousTitre, merchant }) {
 
   if (merchant?.logo_data) {
     try {
-      doc.image(merchant.logo_data, 50, 45, { height: TAILLE_LOGO });
+      // pdfkit reconstruit mal certaines chaînes data URI passées telles
+      // quelles selon la version installée (déjà rencontré : ça peut
+      // provoquer un RangeError "Maximum call stack size exceeded" lors de
+      // la finalisation du PDF). On décode donc nous-mêmes en Buffer, plus
+      // fiable quelle que soit la version de pdfkit.
+      const matchDataUri = /^data:image\/(png|jpe?g);base64,(.+)$/.exec(merchant.logo_data);
+      const bufferLogo = matchDataUri
+        ? Buffer.from(matchDataUri[2], 'base64')
+        : Buffer.from(merchant.logo_data, 'base64');
+      doc.image(bufferLogo, 50, 45, { height: TAILLE_LOGO });
       xTexte = 50 + TAILLE_LOGO + 14;
     } catch (err) {
       // Logo corrompu ou format non supporté par pdfkit : on continue sans
