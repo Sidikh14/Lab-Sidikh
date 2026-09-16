@@ -10,6 +10,11 @@ const MOYENS_PAIEMENT = [
   { value: 'virement', label: 'Virement' },
 ];
 
+// Pour le relevé uniquement : en plus d'un moyen de paiement précis, on
+// peut choisir "Tous" pour voir toutes les transactions de la période
+// confondues.
+const MOYENS_PAIEMENT_RELEVE = [{ value: 'tous', label: 'Tous les moyens' }, ...MOYENS_PAIEMENT];
+
 function dateAujourdHui() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -393,7 +398,7 @@ export function CaissePage() {
             <div className="champ-groupe" style={{ marginBottom: 0 }}>
               <label className="etiquette" htmlFor="r-moyen">Moyen de paiement</label>
               <select id="r-moyen" className="champ" value={releveMoyen} onChange={(e) => setReleveMoyen(e.target.value)}>
-                {MOYENS_PAIEMENT.map((m) => (
+                {MOYENS_PAIEMENT_RELEVE.map((m) => (
                   <option key={m.value} value={m.value}>{m.label}</option>
                 ))}
               </select>
@@ -428,6 +433,7 @@ export function CaissePage() {
                 <tr>
                   <th>Date</th>
                   <th>Mouvement</th>
+                  {releveMoyen === 'tous' && <th>Moyen</th>}
                   <th>Montant</th>
                 </tr>
               </thead>
@@ -447,6 +453,9 @@ export function CaissePage() {
                     <tr key={`${m.type}-${m.id}`}>
                       <td>{new Date(m.date).toLocaleDateString('fr-FR')}</td>
                       <td>{libelle}</td>
+                      {releveMoyen === 'tous' && (
+                        <td>{MOYENS_PAIEMENT.find((mp) => mp.value === m.payment_method)?.label || m.payment_method || '—'}</td>
+                      )}
                       <td className="chiffre" style={{ color: montantSigne < 0 ? 'var(--danger, #b3423a)' : undefined }}>
                         {montantSigne >= 0 ? '+' : ''}{Math.round(montantSigne).toLocaleString('fr-FR')} FCFA
                       </td>

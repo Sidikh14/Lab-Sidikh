@@ -90,61 +90,68 @@ async function calculerMouvements(req, debutISO, finISO) {
   return parMethode;
 }
 
-// Détail ligne par ligne des mouvements d'UN SEUL moyen de paiement, sur une
-// période — utilisé pour le relevé à l'écran et son export PDF.
+// Détail ligne par ligne des mouvements — soit d'UN SEUL moyen de paiement,
+// soit de TOUS confondus (method === 'tous'), sur une période — utilisé
+// pour le relevé à l'écran et son export PDF. Quand tous les moyens sont
+// demandés, chaque mouvement embarque son payment_method pour affichage.
 async function recupererMouvementsDetailles(req, method, from, to) {
   const debut = `${from}T00:00:00`;
   const finExclusive = new Date(`${to}T00:00:00`);
   finExclusive.setDate(finExclusive.getDate() + 1);
   const fin = finExclusive.toISOString();
-  const paramsTs = [req.user.merchantId, debut, fin, method];
+  const tous = method === 'tous';
+  const paramsTs = tous ? [req.user.merchantId, debut, fin] : [req.user.merchantId, debut, fin, method];
+  const paramsDate = tous ? [req.user.merchantId, from, to] : [req.user.merchantId, from, to, method];
+  const filtreMethode = tous ? '' : 'AND payment_method = $4';
+  const filtreCashMethod = tous ? '' : 'AND sm.cash_method = $4';
 
   const encaissements = await pool.query(
-    `SELECT o.id, 'encaissement' AS type, o.validated_at AS date, o.total_amount AS amount,
+    `SELECT o.id, 'encaissement' AS type, o.validated_at AS date, o.total_amount AS amount, o.payment_method,
             o.order_seq, o.created_at AS order_created_at, c.full_name AS client_name
      FROM orders o
      LEFT JOIN clients c ON c.id = o.client_id
-     WHERE o.merchant_id = $1 AND o.validated_at >= $2 AND o.validated_at < $3 AND o.payment_method = $4
+     WHERE o.merchant_id = $1 AND o.validated_at >= $2 AND o.validated_at < $3 ${filtreMethode}
+       ${tous ? "AND o.payment_method != 'a_credit'" : ''}
      ORDER BY o.validated_at`,
     paramsTs
   );
 
   const reglementsCredit = await pool.query(
-    `SELECT cp.id, 'reglement_credit' AS type, cp.created_at AS date, cp.amount, c.full_name AS client_name
+    `SELECT cp.id, 'reglement_credit' AS type, cp.created_at AS date, cp.amount, cp.payment_method, c.full_name AS client_name
      FROM credit_payments cp
      LEFT JOIN clients c ON c.id = cp.client_id
-     WHERE cp.merchant_id = $1 AND cp.created_at >= $2 AND cp.created_at < $3 AND cp.payment_method = $4
+     WHERE cp.merchant_id = $1 AND cp.created_at >= $2 AND cp.created_at < $3 ${filtreMethode}
      ORDER BY cp.created_at`,
     paramsTs
   );
 
   const achatsStock = await pool.query(
-    `SELECT sm.id, 'achat_stock' AS type, sm.created_at AS date, sm.total_cost AS amount,
+    `SELECT sm.id, 'achat_stock' AS type, sm.created_at AS date, sm.total_cost AS amount, sm.cash_method AS payment_method,
             p.name AS product_name, s.name AS supplier_name
      FROM stock_movements sm
      LEFT JOIN products p ON p.id = sm.product_id
      LEFT JOIN suppliers s ON s.id = sm.supplier_id
      WHERE sm.merchant_id = $1 AND sm.created_at >= $2 AND sm.created_at < $3
-       AND sm.movement_type = 'entree' AND sm.payment_method = 'comptant' AND sm.cash_method = $4
+       AND sm.movement_type = 'entree' AND sm.payment_method = 'comptant' ${filtreCashMethod}
      ORDER BY sm.created_at`,
     paramsTs
   );
 
   const reglementsFournisseur = await pool.query(
-    `SELECT sp.id, 'reglement_fournisseur' AS type, sp.paid_at AS date, sp.amount, s.name AS supplier_name
+    `SELECT sp.id, 'reglement_fournisseur' AS type, sp.paid_at AS date, sp.amount, sp.payment_method, s.name AS supplier_name
      FROM supplier_payments sp
      LEFT JOIN suppliers s ON s.id = sp.supplier_id
-     WHERE sp.merchant_id = $1 AND sp.paid_at >= $2 AND sp.paid_at < $3 AND sp.payment_method = $4
+     WHERE sp.merchant_id = $1 AND sp.paid_at >= $2 AND sp.paid_at < $3 ${filtreMethode}
      ORDER BY sp.paid_at`,
     paramsTs
   );
 
   const sorties = await pool.query(
-    `SELECT ce.id, 'sortie' AS type, ce.expense_date AS date, ce.amount, ce.reason
+    `SELECT ce.id, 'sortie' AS type, ce.expense_date AS date, ce.amount, ce.payment_method, ce.reason
      FROM cash_expenses ce
-     WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 AND ce.payment_method = $4
+     WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 ${filtreMethode}
      ORDER BY ce.expense_date`,
-    [req.user.merchantId, from, to, method]
+    paramsDate
   );
 
   const entrees = [...encaissements.rows, ...reglementsCredit.rows].map((r) => ({ ...r, sens: 'entree' }));
@@ -367,10 +374,11 @@ router.get('/expenses', requireRole('manager', 'gerant', 'caissier'), async (req
   }
 });
 
-// GET /cash/movements?method=&from=&to= — relevé détaillé d'un moyen de paiement
+// GET /cash/movements?method=&from=&to= — relevé détaillé d'un moyen de
+// paiement, ou de tous confondus si method=tous
 router.get('/movements', requireRole('manager', 'gerant'), async (req, res) => {
   const { method, from, to } = req.query;
-  if (!MOYENS_PAIEMENT.includes(method) || !from || !to) {
+  if ((!MOYENS_PAIEMENT.includes(method) && method !== 'tous') || !from || !to) {
     return res.status(400).json({ error: 'Moyen de paiement et dates "from"/"to" requis.' });
   }
   try {
@@ -385,9 +393,10 @@ router.get('/movements', requireRole('manager', 'gerant'), async (req, res) => {
 // GET /cash/movements/pdf?method=&from=&to= — export PDF du relevé, avec solde cumulé
 router.get('/movements/pdf', requireRole('manager', 'gerant'), async (req, res) => {
   const { method, from, to } = req.query;
-  if (!MOYENS_PAIEMENT.includes(method) || !from || !to) {
+  if ((!MOYENS_PAIEMENT.includes(method) && method !== 'tous') || !from || !to) {
     return res.status(400).json({ error: 'Moyen de paiement et dates "from"/"to" requis.' });
   }
+  const tous = method === 'tous';
   try {
     const merchantResult = await pool.query(`SELECT business_name FROM merchants WHERE id = $1`, [req.user.merchantId]);
     const businessName = merchantResult.rows[0]?.business_name || 'Commerce';
@@ -402,18 +411,28 @@ router.get('/movements/pdf', requireRole('manager', 'gerant'), async (req, res) 
 
     let y = dessinerEntete(doc, {
       businessName,
-      titre: `Relevé de caisse — ${LABEL_METHODE[method]}`,
+      titre: tous ? 'Relevé de caisse — Tous les moyens' : `Relevé de caisse — ${LABEL_METHODE[method]}`,
       sousTitre: `Du ${new Date(from).toLocaleDateString('fr-FR')} au ${new Date(to).toLocaleDateString('fr-FR')} · ${mouvements.length} mouvement(s)`,
     });
     y += 10;
 
+    const colonnes = tous
+      ? [
+          { texte: 'Date', x: 56, largeur: 55 },
+          { texte: 'Mouvement', x: 113, largeur: 200 },
+          { texte: 'Moyen', x: 315, largeur: 75 },
+          { texte: 'Montant', x: 390, largeur: 75, aligner: 'right' },
+          { texte: 'Solde cumulé', x: 470, largeur: 80, aligner: 'right' },
+        ]
+      : [
+          { texte: 'Date', x: 56, largeur: 65 },
+          { texte: 'Mouvement', x: 125, largeur: 260 },
+          { texte: 'Montant', x: 390, largeur: 75, aligner: 'right' },
+          { texte: 'Solde cumulé', x: 470, largeur: 80, aligner: 'right' },
+        ];
+
     function entete() {
-      y = dessinerEnteteTableau(doc, y, [
-        { texte: 'Date', x: 56, largeur: 65 },
-        { texte: 'Mouvement', x: 125, largeur: 260 },
-        { texte: 'Montant', x: 390, largeur: 75, aligner: 'right' },
-        { texte: 'Solde cumulé', x: 470, largeur: 80, aligner: 'right' },
-      ]);
+      y = dessinerEnteteTableau(doc, y, colonnes);
     }
     entete();
 
@@ -432,9 +451,12 @@ router.get('/movements/pdf', requireRole('manager', 'gerant'), async (req, res) 
         doc.fillColor(COULEURS.encre);
       }
       const date = new Date(m.date);
-      doc.fontSize(8.5).fillColor(COULEURS.muted).text(date.toLocaleDateString('fr-FR'), 56, y + 5, { width: 65 });
-      doc.fillColor(COULEURS.encre).text(texteMouvement(m), 125, y + 5, { width: 260 });
-      doc.text(`${montantSigne >= 0 ? '+' : ''}${formatMontant(montantSigne)}`, 390, y + 5, { width: 75, align: 'right' });
+      doc.fontSize(8.5).fillColor(COULEURS.muted).text(date.toLocaleDateString('fr-FR'), 56, y + 5, { width: tous ? 55 : 65 });
+      doc.fillColor(COULEURS.encre).text(texteMouvement(m), tous ? 113 : 125, y + 5, { width: tous ? 200 : 260 });
+      if (tous) {
+        doc.fillColor(COULEURS.muted).text(LABEL_METHODE[m.payment_method] || '—', 315, y + 5, { width: 75 });
+      }
+      doc.fillColor(COULEURS.encre).text(`${montantSigne >= 0 ? '+' : ''}${formatMontant(montantSigne)}`, 390, y + 5, { width: 75, align: 'right' });
       doc.text(formatMontant(solde), 470, y + 5, { width: 80, align: 'right' });
       y += 20;
     });
