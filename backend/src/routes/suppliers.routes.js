@@ -1,7 +1,9 @@
 const express = require('express');
+const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
+const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
 
 const router = express.Router();
 router.use(authenticate);
@@ -83,6 +85,112 @@ router.get('/:id', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération du fournisseur.' });
+  }
+});
+
+// GET /suppliers/purchases/pdf?from=&to= — export PDF de tous les
+// achats (entrées de stock avec fournisseur) sur une période donnée, tous
+// fournisseurs confondus. Pas besoin de requireRole ici : déjà appliqué à
+// tout le router via router.use(requireRole('manager', 'gerant')) plus haut.
+router.get('/purchases/pdf', async (req, res) => {
+  const { from, to } = req.query;
+
+  if (!from || !to) {
+    return res.status(400).json({ error: 'Les dates de début et de fin sont requises.' });
+  }
+
+  try {
+    const merchantResult = await pool.query(`SELECT business_name FROM merchants WHERE id = $1`, [req.user.merchantId]);
+    const businessName = merchantResult.rows[0]?.business_name || 'Commerce';
+
+    const result = await pool.query(
+      `SELECT
+         sm.id, sm.quantity, sm.total_cost, sm.payment_method, sm.cash_method,
+         COALESCE(sm.movement_date, sm.created_at::date) AS date_achat,
+         p.name AS product_name,
+         s.name AS supplier_name
+       FROM stock_movements sm
+       JOIN products p ON p.id = sm.product_id
+       JOIN suppliers s ON s.id = sm.supplier_id
+       WHERE sm.merchant_id = $1
+         AND sm.movement_type = 'entree'
+         AND sm.supplier_id IS NOT NULL
+         AND COALESCE(sm.movement_date, sm.created_at::date) BETWEEN $2 AND $3
+       ORDER BY date_achat, s.name, p.name`,
+      [req.user.merchantId, from, to]
+    );
+
+    const achats = result.rows;
+    const totalGeneral = achats.reduce((somme, a) => somme + Number(a.total_cost || 0), 0);
+
+    const totauxParFournisseur = new Map();
+    achats.forEach((a) => {
+      const nom = a.supplier_name || 'Fournisseur inconnu';
+      totauxParFournisseur.set(nom, (totauxParFournisseur.get(nom) || 0) + Number(a.total_cost || 0));
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="achats-fournisseurs-${from}-au-${to}.pdf"`);
+
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    doc.pipe(res);
+
+    let y = dessinerEntete(doc, {
+      businessName,
+      titre: 'Achats fournisseurs',
+      sousTitre: `Du ${new Date(from).toLocaleDateString('fr-FR')} au ${new Date(to).toLocaleDateString('fr-FR')} · ${achats.length} achat(s)`,
+    });
+    y += 10;
+
+    doc.fontSize(11).font('Helvetica-Bold').fillColor(COULEURS.encre).text('Récapitulatif par fournisseur', 50, y);
+    y += 18;
+    doc.fontSize(9.5).font('Helvetica');
+    totauxParFournisseur.forEach((total, nom) => {
+      doc.fillColor(COULEURS.encre).text(nom, 56, y, { width: 300 });
+      doc.text(`${formatMontant(total)} FCFA`, 400, y, { width: 145, align: 'right' });
+      y += 16;
+    });
+    y += 6;
+    doc.font('Helvetica-Bold');
+    doc.text('Total général', 56, y, { width: 300 });
+    doc.text(`${formatMontant(totalGeneral)} FCFA`, 400, y, { width: 145, align: 'right' });
+    doc.font('Helvetica');
+    y += 28;
+
+    function entete() {
+      y = dessinerEnteteTableau(doc, y, [
+        { texte: 'Date', x: 56, largeur: 70 },
+        { texte: 'Fournisseur', x: 130, largeur: 140 },
+        { texte: 'Produit', x: 275, largeur: 130 },
+        { texte: 'Qté', x: 410, largeur: 40, aligner: 'right' },
+        { texte: 'Montant', x: 455, largeur: 95, aligner: 'right' },
+      ]);
+    }
+    entete();
+
+    achats.forEach((a, index) => {
+      if (y > 760) {
+        doc.addPage();
+        y = 50;
+        entete();
+      }
+      if (index % 2 === 1) {
+        doc.rect(50, y, doc.page.width - 100, 20).fill(COULEURS.fondAlterne);
+        doc.fillColor(COULEURS.encre);
+      }
+      doc.fontSize(9);
+      doc.fillColor(COULEURS.encre).text(new Date(a.date_achat).toLocaleDateString('fr-FR'), 56, y + 5, { width: 70 });
+      doc.text(a.supplier_name || '—', 130, y + 5, { width: 140 });
+      doc.fillColor(COULEURS.muted).text(a.product_name, 275, y + 5, { width: 130 });
+      doc.fillColor(COULEURS.encre).text(String(a.quantity), 410, y + 5, { width: 40, align: 'right' });
+      doc.text(a.total_cost != null ? `${formatMontant(a.total_cost)} FCFA` : '—', 455, y + 5, { width: 95, align: 'right' });
+      y += 20;
+    });
+
+    doc.end();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors de la génération du PDF des achats." });
   }
 });
 

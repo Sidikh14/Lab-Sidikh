@@ -117,6 +117,7 @@ export const api = {
   createSupplierPayment: (id, data) =>
     request(`/suppliers/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }),
   deleteSupplier: (id) => request(`/suppliers/${id}`, { method: 'DELETE' }),
+  downloadSupplierPurchasesPdf: (from, to) => previewFile(`/suppliers/purchases/pdf?from=${from}&to=${to}`),
 
   getPurchaseOrders: () => request('/purchase-orders'),
   getPurchaseOrder: (id) => request(`/purchase-orders/${id}`),

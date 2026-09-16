@@ -52,6 +52,16 @@ function IconCorbeille() {
   );
 }
 
+function IconTelecharger() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v12" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M4 21h16" />
+    </svg>
+  );
+}
+
 const FILTRES_DETTE = [
   { value: 'tous', label: 'Tous' },
   { value: 'dette', label: 'Avec dette' },
@@ -85,6 +95,10 @@ export function SuppliersPage() {
 
   const [recherche, setRecherche] = useState('');
   const [filtreDette, setFiltreDette] = useState('tous');
+
+  const [exportFrom, setExportFrom] = useState('');
+  const [exportTo, setExportTo] = useState('');
+  const [exportEnCours, setExportEnCours] = useState(false);
 
   const suppliersFiltres = useMemo(() => {
     return suppliers.filter((s) => {
@@ -155,6 +169,21 @@ export function SuppliersPage() {
     }
   }
 
+  async function handleExporterAchats() {
+    if (!exportFrom || !exportTo) {
+      setErreur('Choisissez une date de début et une date de fin.');
+      return;
+    }
+    setExportEnCours(true);
+    try {
+      await api.downloadSupplierPurchasesPdf(exportFrom, exportTo);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setExportEnCours(false);
+    }
+  }
+
   return (
     <>
       <div className="entete-page">
@@ -219,6 +248,41 @@ export function SuppliersPage() {
             );
           })}
         </div>
+      </div>
+
+      <div
+        className="barre-filtres"
+        style={{ alignItems: 'center', flexWrap: 'wrap', gap: 10 }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--encre-douce)' }}>
+          Exporter les achats (PDF)
+        </span>
+        <input
+          type="date"
+          className="champ"
+          style={{ width: 150 }}
+          value={exportFrom}
+          onChange={(e) => setExportFrom(e.target.value)}
+          aria-label="Du"
+        />
+        <span style={{ color: 'var(--encre-douce)' }}>au</span>
+        <input
+          type="date"
+          className="champ"
+          style={{ width: 150 }}
+          value={exportTo}
+          onChange={(e) => setExportTo(e.target.value)}
+          aria-label="Au"
+        />
+        <button
+          className="btn"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+          onClick={handleExporterAchats}
+          disabled={exportEnCours}
+        >
+          <IconTelecharger />
+          {exportEnCours ? 'Génération…' : 'Exporter'}
+        </button>
       </div>
 
       {chargement ? (
