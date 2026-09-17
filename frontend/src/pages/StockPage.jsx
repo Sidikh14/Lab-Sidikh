@@ -75,10 +75,10 @@ function CodeBarreEtiquette({ valeur }) {
     try {
       JsBarcode(svgRef.current, valeur, {
         format: 'CODE128',
-        width: 1.4,
-        height: 38,
-        fontSize: 11,
-        margin: 0,
+        width: 2,
+        height: 45,
+        fontSize: 12,
+        margin: 10,
         displayValue: true,
       });
     } catch {
