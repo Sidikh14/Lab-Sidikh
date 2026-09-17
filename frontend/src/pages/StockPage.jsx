@@ -51,6 +51,16 @@ function IconModifier() {
   );
 }
 
+function IconImprimante() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 9V3h12v6" />
+      <rect x="4" y="9" width="16" height="9" rx="1.5" />
+      <path d="M6 14h12v7H6z" />
+    </svg>
+  );
+}
+
 function codeInterne(product) {
   return product.sku || product.id.slice(0, 6).toUpperCase();
 }
@@ -126,6 +136,8 @@ export function StockPage() {
   const [nouveauFournisseurRapide, setNouveauFournisseurRapide] = useState({ name: '', phone: '' });
   const [produitEnEdition, setProduitEnEdition] = useState(null);
   const [enregistrementEdition, setEnregistrementEdition] = useState(false);
+  const [produitsSelectionnes, setProduitsSelectionnes] = useState(new Set());
+  const [impressionEnAttente, setImpressionEnAttente] = useState(false);
 
   function charger() {
     setChargement(true);
@@ -133,12 +145,49 @@ export function StockPage() {
       .then(([p, s]) => {
         setProducts(p);
         setSuppliers(s);
+        // Par défaut, toutes les étiquettes sont sélectionnées (comportement
+        // équivalent à "tout imprimer" d'avant).
+        setProduitsSelectionnes(new Set(p.map((prod) => prod.id)));
       })
       .catch((err) => setErreur(err.message))
       .finally(() => setChargement(false));
   }
 
   useEffect(charger, []);
+
+  function basculerSelectionEtiquette(id) {
+    setProduitsSelectionnes((avant) => {
+      const nouveau = new Set(avant);
+      if (nouveau.has(id)) nouveau.delete(id);
+      else nouveau.add(id);
+      return nouveau;
+    });
+  }
+
+  function toutSelectionner() {
+    setProduitsSelectionnes(new Set(products.map((p) => p.id)));
+  }
+
+  function toutDeselectionner() {
+    setProduitsSelectionnes(new Set());
+  }
+
+  // Bouton rapide "Étiquette" sur une carte produit du catalogue : bascule
+  // sur l'onglet Étiquettes avec seulement ce produit sélectionné, puis
+  // ouvre directement la boîte d'impression une fois le DOM à jour.
+  function imprimerEtiquetteUnique(produit) {
+    setProduitsSelectionnes(new Set([produit.id]));
+    setOnglet('etiquettes');
+    setImpressionEnAttente(true);
+  }
+
+  useEffect(() => {
+    if (impressionEnAttente && onglet === 'etiquettes') {
+      setImpressionEnAttente(false);
+      const t = setTimeout(() => window.print(), 60);
+      return () => clearTimeout(t);
+    }
+  }, [impressionEnAttente, onglet]);
 
   const produitsFiltres = useMemo(() => {
     return products.filter((p) => {
@@ -446,6 +495,14 @@ export function StockPage() {
                         <IconModifier />
                         Modifier
                       </button>
+                      <button
+                        className="btn"
+                        style={{ flex: 1, justifyContent: 'center', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        onClick={() => imprimerEtiquetteUnique(p)}
+                      >
+                        <IconImprimante />
+                        Étiquette
+                      </button>
                     </div>
                   )}
                 </div>
@@ -459,12 +516,52 @@ export function StockPage() {
 
       {onglet === 'etiquettes' && (
         <>
-          <div className="barre-outils no-print">
-            <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{products.length} étiquette(s)</span>
-            <button className="btn btn-principal" onClick={() => window.print()}>Imprimer</button>
+          <div className="barre-outils no-print" style={{ flexWrap: 'wrap', gap: 12 }}>
+            <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>
+              {produitsSelectionnes.size} étiquette(s) sélectionnée(s) sur {products.length}
+            </span>
+            <button className="btn" onClick={toutSelectionner}>Tout sélectionner</button>
+            <button className="btn" onClick={toutDeselectionner}>Tout désélectionner</button>
+            <button className="btn btn-principal" onClick={() => window.print()} disabled={produitsSelectionnes.size === 0}>
+              Imprimer la sélection ({produitsSelectionnes.size})
+            </button>
           </div>
-          <div className="grille-etiquettes">
+
+          <div
+            className="no-print"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+              gap: 8,
+              marginBottom: 24,
+            }}
+          >
             {products.map((p) => (
+              <label
+                key={p.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 13,
+                  padding: '8px 10px',
+                  border: '1px solid var(--trait)',
+                  borderRadius: 'var(--rayon-petit)',
+                  cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={produitsSelectionnes.has(p.id)}
+                  onChange={() => basculerSelectionEtiquette(p.id)}
+                />
+                {p.name}
+              </label>
+            ))}
+          </div>
+
+          <div className="grille-etiquettes">
+            {products.filter((p) => produitsSelectionnes.has(p.id)).map((p) => (
               <div key={p.id} className="etiquette-produit">
                 <p className="etiquette-nom">{p.name}</p>
                 <p className="etiquette-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
