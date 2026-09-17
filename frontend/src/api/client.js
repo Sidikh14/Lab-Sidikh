@@ -179,6 +179,12 @@ export const api = {
   getSalaryAlert: () => request('/salaries/alert'),
   getSalaryMaxMonth: () => request('/salaries/max-month'),
 
+  getVapidPublicKey: () => request('/push/vapid-public-key'),
+  subscribeToPush: (subscription) =>
+    request('/push/subscribe', { method: 'POST', body: JSON.stringify(subscription) }),
+  unsubscribeFromPush: (endpoint) =>
+    request('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint }) }),
+
   getInventorySessions: () => request('/inventory-sessions'),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),
   createInventorySession: () => request('/inventory-sessions', { method: 'POST' }),
