@@ -151,6 +151,8 @@ export const api = {
   getMerchantTeam: (id) => request(`/admin/merchants/${id}/users`),
   setAdminUserStatus: (id, isActive) =>
     request(`/admin/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
+  resetAdminUserPassword: (id, newPassword) =>
+    request(`/admin/users/${id}/password`, { method: 'PATCH', body: JSON.stringify({ newPassword }) }),
   deleteAdminUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
 
   getCashSummary: (date) => request(`/cash/summary${date ? `?date=${date}` : ''}`),

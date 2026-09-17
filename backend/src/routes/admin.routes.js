@@ -1,7 +1,9 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
+const { logActivity } = require('../utils/activityLog');
 
 const router = express.Router();
 router.use(authenticate);
@@ -124,6 +126,47 @@ router.patch('/users/:id/status', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Erreur lors de la mise à jour de l'utilisateur." });
+  }
+});
+
+// PATCH /admin/users/:id/password — l'owner réinitialise le mot de passe de
+// n'importe quel utilisateur, y compris un manager (cas où le manager a
+// oublié le sien et n'a personne au-dessus de lui côté commerçant pour le
+// réinitialiser). Contrairement à PATCH /users/:id/password côté manager,
+// ici 'manager' n'est pas exclu — seul un autre owner l'est.
+router.patch('/users/:id/password', async (req, res) => {
+  const { newPassword } = req.body;
+
+  if (typeof newPassword !== 'string' || newPassword.length < 6) {
+    return res.status(400).json({ error: 'Le nouveau mot de passe doit contenir au moins 6 caractères.' });
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const result = await pool.query(
+      `UPDATE users SET password_hash = $1
+       WHERE id = $2 AND role != 'owner'
+       RETURNING id, full_name, role, merchant_id`,
+      [passwordHash, req.params.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Utilisateur introuvable.' });
+    }
+
+    const target = result.rows[0];
+    if (target.merchant_id) {
+      await logActivity({
+        merchantId: target.merchant_id,
+        userId: req.user.id,
+        action: 'team_member_password_reset',
+        description: `le propriétaire de la plateforme a réinitialisé le mot de passe de ${target.full_name}`,
+      });
+    }
+
+    res.json({ id: target.id, full_name: target.full_name, role: target.role, message: 'Mot de passe réinitialisé avec succès.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la réinitialisation du mot de passe.' });
   }
 });
 
