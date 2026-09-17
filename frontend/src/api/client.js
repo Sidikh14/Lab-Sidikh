@@ -172,6 +172,7 @@ export const api = {
   paySalary: (userId, data) =>
     request(`/salaries/${userId}/pay`, { method: 'POST', body: JSON.stringify(data) }),
   getSalaryAlert: () => request('/salaries/alert'),
+  getSalaryMaxMonth: () => request('/salaries/max-month'),
 
   getInventorySessions: () => request('/inventory-sessions'),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),

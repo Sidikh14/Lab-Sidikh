@@ -17,6 +17,40 @@ function moisActuel() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function moisSuivant(moisStr) {
+  const [annee, mois] = moisStr.split('-').map(Number);
+  const d = new Date(annee, mois, 1); // mois est déjà 1-indexé => donne le mois suivant
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Mois le plus avancé accessible : le mois en cours tant qu'il n'est pas
+// entièrement soldé, sinon le mois suivant (jamais plus loin).
+async function calculerMoisMax(merchantId) {
+  const month = moisActuel();
+  const { rows } = await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE sp.id IS NULL) AS impayes
+     FROM users u
+     JOIN employee_salaries es ON es.user_id = u.id
+     LEFT JOIN salary_payments sp ON sp.user_id = u.id AND sp.month = $2
+     WHERE u.merchant_id = $1 AND u.is_active = true`,
+    [merchantId, month]
+  );
+  const toutPaye = Number(rows[0].impayes) === 0;
+  return toutPaye ? moisSuivant(month) : month;
+}
+
+// GET /salaries/max-month - mois le plus avancé accessible (bloque l'accès au mois
+// suivant tant que le mois en cours n'est pas entièrement soldé)
+router.get('/max-month', async (req, res) => {
+  try {
+    const maxMonth = await calculerMoisMax(req.user.merchantId);
+    res.json({ maxMonth });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // GET /salaries - liste des employés + salaire configuré + statut du mois en cours
 router.get('/', async (req, res) => {
   try {
@@ -73,6 +107,11 @@ router.post('/:userId/pay', async (req, res) => {
     if (!amount || amount <= 0) return res.status(400).json({ error: 'Montant invalide' });
     if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
       return res.status(400).json({ error: 'Méthode de paiement invalide' });
+    }
+
+    const maxMonth = await calculerMoisMax(req.user.merchantId);
+    if (targetMonth > maxMonth) {
+      return res.status(400).json({ error: `Vous devez d'abord solder le mois en cours avant d'accéder à ${targetMonth}.` });
     }
 
     await client.query('BEGIN');

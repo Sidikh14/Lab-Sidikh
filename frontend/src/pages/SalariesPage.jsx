@@ -12,11 +12,6 @@ function libelleMethode(value) {
   return METHODES.find((m) => m.value === value)?.label || value || '—';
 }
 
-function moisActuel() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
 const NOMS_MOIS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 function formatMois(moisStr) {
   const [annee, mois] = moisStr.split('-');
@@ -24,7 +19,8 @@ function formatMois(moisStr) {
 }
 
 export function SalariesPage() {
-  const [mois, setMois] = useState(moisActuel());
+  const [mois, setMois] = useState(null);
+  const [moisMax, setMoisMax] = useState(null);
   const [employes, setEmployes] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
@@ -38,7 +34,21 @@ export function SalariesPage() {
   const [methodePaiement, setMethodePaiement] = useState('especes');
   const [envoiEnCours, setEnvoiEnCours] = useState(false);
 
+  // Le mois par défaut/maximal vient du serveur (pas de la date de l'appareil
+  // de l'utilisateur) : on ne peut jamais consulter/payer un mois tant que
+  // le mois en cours n'est pas entièrement soldé.
+  useEffect(() => {
+    api
+      .getSalaryMaxMonth()
+      .then((data) => {
+        setMoisMax(data.maxMonth);
+        setMois(data.maxMonth);
+      })
+      .catch((err) => setErreur(err.message));
+  }, []);
+
   function charger() {
+    if (!mois) return;
     setChargement(true);
     setErreur('');
     api
@@ -118,7 +128,8 @@ export function SalariesPage() {
             id="mois-salaires"
             type="month"
             className="champ"
-            value={mois}
+            max={moisMax || undefined}
+            value={mois || ''}
             onChange={(e) => setMois(e.target.value)}
           />
         </div>
