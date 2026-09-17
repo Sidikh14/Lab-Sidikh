@@ -108,6 +108,23 @@ export function AdminPage() {
     }
   }
 
+  async function reinitialiserMotDePasse(membre) {
+    const nouveauMotDePasse = window.prompt(
+      `Nouveau mot de passe pour ${membre.full_name} (${membre.role}) — au moins 6 caractères :`
+    );
+    if (nouveauMotDePasse === null) return;
+    if (nouveauMotDePasse.length < 6) {
+      setErreur('Le nouveau mot de passe doit contenir au moins 6 caractères.');
+      return;
+    }
+    try {
+      await api.resetAdminUserPassword(membre.id, nouveauMotDePasse);
+      window.alert(`Mot de passe de ${membre.full_name} réinitialisé avec succès.`);
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
   return (
     <div style={styles.page}>
       <header style={styles.entete}>
@@ -185,6 +202,9 @@ export function AdminPage() {
                             <td style={{ ...styles.td, display: 'flex', gap: 8 }}>
                               <button type="button" style={styles.boutonPetit} onClick={() => basculerStatutUtilisateur(membre)}>
                                 {membre.is_active ? 'Bloquer' : 'Débloquer'}
+                              </button>
+                              <button type="button" style={styles.boutonPetit} onClick={() => reinitialiserMotDePasse(membre)}>
+                                Réinitialiser mot de passe
                               </button>
                               <button type="button" style={styles.boutonPetitDanger} onClick={() => supprimerUtilisateur(membre)}>
                                 Supprimer
