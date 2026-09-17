@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import JsBarcode from 'jsbarcode';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
@@ -52,6 +53,30 @@ function IconModifier() {
 
 function codeInterne(product) {
   return product.sku || product.id.slice(0, 6).toUpperCase();
+}
+
+// CODE128 accepte lettres + chiffres, donc marche aussi bien avec un SKU
+// personnalisé qu'avec le code auto-généré (6 premiers caractères de l'id).
+function CodeBarreEtiquette({ valeur }) {
+  const svgRef = useRef(null);
+
+  useEffect(() => {
+    if (!svgRef.current || !valeur) return;
+    try {
+      JsBarcode(svgRef.current, valeur, {
+        format: 'CODE128',
+        width: 1.4,
+        height: 38,
+        fontSize: 11,
+        margin: 0,
+        displayValue: true,
+      });
+    } catch {
+      // valeur non encodable (cas limite) : on laisse le SVG vide plutôt que de casser la page
+    }
+  }, [valeur]);
+
+  return <svg ref={svgRef} className="etiquette-code-barre" style={{ maxWidth: '100%', height: 'auto' }} />;
 }
 
 function telechargerCsv(nomFichier, lignes) {
@@ -443,7 +468,7 @@ export function StockPage() {
               <div key={p.id} className="etiquette-produit">
                 <p className="etiquette-nom">{p.name}</p>
                 <p className="etiquette-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
-                <p className="etiquette-code">{codeInterne(p)}</p>
+                <CodeBarreEtiquette valeur={codeInterne(p)} />
               </div>
             ))}
           </div>
