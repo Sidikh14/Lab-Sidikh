@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
@@ -49,14 +49,32 @@ function ModaleScanCamera({ onDetect, onClose }) {
   const [erreurCamera, setErreurCamera] = useState('');
 
   useEffect(() => {
-    const instance = new Html5Qrcode('zone-scan-camera');
+    const instance = new Html5Qrcode('zone-scan-camera', {
+      // Formats réellement utilisés dans l'app (étiquettes en CODE_128 +
+      // les formats courants qu'un fournisseur pourrait avoir déjà imprimés).
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.CODE_128,
+        Html5QrcodeSupportedFormats.CODE_39,
+        Html5QrcodeSupportedFormats.EAN_13,
+        Html5QrcodeSupportedFormats.EAN_8,
+        Html5QrcodeSupportedFormats.UPC_A,
+        Html5QrcodeSupportedFormats.UPC_E,
+        Html5QrcodeSupportedFormats.QR_CODE,
+      ],
+      // L'API native du navigateur (BarcodeDetector), utilisée par défaut sur
+      // certains appareils, ne sait souvent lire que les QR codes : on force
+      // le décodeur ZXing intégré à la librairie, bien plus fiable sur les
+      // codes-barres 1D comme le CODE_128 de nos étiquettes.
+      experimentalFeatures: { useBarCodeDetectorIfSupported: false },
+      verbose: false,
+    });
     let dejaDetecte = false;
     let demarre = false;
 
     instance
       .start(
         { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 260, height: 150 } },
+        { fps: 10, qrbox: { width: 280, height: 160 }, disableFlip: false },
         (texteDecode) => {
           if (dejaDetecte) return;
           dejaDetecte = true;
