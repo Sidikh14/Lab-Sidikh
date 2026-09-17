@@ -91,67 +91,104 @@ async function calculerMouvements(req, debutISO, finISO) {
 }
 
 // Détail ligne par ligne des mouvements — soit d'UN SEUL moyen de paiement,
-// soit de TOUS confondus (method === 'tous'), sur une période — utilisé
-// pour le relevé à l'écran et son export PDF. Quand tous les moyens sont
-// demandés, chaque mouvement embarque son payment_method pour affichage.
-async function recupererMouvementsDetailles(req, method, from, to) {
+// soit de TOUS confondus (method === 'tous'), sur une période, et
+// éventuellement filtrés sur UN SEUL auteur (cashier = id utilisateur) ou
+// tous confondus (cashier absent ou 'tous') — utilisé pour le relevé à
+// l'écran et son export PDF. Chaque mouvement embarque toujours l'auteur
+// (user_id/user_name), quelle que soit la colonne réelle en base : elle
+// diffère d'une table à l'autre (orders.validated_by,
+// credit_payments.recorded_by, stock_movements.user_id,
+// supplier_payments.user_id, cash_expenses.user_id — aucun nom commun).
+async function recupererMouvementsDetailles(req, method, from, to, cashier) {
   const debut = `${from}T00:00:00`;
   const finExclusive = new Date(`${to}T00:00:00`);
   finExclusive.setDate(finExclusive.getDate() + 1);
   const fin = finExclusive.toISOString();
   const tous = method === 'tous';
-  const paramsTs = tous ? [req.user.merchantId, debut, fin] : [req.user.merchantId, debut, fin, method];
-  const paramsDate = tous ? [req.user.merchantId, from, to] : [req.user.merchantId, from, to, method];
-  const filtreMethode = tous ? '' : 'AND payment_method = $4';
-  const filtreCashMethod = tous ? '' : 'AND sm.cash_method = $4';
+  const tousCaissiers = !cashier || cashier === 'tous';
+
+  // Construit les paramètres + l'index des filtres optionnels une seule
+  // fois, dans le même ordre pour toutes les requêtes ci-dessous : moyen de
+  // paiement en 4e position si demandé, caissier juste après.
+  function construireParams(bornesDate) {
+    const params = bornesDate ? [req.user.merchantId, from, to] : [req.user.merchantId, debut, fin];
+    let idxMethode = null;
+    let idxCaissier = null;
+    if (!tous) { params.push(method); idxMethode = params.length; }
+    if (!tousCaissiers) { params.push(cashier); idxCaissier = params.length; }
+    return { params, idxMethode, idxCaissier };
+  }
+
+  const ts = construireParams(false);
+  const dates = construireParams(true);
 
   const encaissements = await pool.query(
     `SELECT o.id, 'encaissement' AS type, o.validated_at AS date, o.total_amount AS amount, o.payment_method,
-            o.order_seq, o.created_at AS order_created_at, c.full_name AS client_name
+            o.order_seq, o.created_at AS order_created_at, c.full_name AS client_name,
+            o.validated_by AS user_id, u.full_name AS user_name
      FROM orders o
      LEFT JOIN clients c ON c.id = o.client_id
-     WHERE o.merchant_id = $1 AND o.validated_at >= $2 AND o.validated_at < $3 ${filtreMethode}
+     LEFT JOIN users u ON u.id = o.validated_by
+     WHERE o.merchant_id = $1 AND o.validated_at >= $2 AND o.validated_at < $3
+       ${ts.idxMethode ? `AND o.payment_method = $${ts.idxMethode}` : ''}
+       ${ts.idxCaissier ? `AND o.validated_by = $${ts.idxCaissier}` : ''}
        ${tous ? "AND o.payment_method != 'a_credit'" : ''}
      ORDER BY o.validated_at`,
-    paramsTs
+    ts.params
   );
 
   const reglementsCredit = await pool.query(
-    `SELECT cp.id, 'reglement_credit' AS type, cp.created_at AS date, cp.amount, cp.payment_method, c.full_name AS client_name
+    `SELECT cp.id, 'reglement_credit' AS type, cp.created_at AS date, cp.amount, cp.payment_method, c.full_name AS client_name,
+            cp.recorded_by AS user_id, u.full_name AS user_name
      FROM credit_payments cp
      LEFT JOIN clients c ON c.id = cp.client_id
-     WHERE cp.merchant_id = $1 AND cp.created_at >= $2 AND cp.created_at < $3 ${filtreMethode}
+     LEFT JOIN users u ON u.id = cp.recorded_by
+     WHERE cp.merchant_id = $1 AND cp.created_at >= $2 AND cp.created_at < $3
+       ${ts.idxMethode ? `AND cp.payment_method = $${ts.idxMethode}` : ''}
+       ${ts.idxCaissier ? `AND cp.recorded_by = $${ts.idxCaissier}` : ''}
      ORDER BY cp.created_at`,
-    paramsTs
+    ts.params
   );
 
   const achatsStock = await pool.query(
     `SELECT sm.id, 'achat_stock' AS type, sm.created_at AS date, sm.total_cost AS amount, sm.cash_method AS payment_method,
-            p.name AS product_name, s.name AS supplier_name
+            p.name AS product_name, s.name AS supplier_name,
+            sm.user_id AS user_id, u.full_name AS user_name
      FROM stock_movements sm
      LEFT JOIN products p ON p.id = sm.product_id
      LEFT JOIN suppliers s ON s.id = sm.supplier_id
+     LEFT JOIN users u ON u.id = sm.user_id
      WHERE sm.merchant_id = $1 AND sm.created_at >= $2 AND sm.created_at < $3
-       AND sm.movement_type = 'entree' AND sm.payment_method = 'comptant' ${filtreCashMethod}
+       AND sm.movement_type = 'entree' AND sm.payment_method = 'comptant'
+       ${ts.idxMethode ? `AND sm.cash_method = $${ts.idxMethode}` : ''}
+       ${ts.idxCaissier ? `AND sm.user_id = $${ts.idxCaissier}` : ''}
      ORDER BY sm.created_at`,
-    paramsTs
+    ts.params
   );
 
   const reglementsFournisseur = await pool.query(
-    `SELECT sp.id, 'reglement_fournisseur' AS type, sp.paid_at AS date, sp.amount, sp.payment_method, s.name AS supplier_name
+    `SELECT sp.id, 'reglement_fournisseur' AS type, sp.paid_at AS date, sp.amount, sp.payment_method, s.name AS supplier_name,
+            sp.user_id AS user_id, u.full_name AS user_name
      FROM supplier_payments sp
      LEFT JOIN suppliers s ON s.id = sp.supplier_id
-     WHERE sp.merchant_id = $1 AND sp.paid_at >= $2 AND sp.paid_at < $3 ${filtreMethode}
+     LEFT JOIN users u ON u.id = sp.user_id
+     WHERE sp.merchant_id = $1 AND sp.paid_at >= $2 AND sp.paid_at < $3
+       ${ts.idxMethode ? `AND sp.payment_method = $${ts.idxMethode}` : ''}
+       ${ts.idxCaissier ? `AND sp.user_id = $${ts.idxCaissier}` : ''}
      ORDER BY sp.paid_at`,
-    paramsTs
+    ts.params
   );
 
   const sorties = await pool.query(
-    `SELECT ce.id, 'sortie' AS type, ce.expense_date AS date, ce.amount, ce.payment_method, ce.reason
+    `SELECT ce.id, 'sortie' AS type, ce.expense_date AS date, ce.amount, ce.payment_method, ce.reason,
+            ce.user_id AS user_id, u.full_name AS user_name
      FROM cash_expenses ce
-     WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 ${filtreMethode}
+     LEFT JOIN users u ON u.id = ce.user_id
+     WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3
+       ${dates.idxMethode ? `AND ce.payment_method = $${dates.idxMethode}` : ''}
+       ${dates.idxCaissier ? `AND ce.user_id = $${dates.idxCaissier}` : ''}
      ORDER BY ce.expense_date`,
-    paramsDate
+    dates.params
   );
 
   const entrees = [...encaissements.rows, ...reglementsCredit.rows].map((r) => ({ ...r, sens: 'entree' }));
@@ -374,15 +411,32 @@ router.get('/expenses', requireRole('manager', 'gerant', 'caissier'), async (req
   }
 });
 
-// GET /cash/movements?method=&from=&to= — relevé détaillé d'un moyen de
-// paiement, ou de tous confondus si method=tous
+// GET /cash/cashiers — liste des membres actifs du commerçant, pour peupler
+// le filtre "par caissier" du relevé (manager/gérant uniquement).
+router.get('/cashiers', requireRole('manager', 'gerant'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, full_name, role FROM users WHERE merchant_id = $1 AND is_active = true ORDER BY full_name`,
+      [req.user.merchantId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des membres.' });
+  }
+});
+
+// GET /cash/movements?method=&from=&to=&cashier= — relevé détaillé d'un
+// moyen de paiement (ou tous confondus si method=tous), éventuellement
+// filtré sur un seul auteur (cashier=id utilisateur, ou 'tous'/absent pour
+// tout le monde confondu).
 router.get('/movements', requireRole('manager', 'gerant'), async (req, res) => {
-  const { method, from, to } = req.query;
+  const { method, from, to, cashier } = req.query;
   if ((!MOYENS_PAIEMENT.includes(method) && method !== 'tous') || !from || !to) {
     return res.status(400).json({ error: 'Moyen de paiement et dates "from"/"to" requis.' });
   }
   try {
-    const mouvements = await recupererMouvementsDetailles(req, method, from, to);
+    const mouvements = await recupererMouvementsDetailles(req, method, from, to, cashier);
     res.json(mouvements);
   } catch (err) {
     console.error(err);
@@ -390,18 +444,21 @@ router.get('/movements', requireRole('manager', 'gerant'), async (req, res) => {
   }
 });
 
-// GET /cash/movements/pdf?method=&from=&to= — export PDF du relevé, avec solde cumulé
+// GET /cash/movements/pdf?method=&from=&to=&cashier= — export PDF du relevé,
+// avec solde cumulé et l'auteur de chaque mouvement.
 router.get('/movements/pdf', requireRole('manager', 'gerant'), async (req, res) => {
-  const { method, from, to } = req.query;
+  const { method, from, to, cashier } = req.query;
   if ((!MOYENS_PAIEMENT.includes(method) && method !== 'tous') || !from || !to) {
     return res.status(400).json({ error: 'Moyen de paiement et dates "from"/"to" requis.' });
   }
   const tous = method === 'tous';
+  const tousCaissiers = !cashier || cashier === 'tous';
   try {
     const merchantResult = await pool.query(`SELECT business_name FROM merchants WHERE id = $1`, [req.user.merchantId]);
     const businessName = merchantResult.rows[0]?.business_name || 'Commerce';
 
-    const mouvements = await recupererMouvementsDetailles(req, method, from, to);
+    const mouvements = await recupererMouvementsDetailles(req, method, from, to, cashier);
+    const nomCaissier = tousCaissiers ? null : (mouvements.find((m) => m.user_id === cashier)?.user_name || null);
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="releve-${method}-${from}-${to}.pdf"`);
@@ -409,26 +466,32 @@ router.get('/movements/pdf', requireRole('manager', 'gerant'), async (req, res) 
     const doc = new PDFDocument({ margin: 50, size: 'A4' });
     doc.pipe(res);
 
+    const titre = tous ? 'Relevé de caisse — Tous les moyens' : `Relevé de caisse — ${LABEL_METHODE[method]}`;
     let y = dessinerEntete(doc, {
       businessName,
-      titre: tous ? 'Relevé de caisse — Tous les moyens' : `Relevé de caisse — ${LABEL_METHODE[method]}`,
-      sousTitre: `Du ${new Date(from).toLocaleDateString('fr-FR')} au ${new Date(to).toLocaleDateString('fr-FR')} · ${mouvements.length} mouvement(s)`,
+      titre,
+      sousTitre: `Du ${new Date(from).toLocaleDateString('fr-FR')} au ${new Date(to).toLocaleDateString('fr-FR')}${nomCaissier ? ` · ${nomCaissier}` : ''} · ${mouvements.length} mouvement(s)`,
     });
     y += 10;
 
+    // Colonne "Par" ajoutée systématiquement (c'est tout l'intérêt de ce
+    // relevé) ; la largeur de "Mouvement" est réduite pour lui faire de la
+    // place, et la colonne "Moyen" ne s'affiche qu'en vue "tous".
     const colonnes = tous
       ? [
-          { texte: 'Date', x: 56, largeur: 55 },
-          { texte: 'Mouvement', x: 113, largeur: 200 },
-          { texte: 'Moyen', x: 315, largeur: 75 },
-          { texte: 'Montant', x: 390, largeur: 75, aligner: 'right' },
-          { texte: 'Solde cumulé', x: 470, largeur: 80, aligner: 'right' },
+          { texte: 'Date', x: 54, largeur: 48 },
+          { texte: 'Mouvement', x: 104, largeur: 140 },
+          { texte: 'Moyen', x: 246, largeur: 60 },
+          { texte: 'Par', x: 308, largeur: 90 },
+          { texte: 'Montant', x: 400, largeur: 68, aligner: 'right' },
+          { texte: 'Solde cumulé', x: 470, largeur: 75, aligner: 'right' },
         ]
       : [
-          { texte: 'Date', x: 56, largeur: 65 },
-          { texte: 'Mouvement', x: 125, largeur: 260 },
-          { texte: 'Montant', x: 390, largeur: 75, aligner: 'right' },
-          { texte: 'Solde cumulé', x: 470, largeur: 80, aligner: 'right' },
+          { texte: 'Date', x: 54, largeur: 55 },
+          { texte: 'Mouvement', x: 111, largeur: 180 },
+          { texte: 'Par', x: 293, largeur: 100 },
+          { texte: 'Montant', x: 395, largeur: 70, aligner: 'right' },
+          { texte: 'Solde cumulé', x: 467, largeur: 78, aligner: 'right' },
         ];
 
     function entete() {
@@ -451,13 +514,15 @@ router.get('/movements/pdf', requireRole('manager', 'gerant'), async (req, res) 
         doc.fillColor(COULEURS.encre);
       }
       const date = new Date(m.date);
-      doc.fontSize(8.5).fillColor(COULEURS.muted).text(date.toLocaleDateString('fr-FR'), 56, y + 5, { width: tous ? 55 : 65 });
-      doc.fillColor(COULEURS.encre).text(texteMouvement(m), tous ? 113 : 125, y + 5, { width: tous ? 200 : 260 });
+      const auteur = m.user_name || '—';
+      doc.fontSize(8.5).fillColor(COULEURS.muted).text(date.toLocaleDateString('fr-FR'), tous ? 54 : 54, y + 5, { width: tous ? 48 : 55 });
+      doc.fillColor(COULEURS.encre).text(texteMouvement(m), tous ? 104 : 111, y + 5, { width: tous ? 140 : 180 });
       if (tous) {
-        doc.fillColor(COULEURS.muted).text(LABEL_METHODE[m.payment_method] || '—', 315, y + 5, { width: 75 });
+        doc.fillColor(COULEURS.muted).text(LABEL_METHODE[m.payment_method] || '—', 246, y + 5, { width: 60 });
       }
-      doc.fillColor(COULEURS.encre).text(`${montantSigne >= 0 ? '+' : ''}${formatMontant(montantSigne)}`, 390, y + 5, { width: 75, align: 'right' });
-      doc.text(formatMontant(solde), 470, y + 5, { width: 80, align: 'right' });
+      doc.fillColor(COULEURS.muted).text(auteur, tous ? 308 : 293, y + 5, { width: tous ? 90 : 100 });
+      doc.fillColor(COULEURS.encre).text(`${montantSigne >= 0 ? '+' : ''}${formatMontant(montantSigne)}`, tous ? 400 : 395, y + 5, { width: tous ? 68 : 70, align: 'right' });
+      doc.text(formatMontant(solde), tous ? 470 : 467, y + 5, { width: tous ? 75 : 78, align: 'right' });
       y += 20;
     });
 

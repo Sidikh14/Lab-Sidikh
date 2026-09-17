@@ -162,8 +162,11 @@ export const api = {
     request('/cash/expenses', { method: 'POST', body: JSON.stringify(data) }),
   getCashExpenses: (from, to, method) =>
     request(`/cash/expenses?from=${from}&to=${to}${method ? `&method=${method}` : ''}`),
-  getCashMovements: (method, from, to) => request(`/cash/movements?method=${method}&from=${from}&to=${to}`),
-  downloadCashMovementsPdf: (method, from, to) => previewFile(`/cash/movements/pdf?method=${method}&from=${from}&to=${to}`),
+  getCashMovements: (method, from, to, cashier) =>
+    request(`/cash/movements?method=${method}&from=${from}&to=${to}${cashier && cashier !== 'tous' ? `&cashier=${cashier}` : ''}`),
+  downloadCashMovementsPdf: (method, from, to, cashier) =>
+    previewFile(`/cash/movements/pdf?method=${method}&from=${from}&to=${to}${cashier && cashier !== 'tous' ? `&cashier=${cashier}` : ''}`),
+  getCashCashiers: () => request('/cash/cashiers'),
   downloadProductsPdf: () => previewFile('/products/pdf'),
 
   getSalaries: (month) => request(`/salaries${month ? `?month=${month}` : ''}`),

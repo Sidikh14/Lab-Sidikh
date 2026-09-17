@@ -163,14 +163,16 @@ export function CaissePage() {
 
   // --- Relevés ---
   const [releveMoyen, setReleveMoyen] = useState('especes');
+  const [releveCaissier, setReleveCaissier] = useState('tous');
   const [periodeReleve, setPeriodeReleve] = useState({ from: dateAujourdHui(), to: dateAujourdHui() });
   const [mouvementsReleve, setMouvementsReleve] = useState([]);
   const [chargementReleve, setChargementReleve] = useState(false);
+  const [caissiers, setCaissiers] = useState([]);
 
   function chargerReleve() {
     setChargementReleve(true);
     api
-      .getCashMovements(releveMoyen, periodeReleve.from, periodeReleve.to)
+      .getCashMovements(releveMoyen, periodeReleve.from, periodeReleve.to, releveCaissier)
       .then(setMouvementsReleve)
       .catch((err) => setErreur(err.message))
       .finally(() => setChargementReleve(false));
@@ -178,6 +180,13 @@ export function CaissePage() {
 
   useEffect(() => {
     if (onglet === 'releves') chargerReleve();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onglet, releveCaissier]);
+
+  useEffect(() => {
+    if (onglet === 'releves' && caissiers.length === 0) {
+      api.getCashCashiers().then(setCaissiers).catch((err) => setErreur(err.message));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onglet]);
 
@@ -404,6 +413,15 @@ export function CaissePage() {
               </select>
             </div>
             <div className="champ-groupe" style={{ marginBottom: 0 }}>
+              <label className="etiquette" htmlFor="r-caissier">Par caissier</label>
+              <select id="r-caissier" className="champ" value={releveCaissier} onChange={(e) => setReleveCaissier(e.target.value)}>
+                <option value="tous">Tous les membres</option>
+                {caissiers.map((c) => (
+                  <option key={c.id} value={c.id}>{c.full_name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="champ-groupe" style={{ marginBottom: 0 }}>
               <label className="etiquette" htmlFor="rp-debut">Du</label>
               <input id="rp-debut" type="date" className="champ" value={periodeReleve.from} onChange={(e) => setPeriodeReleve({ ...periodeReleve, from: e.target.value })} />
             </div>
@@ -417,7 +435,7 @@ export function CaissePage() {
             <button
               className="btn"
               style={{ alignSelf: 'flex-end' }}
-              onClick={() => api.downloadCashMovementsPdf(releveMoyen, periodeReleve.from, periodeReleve.to).catch((err) => setErreur(err.message))}
+              onClick={() => api.downloadCashMovementsPdf(releveMoyen, periodeReleve.from, periodeReleve.to, releveCaissier).catch((err) => setErreur(err.message))}
             >
               Exporter PDF
             </button>
@@ -434,6 +452,7 @@ export function CaissePage() {
                   <th>Date</th>
                   <th>Mouvement</th>
                   {releveMoyen === 'tous' && <th>Moyen</th>}
+                  <th>Par</th>
                   <th>Montant</th>
                 </tr>
               </thead>
@@ -456,6 +475,7 @@ export function CaissePage() {
                       {releveMoyen === 'tous' && (
                         <td>{MOYENS_PAIEMENT.find((mp) => mp.value === m.payment_method)?.label || m.payment_method || '—'}</td>
                       )}
+                      <td>{m.user_name || '—'}</td>
                       <td className="chiffre" style={{ color: montantSigne < 0 ? 'var(--danger, #b3423a)' : undefined }}>
                         {montantSigne >= 0 ? '+' : ''}{Math.round(montantSigne).toLocaleString('fr-FR')} FCFA
                       </td>
