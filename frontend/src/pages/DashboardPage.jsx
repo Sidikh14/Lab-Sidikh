@@ -97,6 +97,8 @@ export function DashboardPage() {
   const [commandeAEncaisser, setCommandeAEncaisser] = useState(null);
   const [demandesCredit, setDemandesCredit] = useState([]);
   const [chiffreAffaires, setChiffreAffaires] = useState(null);
+  const [alerteSalaires, setAlerteSalaires] = useState(null);
+  const estManager = user.role === 'manager';
 
   function charger() {
     setChargement(true);
@@ -112,6 +114,9 @@ export function DashboardPage() {
     if (vueEquipe) {
       api.getCreditRequests('en_attente').then(setDemandesCredit).catch((err) => setErreur(err.message));
       api.getRevenue().then(setChiffreAffaires).catch((err) => setErreur(err.message));
+    }
+    if (estManager) {
+      api.getSalaryAlert().then(setAlerteSalaires).catch((err) => setErreur(err.message));
     }
   }
 
@@ -362,6 +367,13 @@ export function DashboardPage() {
           </>
         ) : (
           <>
+            {estManager && alerteSalaires?.show && (
+              <div className="erreur" style={{ marginBottom: 20, cursor: 'pointer' }} onClick={() => navigate('/salaires')}>
+                Salaires de {formatMois(alerteSalaires.month)} non versés pour {alerteSalaires.unpaid.length} employé{alerteSalaires.unpaid.length > 1 ? 's' : ''} :{' '}
+                {alerteSalaires.unpaid.map((u) => u.name).join(', ')}. Cliquez pour régler.
+              </div>
+            )}
+
             <div className="ligne-stats">
               <div className="stat">
                 <span className="stat-icone"><IconValeur /></span>

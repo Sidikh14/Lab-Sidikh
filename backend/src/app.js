@@ -19,6 +19,7 @@ const alertsRoutes = require('./routes/alerts.routes');
 const pushRoutes = require('./routes/push.routes');
 const merchantRoutes = require('./routes/merchant.routes');
 const adminRoutes = require('./routes/admin.routes');
+const salariesRoutes = require('./routes/salaries.routes');
 
 const app = express();
 
@@ -55,6 +56,7 @@ app.use('/alerts', alertsRoutes);
 app.use('/push', pushRoutes);
 app.use('/merchant', merchantRoutes);
 app.use('/admin', adminRoutes);
+app.use('/salaries', salariesRoutes);
 
 // Gestion des routes inconnues
 app.use((req, res) => {

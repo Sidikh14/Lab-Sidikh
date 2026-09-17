@@ -93,6 +93,16 @@ function IconEntreprise() {
   );
 }
 
+function IconSalaires() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <rect x="3" y="5" width="18" height="14" rx="1.5" />
+      <circle cx="12" cy="12" r="3" />
+      <path d="M6 5v14M18 5v14" />
+    </svg>
+  );
+}
+
 const TOUS_LES_LIENS = [
   { to: '/stock', label: 'Produits', icone: IconStock, module: 'stock' },
   { to: '/ventes', label: 'Ventes', icone: IconVentes, module: 'ventes' },
@@ -181,6 +191,14 @@ export function Sidebar({ ouvert = false, onFermer }) {
             <NavLink to="/entreprise" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
               <IconEntreprise />
               Entreprise
+            </NavLink>
+          </li>
+        )}
+        {estManager && (
+          <li>
+            <NavLink to="/salaires" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
+              <IconSalaires />
+              Salaires
             </NavLink>
           </li>
         )}

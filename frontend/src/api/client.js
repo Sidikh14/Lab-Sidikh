@@ -166,6 +166,13 @@ export const api = {
   downloadCashMovementsPdf: (method, from, to) => previewFile(`/cash/movements/pdf?method=${method}&from=${from}&to=${to}`),
   downloadProductsPdf: () => previewFile('/products/pdf'),
 
+  getSalaries: (month) => request(`/salaries${month ? `?month=${month}` : ''}`),
+  setSalary: (userId, data) =>
+    request(`/salaries/${userId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  paySalary: (userId, data) =>
+    request(`/salaries/${userId}/pay`, { method: 'POST', body: JSON.stringify(data) }),
+  getSalaryAlert: () => request('/salaries/alert'),
+
   getInventorySessions: () => request('/inventory-sessions'),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),
   createInventorySession: () => request('/inventory-sessions', { method: 'POST' }),
