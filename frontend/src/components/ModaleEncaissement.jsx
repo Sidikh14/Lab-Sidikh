@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import { useOfflineSync } from '../offline/useOfflineSync';
 
 const MOYENS_PAIEMENT = [
@@ -9,6 +10,13 @@ const MOYENS_PAIEMENT = [
   { value: 'cheque', label: 'Chèque' },
   { value: 'virement', label: 'Virement' },
   { value: 'a_credit', label: 'À crédit' },
+];
+
+const TYPES_REDUCTION = [
+  { value: 'remise', label: 'Remise' },
+  { value: 'rabais', label: 'Rabais' },
+  { value: 'ristourne', label: 'Ristourne' },
+  { value: 'escompte', label: 'Escompte' },
 ];
 
 // Détail en lecture seule de la facture : le caissier voit exactement ce
@@ -33,6 +41,7 @@ function DetailFacture({ commande }) {
 }
 
 export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned }) {
+  const { user } = useAuth();
   const { isOnline, recordPayment } = useOfflineSync(api);
   const [moyenPaiement, setMoyenPaiement] = useState('especes');
   const [montantRecu, setMontantRecu] = useState(String(commande.total_amount));
@@ -48,11 +57,25 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
   const [prevoirLivraison, setPrevoirLivraison] = useState(false);
   const [fraisLivraison, setFraisLivraison] = useState('');
   const [adresseLivraison, setAdresseLivraison] = useState(commande.client_address || '');
+  const [reductionActive, setReductionActive] = useState(false);
+  const [typeReduction, setTypeReduction] = useState('remise');
+  const [modeReduction, setModeReduction] = useState('pourcentage');
+  const [valeurReduction, setValeurReduction] = useState('');
 
+  const estManager = user?.role === 'manager';
   const estClientDePassage = !commande.client_id;
   const estACredit = moyenPaiement === 'a_credit';
   const fraisLivraisonNombre = prevoirLivraison ? Number(fraisLivraison || 0) : 0;
-  const totalAPayer = Number(commande.total_amount) + fraisLivraisonNombre;
+  const montantReduction =
+    estManager && reductionActive && valeurReduction
+      ? Math.min(
+          modeReduction === 'pourcentage'
+            ? Math.round(Number(commande.total_amount) * (Number(valeurReduction) / 100))
+            : Math.round(Number(valeurReduction)),
+          Number(commande.total_amount)
+        )
+      : 0;
+  const totalAPayer = Number(commande.total_amount) - montantReduction + fraisLivraisonNombre;
   const monnaieARendre = Math.max(0, Number(montantRecu || 0) - totalAPayer);
 
   async function handleEncaisser(e) {
@@ -69,6 +92,16 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
       setErreur("L'adresse de livraison est requise.");
       return;
     }
+    if (estManager && reductionActive) {
+      if (!valeurReduction || Number(valeurReduction) <= 0) {
+        setErreur('Valeur de réduction invalide.');
+        return;
+      }
+      if (modeReduction === 'pourcentage' && Number(valeurReduction) > 100) {
+        setErreur('Le pourcentage de réduction ne peut pas dépasser 100.');
+        return;
+      }
+    }
     if (!estACredit && Number(montantRecu) < totalAPayer) {
       setErreur('Le montant reçu est inférieur au total à payer.');
       return;
@@ -82,6 +115,9 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
         needsDelivery: prevoirLivraison,
         deliveryFee: fraisLivraisonNombre,
         deliveryAddress: prevoirLivraison ? adresseLivraison.trim() : '',
+        ...(estManager && reductionActive
+          ? { discountType: typeReduction, discountMode: modeReduction, discountValue: Number(valeurReduction) }
+          : {}),
       });
       if (resultat?.offline) {
         // Pas de réseau : l'encaissement est en file d'attente, on ne peut
@@ -287,6 +323,12 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
               <span className="chiffre">{Math.round(fraisLivraisonNombre).toLocaleString('fr-FR')}</span>
             </div>
           )}
+          {montantReduction > 0 && (
+            <div className="ticket-total-ligne">
+              <span>{TYPES_REDUCTION.find((t) => t.value === typeReduction)?.label}</span>
+              <span className="chiffre">- {Math.round(montantReduction).toLocaleString('fr-FR')}</span>
+            </div>
+          )}
           <div className="ticket-total-ligne ticket-total-ligne--principal">
             <span>Total à payer</span>
             <span className="chiffre">{Math.round(totalAPayer).toLocaleString('fr-FR')} FCFA</span>
@@ -369,6 +411,63 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
                 Monnaie à rendre : <strong className="chiffre">{Math.round(monnaieARendre).toLocaleString('fr-FR')} FCFA</strong>
               </div>
             </>
+          )}
+
+          {estManager && (
+            <div
+              className="champ-groupe"
+              style={{
+                background: 'var(--fond)', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)',
+                padding: '10px 14px', marginBottom: 12,
+              }}
+            >
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, marginBottom: reductionActive ? 10 : 0, cursor: 'pointer' }}>
+                <input type="checkbox" checked={reductionActive} onChange={(e) => setReductionActive(e.target.checked)} />
+                Réduction commerciale
+              </label>
+              {reductionActive && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 120px' }}>
+                    <label className="etiquette" htmlFor="e-type-reduction">Type</label>
+                    <select
+                      id="e-type-reduction"
+                      className="champ"
+                      value={typeReduction}
+                      onChange={(e) => setTypeReduction(e.target.value)}
+                    >
+                      {TYPES_REDUCTION.map((t) => (
+                        <option key={t.value} value={t.value}>{t.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ flex: '1 1 100px' }}>
+                    <label className="etiquette" htmlFor="e-mode-reduction">Mode</label>
+                    <select
+                      id="e-mode-reduction"
+                      className="champ"
+                      value={modeReduction}
+                      onChange={(e) => setModeReduction(e.target.value)}
+                    >
+                      <option value="pourcentage">%</option>
+                      <option value="montant">FCFA</option>
+                    </select>
+                  </div>
+                  <div style={{ flex: '1 1 100px' }}>
+                    <label className="etiquette" htmlFor="e-valeur-reduction">Valeur</label>
+                    <input
+                      id="e-valeur-reduction"
+                      type="number"
+                      min="0"
+                      max={modeReduction === 'pourcentage' ? 100 : undefined}
+                      className="champ"
+                      placeholder={modeReduction === 'pourcentage' ? 'Ex : 10' : 'Ex : 2000'}
+                      value={valeurReduction}
+                      onChange={(e) => setValeurReduction(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           <div className="actions-modale" style={{ flexWrap: 'wrap' }}>

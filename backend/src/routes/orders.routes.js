@@ -9,6 +9,8 @@ const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessiner
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement', 'a_credit'];
+const TYPES_REDUCTION = ['remise', 'rabais', 'ristourne', 'escompte'];
+const MODES_REDUCTION = ['pourcentage', 'montant'];
 
 const router = express.Router();
 router.use(authenticate);
@@ -338,10 +340,31 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
 // Enregistre le moyen de paiement, le montant reçu, calcule la monnaie à
 // rendre, et fait passer la commande au statut "validée".
 router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res) => {
-  const { paymentMethod, amountReceived, needsDelivery, deliveryFee, deliveryAddress } = req.body;
+  const { paymentMethod, amountReceived, needsDelivery, deliveryFee, deliveryAddress, discountType, discountMode, discountValue } = req.body;
 
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
+  }
+
+  // Réduction commerciale (remise/rabais/ristourne/escompte) : réservée au
+  // manager, comme le prix personnalisé et la vente en rupture autorisée.
+  const aReduction = discountType !== undefined && discountType !== null && discountType !== '';
+  if (aReduction) {
+    if (req.user.role !== 'manager') {
+      return res.status(403).json({ error: 'Seul le manager peut appliquer une réduction commerciale.' });
+    }
+    if (!TYPES_REDUCTION.includes(discountType)) {
+      return res.status(400).json({ error: 'Type de réduction invalide.' });
+    }
+    if (!MODES_REDUCTION.includes(discountMode)) {
+      return res.status(400).json({ error: 'Mode de réduction invalide (pourcentage ou montant).' });
+    }
+    if (typeof discountValue !== 'number' || discountValue <= 0) {
+      return res.status(400).json({ error: 'Valeur de réduction invalide.' });
+    }
+    if (discountMode === 'pourcentage' && discountValue > 100) {
+      return res.status(400).json({ error: 'Le pourcentage de réduction ne peut pas dépasser 100.' });
+    }
   }
 
   const estACredit = paymentMethod === 'a_credit';
@@ -388,8 +411,19 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
       return res.status(400).json({ error: 'La vente à crédit n\'est autorisée que pour un client déjà enregistré.' });
     }
 
-    // Montant total réellement dû, frais de livraison inclus.
-    const montantDu = Number(order.total_amount) + fraisLivraison;
+    // Réduction calculée sur le total avant frais de livraison, jamais
+    // au-delà du total (le total ne peut pas devenir négatif).
+    let montantReduction = 0;
+    if (aReduction) {
+      montantReduction =
+        discountMode === 'pourcentage'
+          ? Math.round(Number(order.total_amount) * (discountValue / 100))
+          : Math.round(discountValue);
+      montantReduction = Math.min(montantReduction, Number(order.total_amount));
+    }
+
+    // Montant total réellement dû, réduction déduite et frais de livraison inclus.
+    const montantDu = Number(order.total_amount) - montantReduction + fraisLivraison;
 
     if (!estACredit && amountReceived < montantDu) {
       return res.status(400).json({ error: 'Le montant reçu est inférieur au total à payer.' });
@@ -415,13 +449,41 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
          needs_delivery = $8,
          delivery_fee = $9,
          delivery_address = $10,
-         total_amount = total_amount + $9
+         discount_type = $11,
+         discount_mode = $12,
+         discount_value = $13,
+         discount_amount = $14,
+         total_amount = total_amount + $9 - $14
          ${marqueeLivreeTouteSuite ? ', delivered_by = $4, delivered_at = now()' : ''}
        WHERE id = $5 AND merchant_id = $6
        RETURNING *`,
-      [paymentMethod, montantRecuFinal, changeGiven, req.user.id, req.params.id, req.user.merchantId, marqueeLivreeTouteSuite ? 'livree' : 'validee', aLivrer, fraisLivraison, adresseLivraison]
+      [
+        paymentMethod,
+        montantRecuFinal,
+        changeGiven,
+        req.user.id,
+        req.params.id,
+        req.user.merchantId,
+        marqueeLivreeTouteSuite ? 'livree' : 'validee',
+        aLivrer,
+        fraisLivraison,
+        adresseLivraison,
+        aReduction ? discountType : null,
+        aReduction ? discountMode : null,
+        aReduction ? discountValue : null,
+        montantReduction,
+      ]
     );
     const orderMisAJour = result.rows[0];
+
+    if (aReduction) {
+      await logActivity({
+        merchantId: req.user.merchantId,
+        userId: req.user.id,
+        action: 'order_discount',
+        description: `a appliqué une ${discountType} de ${discountMode === 'pourcentage' ? `${discountValue}%` : formatMontant(discountValue)} (${formatMontant(montantReduction)}) sur la commande ${formatOrderNumber(orderMisAJour)}`,
+      });
+    }
 
     if (marqueeLivreeTouteSuite) {
       await logActivity({
@@ -1171,6 +1233,11 @@ function genererFactureA4(res, order, creditInfo) {
 
   ligneTotal('Sous total :', order.subtotal_amount);
   if (order.tva_applicable) ligneTotal(`TVA (${TVA_RATE}%) :`, order.tva_amount);
+  if (order.discount_type && Number(order.discount_amount) > 0) {
+    const labelReduction = { remise: 'Remise', rabais: 'Rabais', ristourne: 'Ristourne', escompte: 'Escompte' }[order.discount_type] || 'Réduction';
+    const detailReduction = order.discount_mode === 'pourcentage' ? ` (${order.discount_value}%)` : '';
+    ligneTotal(`${labelReduction}${detailReduction} :`, -Math.round(Number(order.discount_amount)), { discret: true });
+  }
   if (order.needs_delivery && Number(order.delivery_fee) > 0) {
     ligneTotal('Frais de livraison :', order.delivery_fee);
   }
