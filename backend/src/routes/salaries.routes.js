@@ -1,13 +1,18 @@
 const express = require('express');
+const pool = require('../config/db');
+const { authenticate } = require('../middleware/auth');
+const { requireRole } = require('../middleware/roles');
+const { logActivity } = require('../utils/activityLog');
+const { broadcast } = require('../utils/eventsBus');
+
 const router = express.Router();
-const pool = require('../db');
-const { requireAuth, requireRole } = require('../middleware/auth');
-const { logActivity } = require('../services/activity.service'); // adapter au nom réel de ton service
-const { broadcast } = require('../sse'); // adapter au nom réel de ton module SSE
+router.use(authenticate);
+router.use(requireRole('manager'));
 
-router.use(requireAuth, requireRole('manager'));
+const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'virement'];
+const LABEL_METHODE = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', virement: 'Virement' };
 
-function currentMonth() {
+function moisActuel() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -15,7 +20,7 @@ function currentMonth() {
 // GET /salaries - liste des employés + salaire configuré + statut du mois en cours
 router.get('/', async (req, res) => {
   try {
-    const month = req.query.month || currentMonth();
+    const month = req.query.month || moisActuel();
     const { rows } = await pool.query(
       `SELECT u.id, u.name, u.role,
               es.monthly_salary, es.payment_method,
@@ -41,7 +46,7 @@ router.put('/:userId', async (req, res) => {
     if (!monthlySalary || monthlySalary <= 0) {
       return res.status(400).json({ error: 'Montant invalide' });
     }
-    if (!['espece', 'virement', 'wave', 'orange_money'].includes(paymentMethod)) {
+    if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
       return res.status(400).json({ error: 'Méthode de paiement invalide' });
     }
     await pool.query(
@@ -63,10 +68,10 @@ router.post('/:userId/pay', async (req, res) => {
   try {
     const { userId } = req.params;
     const { month, amount, paymentMethod } = req.body;
-    const targetMonth = month || currentMonth();
+    const targetMonth = month || moisActuel();
 
     if (!amount || amount <= 0) return res.status(400).json({ error: 'Montant invalide' });
-    if (!['espece', 'virement', 'wave', 'orange_money'].includes(paymentMethod)) {
+    if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
       return res.status(400).json({ error: 'Méthode de paiement invalide' });
     }
 
@@ -87,14 +92,15 @@ router.post('/:userId/pay', async (req, res) => {
     // Débit caisse seulement si espèces / wave / orange money (pas pour virement)
     if (paymentMethod !== 'virement') {
       await client.query(
-        `INSERT INTO cash_expenses (merchant_id, amount, payment_method, description, created_by)
-         VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
         [
           req.user.merchantId,
-          amount,
-          paymentMethod,
-          `Salaire ${employeeName} - ${targetMonth}`,
           req.user.id,
+          paymentMethod,
+          amount,
+          `Salaire ${employeeName} - ${targetMonth}`,
+          new Date().toISOString().slice(0, 10),
         ]
       );
     }
@@ -104,8 +110,8 @@ router.post('/:userId/pay', async (req, res) => {
     await logActivity({
       merchantId: req.user.merchantId,
       userId: req.user.id,
-      type: 'salary_payment',
-      description: `Salaire versé à ${employeeName} (${targetMonth}) - ${amount} FCFA via ${paymentMethod}`,
+      action: 'salary_payment',
+      description: `a versé le salaire de ${employeeName} (${targetMonth}) - ${Math.round(Number(amount)).toLocaleString('fr-FR')} FCFA via ${LABEL_METHODE[paymentMethod]}`,
     });
 
     broadcast(req.user.merchantId, 'activity:created', {});
@@ -126,7 +132,7 @@ router.get('/alert', async (req, res) => {
     const day = new Date().getDate();
     if (day < 1 || day > 5) return res.json({ show: false, unpaid: [] });
 
-    const month = currentMonth();
+    const month = moisActuel();
     const { rows } = await pool.query(
       `SELECT u.id, u.name
        FROM users u

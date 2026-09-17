@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 
 const METHODES = [
-  { value: 'espece', label: 'Espèces' },
+  { value: 'especes', label: 'Espèces' },
   { value: 'virement', label: 'Virement bancaire' },
   { value: 'wave', label: 'Wave' },
   { value: 'orange_money', label: 'Orange Money' },
@@ -31,11 +31,11 @@ export function SalariesPage() {
 
   const [employeConfig, setEmployeConfig] = useState(null);
   const [salaireSaisi, setSalaireSaisi] = useState('');
-  const [methodeSaisie, setMethodeSaisie] = useState('espece');
+  const [methodeSaisie, setMethodeSaisie] = useState('especes');
 
   const [employePaiement, setEmployePaiement] = useState(null);
   const [montantPaiement, setMontantPaiement] = useState('');
-  const [methodePaiement, setMethodePaiement] = useState('espece');
+  const [methodePaiement, setMethodePaiement] = useState('especes');
   const [envoiEnCours, setEnvoiEnCours] = useState(false);
 
   function charger() {
@@ -53,7 +53,7 @@ export function SalariesPage() {
   function ouvrirConfig(emp) {
     setEmployeConfig(emp);
     setSalaireSaisi(emp.monthly_salary || '');
-    setMethodeSaisie(emp.payment_method || 'espece');
+    setMethodeSaisie(emp.payment_method || 'especes');
   }
 
   async function enregistrerConfig(e) {
@@ -80,7 +80,7 @@ export function SalariesPage() {
   function ouvrirPaiement(emp) {
     setEmployePaiement(emp);
     setMontantPaiement(emp.monthly_salary || '');
-    setMethodePaiement(emp.payment_method || 'espece');
+    setMethodePaiement(emp.payment_method || 'especes');
   }
 
   async function confirmerPaiement(e) {
