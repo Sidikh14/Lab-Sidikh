@@ -495,14 +495,6 @@ export function StockPage() {
                         <IconModifier />
                         Modifier
                       </button>
-                      <button
-                        className="btn"
-                        style={{ flex: 1, justifyContent: 'center', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                        onClick={() => imprimerEtiquetteUnique(p)}
-                      >
-                        <IconImprimante />
-                        Étiquette
-                      </button>
                     </div>
                   )}
                 </div>

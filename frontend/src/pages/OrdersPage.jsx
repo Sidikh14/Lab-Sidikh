@@ -64,7 +64,11 @@ function ModaleScanCamera({ onDetect, onClose }) {
       // L'API native du navigateur (BarcodeDetector), utilisée par défaut sur
       // certains appareils, ne sait souvent lire que les QR codes : on force
       // le décodeur ZXing intégré à la librairie, bien plus fiable sur les
-      // codes-barres 1D comme le CODE_128 de nos étiquettes.
+      // codes-barres 1D comme le CODE_128 de nos étiquettes. Ce réglage est à
+      // la racine de la config (pas dans experimentalFeatures, qui est
+      // l'ancien emplacement — le garder aussi ne coûte rien pour les
+      // versions plus anciennes de la librairie).
+      useBarCodeDetectorIfSupported: false,
       experimentalFeatures: { useBarCodeDetectorIfSupported: false },
       verbose: false,
     });
@@ -74,7 +78,10 @@ function ModaleScanCamera({ onDetect, onClose }) {
     instance
       .start(
         { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 280, height: 160 }, disableFlip: false },
+        { fps: 10, qrbox: (largeurVue, hauteurVue) => {
+            const cote = Math.floor(Math.min(largeurVue, hauteurVue) * 0.7);
+            return { width: cote, height: Math.floor(cote * 0.6) };
+          }, disableFlip: false },
         (texteDecode) => {
           if (dejaDetecte) return;
           dejaDetecte = true;
