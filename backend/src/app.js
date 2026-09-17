@@ -18,6 +18,7 @@ const eventsRoutes = require('./routes/events.routes');
 const alertsRoutes = require('./routes/alerts.routes');
 const pushRoutes = require('./routes/push.routes');
 const merchantRoutes = require('./routes/merchant.routes');
+const adminRoutes = require('./routes/admin.routes');
 
 const app = express();
 
@@ -53,6 +54,7 @@ app.use('/events', eventsRoutes);
 app.use('/alerts', alertsRoutes);
 app.use('/push', pushRoutes);
 app.use('/merchant', merchantRoutes);
+app.use('/admin', adminRoutes);
 
 // Gestion des routes inconnues
 app.use((req, res) => {

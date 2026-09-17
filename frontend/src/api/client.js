@@ -141,6 +141,18 @@ export const api = {
   updateMerchantProfile: (data) =>
     request('/merchant/profile', { method: 'PATCH', body: JSON.stringify(data) }),
 
+  // Réservé au rôle owner (propriétaire de la plateforme).
+  getAdminMerchants: () => request('/admin/merchants'),
+  setMerchantStatus: (id, isActive) =>
+    request(`/admin/merchants/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
+  setMerchantLimit: (id, maxTeamMembers) =>
+    request(`/admin/merchants/${id}/limit`, { method: 'PATCH', body: JSON.stringify({ maxTeamMembers }) }),
+  deleteMerchant: (id) => request(`/admin/merchants/${id}`, { method: 'DELETE' }),
+  getMerchantTeam: (id) => request(`/admin/merchants/${id}/users`),
+  setAdminUserStatus: (id, isActive) =>
+    request(`/admin/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
+  deleteAdminUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
+
   getCashSummary: (date) => request(`/cash/summary${date ? `?date=${date}` : ''}`),
   getCashBalances: () => request('/cash/balances'),
   createCashClosing: (data) =>

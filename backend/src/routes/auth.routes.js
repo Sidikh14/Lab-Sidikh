@@ -66,6 +66,37 @@ router.post('/register', requireAdminKey, async (req, res) => {
   }
 });
 
+// POST /auth/create-owner
+// Crée VOTRE compte propriétaire de la plateforme (rôle "owner"), rattaché
+// à aucun commerçant. Protégé par la même clé secrète (X-Admin-Key) que
+// /register — à utiliser une seule fois pour créer votre propre accès à la
+// page d'administration, puis vous connectez ensuite avec /auth/login
+// comme n'importe quel utilisateur.
+router.post('/create-owner', requireAdminKey, async (req, res) => {
+  const { fullName, email, password } = req.body;
+
+  if (!fullName || !email || !password) {
+    return res.status(400).json({ error: 'Champs requis manquants.' });
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(password, 10);
+    const result = await pool.query(
+      `INSERT INTO users (merchant_id, full_name, email, password_hash, role)
+       VALUES (NULL, $1, $2, $3, 'owner')
+       RETURNING id, full_name, email, role`,
+      [fullName, email, passwordHash]
+    );
+    res.status(201).json({ message: 'Compte propriétaire créé avec succès.', user: result.rows[0] });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'Cet email est déjà utilisé.' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la création du compte propriétaire.' });
+  }
+});
+
 // POST /auth/login
 // Renvoie aussi le nom du commerce, pour l'afficher dans l'interface.
 router.post('/login', async (req, res) => {
@@ -78,9 +109,9 @@ router.post('/login', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.merchant_id, u.full_name, u.email, u.password_hash, u.role, u.is_active,
-              u.visible_modules, m.business_name, m.currency
+              u.visible_modules, m.business_name, m.currency, m.is_active AS merchant_is_active
        FROM users u
-       JOIN merchants m ON m.id = u.merchant_id
+       LEFT JOIN merchants m ON m.id = u.merchant_id
        WHERE u.email = $1`,
       [email]
     );
@@ -88,6 +119,13 @@ router.post('/login', async (req, res) => {
 
     if (!user || !user.is_active) {
       return res.status(401).json({ error: 'Identifiants incorrects.' });
+    }
+
+    // Un compte owner n'a pas de commerçant (merchant_is_active est alors
+    // null) — seul le blocage d'un commerçant par le propriétaire doit
+    // empêcher la connexion de ses employés.
+    if (user.role !== 'owner' && user.merchant_is_active === false) {
+      return res.status(403).json({ error: 'Ce commerce a été suspendu. Contactez le support.' });
     }
 
     const valid = await bcrypt.compare(password, user.password_hash);
@@ -101,7 +139,9 @@ router.post('/login', async (req, res) => {
     res.json({
       token,
       user: { id: user.id, fullName: user.full_name, email: user.email, role: user.role, visibleModules: user.visible_modules },
-      merchant: { id: user.merchant_id, businessName: user.business_name, currency: user.currency },
+      merchant: user.merchant_id
+        ? { id: user.merchant_id, businessName: user.business_name, currency: user.currency }
+        : null,
     });
   } catch (err) {
     console.error(err);

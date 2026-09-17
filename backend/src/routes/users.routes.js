@@ -52,6 +52,24 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
   }
 
   try {
+    // Plafond de comptes fixé par le propriétaire de la plateforme
+    // (merchants.max_team_members) : impossible à dépasser depuis cette
+    // route, seule la page d'administration du propriétaire peut l'augmenter.
+    const { rows: merchantRows } = await pool.query(
+      'SELECT max_team_members FROM merchants WHERE id = $1',
+      [req.user.merchantId]
+    );
+    const { rows: countRows } = await pool.query(
+      'SELECT COUNT(*)::int AS total FROM users WHERE merchant_id = $1',
+      [req.user.merchantId]
+    );
+    const plafond = merchantRows[0]?.max_team_members ?? 3;
+    if (countRows[0].total >= plafond) {
+      return res.status(403).json({
+        error: `Limite de ${plafond} comptes atteinte pour votre commerce. Contactez le propriétaire de la plateforme pour l'augmenter.`,
+      });
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await pool.query(
       `INSERT INTO users (merchant_id, full_name, email, password_hash, role)
