@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Html5Qrcode } from 'html5-qrcode';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
@@ -31,6 +32,70 @@ function IconRecherche() {
   );
 }
 
+function IconCamera() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+      <circle cx="12" cy="13" r="4" />
+    </svg>
+  );
+}
+
+// Scan par caméra (téléphone/tablette) via html5-qrcode : pas besoin de
+// douchette physique, la caméra arrière du téléphone suffit à lire
+// CODE128/EAN/QR. onDetect reçoit le texte décodé une seule fois par
+// ouverture (on arrête le flux dès la première lecture réussie).
+function ModaleScanCamera({ onDetect, onClose }) {
+  const [erreurCamera, setErreurCamera] = useState('');
+
+  useEffect(() => {
+    const instance = new Html5Qrcode('zone-scan-camera');
+    let dejaDetecte = false;
+    let demarre = false;
+
+    instance
+      .start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 260, height: 150 } },
+        (texteDecode) => {
+          if (dejaDetecte) return;
+          dejaDetecte = true;
+          onDetect(texteDecode);
+        },
+        () => {
+          // Échec de décodage sur une frame donnée : normal en continu, on ignore.
+        }
+      )
+      .then(() => { demarre = true; })
+      .catch(() => setErreurCamera("Impossible d'accéder à la caméra. Vérifie que le navigateur y est autorisé."));
+
+    return () => {
+      if (demarre) {
+        instance.stop().then(() => instance.clear()).catch(() => {});
+      } else {
+        instance.clear().catch(() => {});
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="modale-fond" onClick={onClose}>
+      <div className="modale" onClick={(e) => e.stopPropagation()}>
+        <h2>Scanner un produit</h2>
+        <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+          Vise le code-barres avec la caméra du téléphone ou de la tablette.
+        </p>
+        {erreurCamera && <div className="erreur">{erreurCamera}</div>}
+        <div id="zone-scan-camera" style={{ width: '100%', borderRadius: 'var(--rayon-petit)', overflow: 'hidden' }} />
+        <div className="actions-modale">
+          <button className="btn" onClick={onClose}>Annuler</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function IconCoche() {
   return (
     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -55,6 +120,12 @@ function cleLigne(productId, unitId) {
   return `${productId}::${unitId || 'detail'}`;
 }
 
+// Même règle que sur les étiquettes (StockPage.jsx) : SKU si renseigné,
+// sinon les 6 premiers caractères de l'id produit.
+function codeInterne(produit) {
+  return produit.sku || produit.id.slice(0, 6).toUpperCase();
+}
+
 export function OrdersPage() {
   const { user } = useAuth();
   const peutCreer = PEUT_CREER.includes(user.role);
@@ -76,6 +147,8 @@ export function OrdersPage() {
   const [venteEnCours, setVenteEnCours] = useState(false);
   const [confirmationVente, setConfirmationVente] = useState(null);
   const [choixConditionnement, setChoixConditionnement] = useState(null);
+  const [scannerCameraOuvert, setScannerCameraOuvert] = useState(false);
+  const rechercheCaisseRef = useRef(null);
 
   const [commandeAEncaisser, setCommandeAEncaisser] = useState(null);
   const [chargementDetail, setChargementDetail] = useState(false);
@@ -218,10 +291,13 @@ export function OrdersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, products]);
 
-  const produitsCaisse = useMemo(
-    () => products.filter((p) => p.name.toLowerCase().includes(rechercheCaisse.toLowerCase())),
-    [products, rechercheCaisse]
-  );
+  const produitsCaisse = useMemo(() => {
+    const recherche = rechercheCaisse.trim().toLowerCase();
+    if (!recherche) return products;
+    return products.filter(
+      (p) => p.name.toLowerCase().includes(recherche) || codeInterne(p).toLowerCase().includes(recherche)
+    );
+  }, [products, rechercheCaisse]);
 
   function demarrerAjout(produit) {
     const options = optionsDeVente(produit);
@@ -230,6 +306,40 @@ export function OrdersPage() {
     } else {
       setChoixConditionnement(produit);
     }
+  }
+
+  // Commun à la douchette (Entrée dans le champ de recherche) et au scan
+  // caméra : cherche une correspondance exacte sur le SKU/code interne et
+  // ajoute directement le produit au panier.
+  function traiterCodeScanne(code) {
+    const valeur = code.trim().toLowerCase();
+    if (!valeur) return;
+    const produit = products.find(
+      (p) => codeInterne(p).toLowerCase() === valeur || (p.sku && p.sku.toLowerCase() === valeur)
+    );
+    if (!produit) {
+      setErreur(`Aucun produit ne correspond au code "${code.trim()}".`);
+      return;
+    }
+    if (produit.quantity_in_stock <= 0) {
+      setErreur(`${produit.name} est en rupture de stock.`);
+      return;
+    }
+    setErreur('');
+    demarrerAjout(produit);
+  }
+
+  function handleRechercheCaisseKeyDown(e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (!rechercheCaisse.trim()) return;
+    traiterCodeScanne(rechercheCaisse);
+    setRechercheCaisse('');
+  }
+
+  function handleCodeDetecteParCamera(code) {
+    setScannerCameraOuvert(false);
+    traiterCodeScanne(code);
   }
 
   function ajouterAuPanier(produit, option) {
@@ -366,15 +476,28 @@ export function OrdersPage() {
       {onglet === 'caisse' && peutCreer && (
         <div className="mise-en-page-caisse">
           <div className="caisse-produits">
-            <div className="champ-avec-icone" style={{ marginBottom: 16 }}>
-              <span className="champ-icone"><IconRecherche /></span>
-              <input
-                type="text"
-                className="champ champ--avec-icone"
-                placeholder="Rechercher ou scanner un produit…"
-                value={rechercheCaisse}
-                onChange={(e) => setRechercheCaisse(e.target.value)}
-              />
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+              <div className="champ-avec-icone" style={{ marginBottom: 0, flex: 1 }}>
+                <span className="champ-icone"><IconRecherche /></span>
+                <input
+                  ref={rechercheCaisseRef}
+                  type="text"
+                  className="champ champ--avec-icone"
+                  placeholder="Rechercher ou scanner un produit…"
+                  value={rechercheCaisse}
+                  onChange={(e) => setRechercheCaisse(e.target.value)}
+                  onKeyDown={handleRechercheCaisseKeyDown}
+                />
+              </div>
+              <button
+                type="button"
+                className="btn"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+                onClick={() => setScannerCameraOuvert(true)}
+              >
+                <IconCamera />
+                Scanner
+              </button>
             </div>
             <div className="grille-caisse">
               {produitsCaisse.map((p) => (
@@ -596,6 +719,10 @@ export function OrdersPage() {
             </table>
           )}
         </>
+      )}
+
+      {scannerCameraOuvert && (
+        <ModaleScanCamera onDetect={handleCodeDetecteParCamera} onClose={() => setScannerCameraOuvert(false)} />
       )}
 
       {choixConditionnement && (
