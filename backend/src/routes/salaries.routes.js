@@ -22,14 +22,14 @@ router.get('/', async (req, res) => {
   try {
     const month = req.query.month || moisActuel();
     const { rows } = await pool.query(
-      `SELECT u.id, u.name, u.role,
+      `SELECT u.id, u.full_name AS name, u.role,
               es.monthly_salary, es.payment_method,
               sp.amount AS paid_amount, sp.payment_method AS paid_method, sp.paid_at
        FROM users u
        LEFT JOIN employee_salaries es ON es.user_id = u.id
        LEFT JOIN salary_payments sp ON sp.user_id = u.id AND sp.month = $2
        WHERE u.merchant_id = $1 AND u.is_active = true AND u.role != 'manager' AND u.role != 'owner'
-       ORDER BY u.name`,
+       ORDER BY u.full_name`,
       [req.user.merchantId, month]
     );
     res.json({ month, employees: rows });
@@ -77,7 +77,7 @@ router.post('/:userId/pay', async (req, res) => {
 
     await client.query('BEGIN');
 
-    const employee = await client.query('SELECT name FROM users WHERE id = $1', [userId]);
+    const employee = await client.query('SELECT full_name AS name FROM users WHERE id = $1', [userId]);
     if (employee.rows.length === 0) throw new Error('Employé introuvable');
     const employeeName = employee.rows[0].name;
 
@@ -134,7 +134,7 @@ router.get('/alert', async (req, res) => {
 
     const month = moisActuel();
     const { rows } = await pool.query(
-      `SELECT u.id, u.name
+      `SELECT u.id, u.full_name AS name
        FROM users u
        JOIN employee_salaries es ON es.user_id = u.id
        LEFT JOIN salary_payments sp ON sp.user_id = u.id AND sp.month = $2
