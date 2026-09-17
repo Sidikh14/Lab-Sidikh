@@ -13,7 +13,7 @@ webpush.setVapidDetails(
   process.env.VAPID_PRIVATE_KEY
 );
 
-async function creerAlerte({ merchantId, type, titre, message, montant = null, referenceId = null }) {
+async function creerAlerte({ merchantId, type, titre, message, montant = null, referenceId = null, roles = ['manager', 'gerant'] }) {
   const { rows } = await pool.query(
     `INSERT INTO alerts (merchant_id, type, titre, message, montant, reference_id)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
@@ -26,8 +26,8 @@ async function creerAlerte({ merchantId, type, titre, message, montant = null, r
   const { rows: destinataires } = await pool.query(
     `SELECT id, email, alertes_push_actif, alertes_email_actif
      FROM users
-     WHERE merchant_id = $1 AND role IN ('manager', 'gerant') AND actif = true`,
-    [merchantId]
+     WHERE merchant_id = $1 AND role::text = ANY($2) AND actif = true`,
+    [merchantId, roles]
   );
 
   await Promise.all(destinataires.map(async (u) => {

@@ -4,6 +4,7 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
+const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
 
 const router = express.Router();
@@ -252,6 +253,14 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
         action: 'product_price_updated',
         description: `a changé le prix de ${nomProduit} : ${Math.round(ancienPrix).toLocaleString('fr-FR')} → ${Math.round(Number(unitPrice)).toLocaleString('fr-FR')} FCFA`,
       });
+      const nomAuteur = await getNomUtilisateur(req.user.id);
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'prix_modifie',
+        titre: 'Prix produit modifié',
+        message: `${nomAuteur || 'Un membre de l\'équipe'} a changé le prix de ${nomProduit} : ${formatMontant(ancienPrix)} → ${formatMontant(Number(unitPrice))} FCFA.`,
+        referenceId: req.params.id,
+      }).catch((err) => console.error('Erreur alerte prix_modifie :', err));
     } else if (name !== undefined || sku !== undefined || quantityAlertThreshold !== undefined) {
       await logActivity({
         merchantId: req.user.merchantId,
@@ -315,7 +324,7 @@ router.post('/:id/stock-movement', async (req, res) => {
     await client.query('BEGIN');
 
     const productResult = await client.query(
-      `SELECT id, name, quantity_in_stock FROM products
+      `SELECT id, name, quantity_in_stock, quantity_alert_threshold FROM products
        WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
       [req.params.id, req.user.merchantId]
     );
@@ -369,6 +378,23 @@ router.post('/:id/stock-movement', async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    // Alerte rupture / seuil bas : seulement quand le mouvement fait
+    // passer le produit sous le seuil (pas à chaque mouvement s'il y
+    // était déjà, pour éviter de spammer à chaque petite sortie).
+    const etaitDejaBas = product.quantity_in_stock <= product.quantity_alert_threshold;
+    if (!etaitDejaBas && newQuantity <= product.quantity_alert_threshold) {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: newQuantity === 0 ? 'rupture_stock' : 'seuil_stock',
+        titre: newQuantity === 0 ? 'Rupture de stock' : 'Stock sous le seuil d\'alerte',
+        message: newQuantity === 0
+          ? `${product.name} est en rupture de stock.`
+          : `${product.name} est passé sous le seuil d'alerte (${newQuantity} restant(s)).`,
+        referenceId: product.id,
+      }).catch((err) => console.error('Erreur alerte stock :', err));
+    }
+
     res.json({ productId: product.id, quantityInStock: newQuantity });
   } catch (err) {
     await client.query('ROLLBACK');

@@ -5,6 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
+const { creerAlerte, getSeuilVenteElevee, getNomUtilisateur } = require('../services/alerts.service');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerPiedDePage, traitSeparateur, enregistrerPolices } = require('../utils/pdfHelpers');
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
@@ -311,6 +312,23 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
     // Diffusion en temps réel : la caisse (OrdersPage.jsx côté caissier)
     // n'a pas besoin d'actualiser la page pour voir apparaître cette vente.
     broadcast(req.user.merchantId, 'order:created', orderComplet);
+
+    // Notification push/e-mail aux caissiers : seulement quand c'est un
+    // vendeur qui vient de créer la vente (pas le manager/gérant qui
+    // encaisse parfois directement lui-même).
+    if (req.user.role === 'vendeur') {
+      const nomVendeur = await getNomUtilisateur(req.user.id);
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'nouvelle_vente',
+        titre: 'Nouvelle vente à encaisser',
+        message: `${nomVendeur || 'Un vendeur'} a créé la commande ${orderComplet.order_number} (${formatMontant(totalAmount)} FCFA).`,
+        montant: totalAmount,
+        referenceId: order.id,
+        roles: ['caissier'],
+      }).catch((err) => console.error('Erreur alerte nouvelle_vente :', err));
+    }
+
     res.status(201).json(orderComplet);
   } catch (err) {
     await client.query('ROLLBACK');
@@ -510,6 +528,22 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
       });
     }
 
+    // Alerte "vente élevée" (seuil configurable par commerçant, 500 000 FCFA par défaut).
+    getSeuilVenteElevee(req.user.merchantId)
+      .then((seuil) => {
+        if (Number(orderMisAJour.total_amount) >= seuil) {
+          return creerAlerte({
+            merchantId: req.user.merchantId,
+            type: 'vente_elevee',
+            titre: 'Vente importante encaissée',
+            message: `Commande ${formatOrderNumber(orderMisAJour)} encaissée pour ${formatMontant(orderMisAJour.total_amount)} FCFA.`,
+            montant: orderMisAJour.total_amount,
+            referenceId: orderMisAJour.id,
+          });
+        }
+      })
+      .catch((err) => console.error('Erreur alerte vente_elevee :', err));
+
     res.json({ ...orderMisAJour, order_number: formatOrderNumber(orderMisAJour) });
   } catch (err) {
     console.error(err);
@@ -645,6 +679,16 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
         action: 'order_cancelled',
         description: `a annulé la commande ${formatOrderNumber(order)}`,
       });
+
+      const apresEncaissement = ['validee', 'livree'].includes(orderExistant.status);
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'commande_annulee',
+        titre: apresEncaissement ? 'Commande annulée après encaissement' : 'Commande annulée',
+        message: `La commande ${formatOrderNumber(order)} (${formatMontant(order.total_amount)} FCFA) a été annulée${apresEncaissement ? ' alors qu\'elle était déjà encaissée' : ''}.`,
+        montant: order.total_amount,
+        referenceId: order.id,
+      }).catch((err) => console.error('Erreur alerte commande_annulee :', err));
     }
 
     res.json({ ...order, order_number: formatOrderNumber(order) });

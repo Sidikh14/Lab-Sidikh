@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
+const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -80,6 +81,17 @@ router.post('/', requireRole('manager', 'caissier'), async (req, res) => {
       action: 'credit_request_created',
       description: `a demandé la création du client ${fullName} pour une vente à crédit`,
     });
+
+    if (req.user.role === 'caissier') {
+      const nomCaissier = await getNomUtilisateur(req.user.id);
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'demande_credit',
+        titre: 'Demande de vente à crédit',
+        message: `${nomCaissier || 'Un caissier'} demande la création du client ${fullName} pour une vente à crédit.`,
+        referenceId: result.rows[0].id,
+      }).catch((err) => console.error('Erreur alerte demande_credit :', err));
+    }
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
