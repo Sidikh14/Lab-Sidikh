@@ -285,12 +285,15 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
         resolved.product.id,
       ]);
 
-      // Alerte rupture / seuil bas : seulement au moment où la vente fait
-      // passer le produit sous le seuil (pas s'il y était déjà), même
-      // logique que le mouvement de stock manuel dans products.routes.js.
+      // Alerte rupture / seuil bas : au franchissement du seuil, comme le
+      // mouvement de stock manuel — mais la rupture complète (newQuantity
+      // === 0) déclenche toujours sa propre alerte, même si le seuil avait
+      // déjà été franchi avant (événement plus grave que "juste bas").
       const seuil = resolved.product.quantity_alert_threshold;
       const etaitDejaBas = resolved.product.quantity_in_stock <= seuil;
-      if (!etaitDejaBas && newQuantity <= seuil) {
+      const franchitSeuil = !etaitDejaBas && newQuantity <= seuil;
+      const entreEnRupture = newQuantity === 0 && resolved.product.quantity_in_stock > 0;
+      if (franchitSeuil || entreEnRupture) {
         alertesStock.push({ productId: resolved.product.id, productName: resolved.product.name, newQuantity });
       }
 
@@ -863,11 +866,14 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
         resolved.product.id,
       ]);
 
-      // Alerte rupture / seuil bas : même logique que la création de
-      // commande et que le mouvement de stock manuel.
+      // Alerte rupture / seuil bas : au franchissement du seuil, mais la
+      // rupture complète (newQuantity === 0) déclenche toujours sa propre
+      // alerte, même si le seuil avait déjà été franchi avant.
       const seuil = resolved.product.quantity_alert_threshold;
       const etaitDejaBas = resolved.product.quantity_in_stock <= seuil;
-      if (!etaitDejaBas && newQuantity <= seuil) {
+      const franchitSeuil = !etaitDejaBas && newQuantity <= seuil;
+      const entreEnRupture = newQuantity === 0 && resolved.product.quantity_in_stock > 0;
+      if (franchitSeuil || entreEnRupture) {
         alertesStock.push({ productId: resolved.product.id, productName: resolved.product.name, newQuantity });
       }
 

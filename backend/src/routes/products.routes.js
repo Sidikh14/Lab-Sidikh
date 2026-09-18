@@ -379,11 +379,16 @@ router.post('/:id/stock-movement', async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Alerte rupture / seuil bas : seulement quand le mouvement fait
-    // passer le produit sous le seuil (pas à chaque mouvement s'il y
-    // était déjà, pour éviter de spammer à chaque petite sortie).
+    // Alerte rupture / seuil bas : au moment où le mouvement fait passer le
+    // produit sous le seuil (pas à chaque mouvement s'il y était déjà, pour
+    // éviter de spammer à chaque petite sortie) — mais la rupture complète
+    // (newQuantity === 0) déclenche toujours sa propre alerte, même si le
+    // seuil avait déjà été franchi avant, car c'est un événement plus grave
+    // que "juste bas".
     const etaitDejaBas = product.quantity_in_stock <= product.quantity_alert_threshold;
-    if (!etaitDejaBas && newQuantity <= product.quantity_alert_threshold) {
+    const franchitSeuil = !etaitDejaBas && newQuantity <= product.quantity_alert_threshold;
+    const entreEnRupture = newQuantity === 0 && product.quantity_in_stock > 0;
+    if (franchitSeuil || entreEnRupture) {
       creerAlerte({
         merchantId: req.user.merchantId,
         type: newQuantity === 0 ? 'rupture_stock' : 'seuil_stock',
