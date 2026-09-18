@@ -115,7 +115,7 @@ export function StockPage() {
   const [recherche, setRecherche] = useState(searchParams.get('q') || '');
   const [filtreStatut, setFiltreStatut] = useState('tous');
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5' });
+  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false });
   const [conditionnements, setConditionnements] = useState([]);
   const [modalePrixOuverte, setModalePrixOuverte] = useState(false);
   const [prixModifies, setPrixModifies] = useState({});
@@ -132,6 +132,7 @@ export function StockPage() {
     cashMethod: 'especes',
   });
   const [enregistrementEntree, setEnregistrementEntree] = useState(false);
+  const produitEntreeSelectionne = products.find((p) => p.id === entreeStock.productId);
   const [modaleFournisseurRapide, setModaleFournisseurRapide] = useState(false);
   const [nouveauFournisseurRapide, setNouveauFournisseurRapide] = useState({ name: '', phone: '' });
   const [produitEnEdition, setProduitEnEdition] = useState(null);
@@ -225,12 +226,13 @@ export function StockPage() {
         unitPrice: Number(nouveauProduit.unitPrice) || 0,
         quantityInStock: Number(nouveauProduit.quantityInStock) || 0,
         quantityAlertThreshold: Number(nouveauProduit.quantityAlertThreshold) || 5,
+        isWeighted: nouveauProduit.isWeighted,
         units: conditionnements
           .filter((c) => c.label && Number(c.price) && Number(c.quantityPerUnit))
           .map((c) => ({ label: c.label, price: Number(c.price), quantityPerUnit: Number(c.quantityPerUnit) })),
       });
       setModaleOuverte(false);
-      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5' });
+      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false });
       setConditionnements([]);
       charger();
     } catch (err) {
@@ -256,6 +258,7 @@ export function StockPage() {
       sku: product.sku || '',
       unitPrice: product.unit_price,
       quantityAlertThreshold: product.quantity_alert_threshold,
+      isWeighted: product.is_weighted,
     });
   }
 
@@ -268,6 +271,7 @@ export function StockPage() {
         sku: produitEnEdition.sku || undefined,
         unitPrice: Number(produitEnEdition.unitPrice),
         quantityAlertThreshold: Number(produitEnEdition.quantityAlertThreshold),
+        isWeighted: produitEnEdition.isWeighted,
       });
       setProduitEnEdition(null);
       charger();
@@ -590,7 +594,17 @@ export function StockPage() {
                 />
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="p-price">Prix au détail (FCFA)</label>
+                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={nouveauProduit.isWeighted}
+                    onChange={(e) => setNouveauProduit({ ...nouveauProduit, isWeighted: e.target.checked })}
+                  />
+                  Vendu au poids (prix au kg)
+                </label>
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="p-price">{nouveauProduit.isWeighted ? 'Prix au kg (FCFA)' : 'Prix au détail (FCFA)'}</label>
                 <input
                   id="p-price"
                   type="number"
@@ -600,10 +614,11 @@ export function StockPage() {
                 />
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="p-qty">Quantité initiale (unités de base)</label>
+                <label className="etiquette" htmlFor="p-qty">{nouveauProduit.isWeighted ? 'Quantité initiale (kg)' : 'Quantité initiale (unités de base)'}</label>
                 <input
                   id="p-qty"
                   type="number"
+                  step={nouveauProduit.isWeighted ? '0.001' : '1'}
                   className="champ"
                   value={nouveauProduit.quantityInStock}
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, quantityInStock: e.target.value })}
@@ -720,11 +735,14 @@ export function StockPage() {
                 </select>
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="e-qte">Quantité achetée</label>
+                <label className="etiquette" htmlFor="e-qte">
+                  Quantité achetée{produitEntreeSelectionne?.is_weighted ? ' (kg)' : ''}
+                </label>
                 <input
                   id="e-qte"
                   type="number"
-                  min="1"
+                  min={produitEntreeSelectionne?.is_weighted ? '0.001' : '1'}
+                  step={produitEntreeSelectionne?.is_weighted ? '0.001' : '1'}
                   className="champ"
                   value={entreeStock.quantity}
                   onChange={(e) => setEntreeStock({ ...entreeStock, quantity: e.target.value })}
@@ -896,7 +914,17 @@ export function StockPage() {
                 />
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="pe-price">Prix au détail (FCFA)</label>
+                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={produitEnEdition.isWeighted}
+                    onChange={(e) => setProduitEnEdition({ ...produitEnEdition, isWeighted: e.target.checked })}
+                  />
+                  Vendu au poids (prix au kg)
+                </label>
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="pe-price">{produitEnEdition.isWeighted ? 'Prix au kg (FCFA)' : 'Prix au détail (FCFA)'}</label>
                 <input
                   id="pe-price"
                   type="number"

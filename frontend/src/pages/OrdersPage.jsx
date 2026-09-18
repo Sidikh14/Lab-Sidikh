@@ -172,6 +172,8 @@ export function OrdersPage() {
   const [venteEnCours, setVenteEnCours] = useState(false);
   const [confirmationVente, setConfirmationVente] = useState(null);
   const [choixConditionnement, setChoixConditionnement] = useState(null);
+  const [saisiePoids, setSaisiePoids] = useState(null);
+  const [valeurPoids, setValeurPoids] = useState('');
   const [scannerCameraOuvert, setScannerCameraOuvert] = useState(false);
   const rechercheCaisseRef = useRef(null);
 
@@ -325,6 +327,11 @@ export function OrdersPage() {
   }, [products, rechercheCaisse]);
 
   function demarrerAjout(produit) {
+    if (produit.is_weighted) {
+      setValeurPoids('');
+      setSaisiePoids(produit);
+      return;
+    }
     const options = optionsDeVente(produit);
     if (options.length === 1) {
       ajouterAuPanier(produit, options[0]);
@@ -388,6 +395,47 @@ export function OrdersPage() {
     setPanier((prev) =>
       prev
         .map((l) => (l.productId === productId && l.unitId === unitId ? { ...l, quantity: l.quantity + delta } : l))
+        .filter((l) => l.quantity > 0)
+    );
+  }
+
+  function ajouterPeseAuPanier(produit, poids) {
+    const stockDisponible = produit.quantity_in_stock;
+    if (!(poids > 0) || poids > stockDisponible) return;
+
+    setPanier((prev) => {
+      const cle = cleLigne(produit.id, null);
+      const existant = prev.find((l) => cleLigne(l.productId, l.unitId) === cle);
+      if (existant) {
+        const nouveauPoids = Math.min(existant.quantity + poids, stockDisponible);
+        return prev.map((l) => (cleLigne(l.productId, l.unitId) === cle ? { ...l, quantity: nouveauPoids } : l));
+      }
+      return [...prev, { productId: produit.id, unitId: null, quantity: poids }];
+    });
+    setSaisiePoids(null);
+    setValeurPoids('');
+  }
+
+  function handleValiderPoids(e) {
+    e.preventDefault();
+    const poids = Number(valeurPoids);
+    if (!poids || poids <= 0) {
+      setErreur('Entrez un poids valide (ex : 0.5).');
+      return;
+    }
+    if (poids > saisiePoids.quantity_in_stock) {
+      setErreur(`Stock insuffisant : ${saisiePoids.quantity_in_stock} kg disponible(s).`);
+      return;
+    }
+    setErreur('');
+    ajouterPeseAuPanier(saisiePoids, poids);
+  }
+
+  function modifierPoidsLigne(productId, unitId, nouveauPoidsStr) {
+    const nouveauPoids = Number(nouveauPoidsStr);
+    setPanier((prev) =>
+      prev
+        .map((l) => (l.productId === productId && l.unitId === unitId ? { ...l, quantity: nouveauPoids } : l))
         .filter((l) => l.quantity > 0)
     );
   }
@@ -540,7 +588,7 @@ export function OrdersPage() {
                     <span className="tampon tampon-brique" style={{ marginTop: 4 }}>Rupture</span>
                   ) : (
                     <span className="carte-caisse-stock">
-                      {p.quantity_in_stock} en stock{p.units?.length > 0 ? ' · gros dispo' : ''}
+                      {p.quantity_in_stock}{p.is_weighted ? ' kg' : ''} en stock{p.units?.length > 0 ? ' · gros dispo' : ''}
                     </span>
                   )}
                 </button>
@@ -592,13 +640,29 @@ export function OrdersPage() {
                         {l.produit.name}
                         {l.option.label !== 'Détail' && <span style={{ color: 'var(--accent)' }}> · {l.option.label}</span>}
                       </p>
-                      <p className="ticket-ligne-prix">{Math.round(l.option.price).toLocaleString('fr-FR')} FCFA</p>
+                      <p className="ticket-ligne-prix">
+                        {Math.round(l.option.price).toLocaleString('fr-FR')} FCFA{l.produit.is_weighted ? '/kg' : ''}
+                      </p>
                     </div>
-                    <div className="ticket-ligne-qte">
-                      <button type="button" onClick={() => changerQuantite(l.productId, l.unitId, -1)}>−</button>
-                      <span>{l.quantity}</span>
-                      <button type="button" onClick={() => changerQuantite(l.productId, l.unitId, 1)}>+</button>
-                    </div>
+                    {l.produit.is_weighted ? (
+                      <div className="ticket-ligne-qte">
+                        <input
+                          type="number"
+                          min="0.001"
+                          step="0.001"
+                          value={l.quantity}
+                          onChange={(e) => modifierPoidsLigne(l.productId, l.unitId, e.target.value)}
+                          style={{ width: 64, textAlign: 'center' }}
+                        />
+                        <span style={{ fontSize: 12, color: 'var(--encre-douce)' }}>kg</span>
+                      </div>
+                    ) : (
+                      <div className="ticket-ligne-qte">
+                        <button type="button" onClick={() => changerQuantite(l.productId, l.unitId, -1)}>−</button>
+                        <span>{l.quantity}</span>
+                        <button type="button" onClick={() => changerQuantite(l.productId, l.unitId, 1)}>+</button>
+                      </div>
+                    )}
                     <button type="button" className="ticket-ligne-retirer" onClick={() => retirerDuPanier(l.productId, l.unitId)}>×</button>
                   </div>
                 ))
@@ -772,6 +836,42 @@ export function OrdersPage() {
             <div className="actions-modale">
               <button className="btn" onClick={() => setChoixConditionnement(null)}>Annuler</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {saisiePoids && (
+        <div className="modale-fond" onClick={() => setSaisiePoids(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>{saisiePoids.name}</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+              {Math.round(saisiePoids.unit_price).toLocaleString('fr-FR')} FCFA/kg · {saisiePoids.quantity_in_stock} kg en stock
+            </p>
+            <form onSubmit={handleValiderPoids}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="poids-saisi">Poids (kg)</label>
+                <input
+                  id="poids-saisi"
+                  type="number"
+                  step="0.001"
+                  min="0.001"
+                  autoFocus
+                  className="champ"
+                  placeholder="Ex : 0.5"
+                  value={valeurPoids}
+                  onChange={(e) => setValeurPoids(e.target.value)}
+                />
+              </div>
+              {Number(valeurPoids) > 0 && (
+                <p style={{ fontSize: 14, marginBottom: 12 }}>
+                  Total : <strong>{Math.round(Number(valeurPoids) * saisiePoids.unit_price).toLocaleString('fr-FR')} FCFA</strong>
+                </p>
+              )}
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={() => setSaisiePoids(null)}>Annuler</button>
+                <button type="submit" className="btn btn-principal">Ajouter</button>
+              </div>
+            </form>
           </div>
         </div>
       )}

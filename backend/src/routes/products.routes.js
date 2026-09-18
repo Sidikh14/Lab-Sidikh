@@ -4,7 +4,6 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
-const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
 
 const router = express.Router();
@@ -88,7 +87,7 @@ router.get('/', async (req, res) => {
     const result = await pool.query(
       `SELECT
          p.id, p.name, p.sku, p.unit_price, p.quantity_in_stock,
-         p.quantity_alert_threshold, c.name AS category,
+         p.quantity_alert_threshold, p.is_weighted, c.name AS category,
          CASE
            WHEN p.quantity_in_stock = 0 THEN 'rupture'
            WHEN p.quantity_in_stock <= p.quantity_alert_threshold THEN 'faible'
@@ -122,7 +121,7 @@ router.get('/', async (req, res) => {
 
 // POST /products
 router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units } = req.body;
+  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: 'Le nom du produit est requis.' });
@@ -133,8 +132,8 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
     await client.query('BEGIN');
 
     const result = await client.query(
-      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_in_stock, quantity_alert_threshold)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_in_stock, quantity_alert_threshold, is_weighted)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -144,6 +143,7 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
         unitPrice || 0,
         quantityInStock || 0,
         quantityAlertThreshold || 5,
+        Boolean(isWeighted),
       ]
     );
     const product = result.rows[0];
@@ -221,7 +221,7 @@ router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), async (req
 
 // PATCH /products/:id — journalise un changement de prix, s'il y en a un
 router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, quantityAlertThreshold } = req.body;
+  const { name, sku, categoryId, unitPrice, quantityAlertThreshold, isWeighted } = req.body;
 
   try {
     const avant = await pool.query(
@@ -240,10 +240,11 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
          sku = COALESCE($2, sku),
          category_id = COALESCE($3, category_id),
          unit_price = COALESCE($4, unit_price),
-         quantity_alert_threshold = COALESCE($5, quantity_alert_threshold)
-       WHERE id = $6 AND merchant_id = $7
+         quantity_alert_threshold = COALESCE($5, quantity_alert_threshold),
+         is_weighted = COALESCE($6, is_weighted)
+       WHERE id = $7 AND merchant_id = $8
        RETURNING *`,
-      [name, sku, categoryId, unitPrice, quantityAlertThreshold, req.params.id, req.user.merchantId]
+      [name, sku, categoryId, unitPrice, quantityAlertThreshold, isWeighted, req.params.id, req.user.merchantId]
     );
 
     if (unitPrice !== undefined && Number(unitPrice) !== ancienPrix) {
@@ -253,14 +254,6 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
         action: 'product_price_updated',
         description: `a changé le prix de ${nomProduit} : ${Math.round(ancienPrix).toLocaleString('fr-FR')} → ${Math.round(Number(unitPrice)).toLocaleString('fr-FR')} FCFA`,
       });
-      const nomAuteur = await getNomUtilisateur(req.user.id);
-      creerAlerte({
-        merchantId: req.user.merchantId,
-        type: 'prix_modifie',
-        titre: 'Prix produit modifié',
-        message: `${nomAuteur || 'Un membre de l\'équipe'} a changé le prix de ${nomProduit} : ${formatMontant(ancienPrix)} → ${formatMontant(Number(unitPrice))} FCFA.`,
-        referenceId: req.params.id,
-      }).catch((err) => console.error('Erreur alerte prix_modifie :', err));
     } else if (name !== undefined || sku !== undefined || quantityAlertThreshold !== undefined) {
       await logActivity({
         merchantId: req.user.merchantId,
@@ -287,7 +280,7 @@ router.post('/:id/stock-movement', async (req, res) => {
   const validTypes = ['entree', 'sortie', 'ajustement'];
   const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
 
-  if (!validTypes.includes(movementType) || !Number.isInteger(quantity) || quantity <= 0) {
+  if (!validTypes.includes(movementType) || typeof quantity !== 'number' || quantity <= 0) {
     return res.status(400).json({ error: 'Mouvement de stock invalide.' });
   }
 
@@ -324,7 +317,7 @@ router.post('/:id/stock-movement', async (req, res) => {
     await client.query('BEGIN');
 
     const productResult = await client.query(
-      `SELECT id, name, quantity_in_stock, quantity_alert_threshold FROM products
+      `SELECT id, name, quantity_in_stock, is_weighted FROM products
        WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
       [req.params.id, req.user.merchantId]
     );
@@ -333,6 +326,11 @@ router.post('/:id/stock-movement', async (req, res) => {
     if (!product) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Produit introuvable.' });
+    }
+
+    if (!product.is_weighted && !Number.isInteger(quantity)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `${product.name} n'est pas vendu au poids : la quantité doit être un nombre entier.` });
     }
 
     if (supplierId) {
@@ -378,28 +376,6 @@ router.post('/:id/stock-movement', async (req, res) => {
     );
 
     await client.query('COMMIT');
-
-    // Alerte rupture / seuil bas : au moment où le mouvement fait passer le
-    // produit sous le seuil (pas à chaque mouvement s'il y était déjà, pour
-    // éviter de spammer à chaque petite sortie) — mais la rupture complète
-    // (newQuantity === 0) déclenche toujours sa propre alerte, même si le
-    // seuil avait déjà été franchi avant, car c'est un événement plus grave
-    // que "juste bas".
-    const etaitDejaBas = product.quantity_in_stock <= product.quantity_alert_threshold;
-    const franchitSeuil = !etaitDejaBas && newQuantity <= product.quantity_alert_threshold;
-    const entreEnRupture = newQuantity === 0 && product.quantity_in_stock > 0;
-    if (franchitSeuil || entreEnRupture) {
-      creerAlerte({
-        merchantId: req.user.merchantId,
-        type: newQuantity === 0 ? 'rupture_stock' : 'seuil_stock',
-        titre: newQuantity === 0 ? 'Rupture de stock' : 'Stock sous le seuil d\'alerte',
-        message: newQuantity === 0
-          ? `${product.name} est en rupture de stock.`
-          : `${product.name} est passé sous le seuil d'alerte (${newQuantity} restant(s)).`,
-        referenceId: product.id,
-      }).catch((err) => console.error('Erreur alerte stock :', err));
-    }
-
     res.json({ productId: product.id, quantityInStock: newQuantity });
   } catch (err) {
     await client.query('ROLLBACK');
