@@ -21,12 +21,14 @@ const ROLES_AUTORISES_PAR_CREATEUR = {
 router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, full_name, email, role, is_active, last_login_at, created_at, visible_modules
-       FROM users
-       WHERE merchant_id = $1
+      `SELECT u.id, u.full_name, u.email, u.role, u.is_active, u.last_login_at, u.created_at,
+              u.visible_modules, u.warehouse_id, w.name AS warehouse_name
+       FROM users u
+       LEFT JOIN warehouses w ON w.id = u.warehouse_id
+       WHERE u.merchant_id = $1
        ORDER BY
-         CASE role WHEN 'manager' THEN 0 WHEN 'gerant' THEN 1 ELSE 2 END,
-         full_name`,
+         CASE u.role WHEN 'manager' THEN 0 WHEN 'gerant' THEN 1 ELSE 2 END,
+         u.full_name`,
       [req.user.merchantId]
     );
     res.json(result.rows);
@@ -38,7 +40,7 @@ router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
 
 // POST /users — créer un membre de l'équipe (gérant ou vendeur selon le rôle du créateur)
 router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
-  const { fullName, email, password, role } = req.body;
+  const { fullName, email, password, role, warehouseId } = req.body;
 
   if (!fullName || !email || !password || !role) {
     return res.status(400).json({ error: 'Champs requis manquants.' });
@@ -51,7 +53,25 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
     });
   }
 
+  // Tout rôle autre que manager doit être assigné à une boutique.
+  if (!warehouseId) {
+    return res.status(400).json({ error: 'La boutique est requise pour ce rôle.' });
+  }
+
   try {
+    const boutique = await pool.query(
+      `SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+      [warehouseId, req.user.merchantId]
+    );
+    if (boutique.rows.length === 0) {
+      return res.status(404).json({ error: 'Boutique introuvable.' });
+    }
+    // Un gérant, lui-même confiné à sa boutique, ne peut créer des
+    // membres que pour SA boutique.
+    if (req.user.role === 'gerant' && req.user.warehouseId !== warehouseId) {
+      return res.status(403).json({ error: "Vous ne pouvez créer des membres que pour votre propre boutique." });
+    }
+
     // Plafond de comptes fixé par le propriétaire de la plateforme
     // (merchants.max_team_members) : impossible à dépasser depuis cette
     // route, seule la page d'administration du propriétaire peut l'augmenter.
@@ -72,10 +92,10 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await pool.query(
-      `INSERT INTO users (merchant_id, full_name, email, password_hash, role)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, full_name, email, role, is_active, created_at`,
-      [req.user.merchantId, fullName, email, passwordHash, role]
+      `INSERT INTO users (merchant_id, full_name, email, password_hash, role, warehouse_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, full_name, email, role, is_active, created_at, warehouse_id`,
+      [req.user.merchantId, fullName, email, passwordHash, role, warehouseId]
     );
 
     await logActivity({
@@ -164,6 +184,48 @@ router.patch('/:id/permissions', requireRole('manager'), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la mise à jour des permissions.' });
+  }
+});
+
+// PATCH /users/:id/warehouse — manager réassigne un membre à une autre
+// boutique. Un gérant/caissier/vendeur doit toujours être assigné à une
+// boutique active (jamais NULL).
+router.patch('/:id/warehouse', requireRole('manager'), async (req, res) => {
+  const { warehouseId } = req.body;
+  if (!warehouseId) {
+    return res.status(400).json({ error: 'La boutique est requise.' });
+  }
+
+  try {
+    const boutique = await pool.query(
+      `SELECT id, name FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+      [warehouseId, req.user.merchantId]
+    );
+    if (boutique.rows.length === 0) {
+      return res.status(404).json({ error: 'Boutique introuvable.' });
+    }
+
+    const result = await pool.query(
+      `UPDATE users SET warehouse_id = $1
+       WHERE id = $2 AND merchant_id = $3 AND role != 'manager'
+       RETURNING id, full_name, role, warehouse_id`,
+      [warehouseId, req.params.id, req.user.merchantId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Membre introuvable.' });
+    }
+
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'team_member_warehouse_changed',
+      description: `a assigné ${result.rows[0].full_name} à la boutique ${boutique.rows[0].name}`,
+    });
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors du changement de boutique." });
   }
 });
 

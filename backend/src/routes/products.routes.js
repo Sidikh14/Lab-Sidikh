@@ -9,24 +9,65 @@ const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = requi
 const router = express.Router();
 router.use(authenticate);
 
+// Détermine la boutique à utiliser pour une opération de stock/vente.
+// - manager (aucune boutique assignée) : doit choisir explicitement via
+//   warehouseId (query ou body) à chaque fois.
+// - gérant/caissier/vendeur : toujours SA boutique assignée
+//   (req.user.warehouseId), tout warehouseId fourni par le client est
+//   ignoré — on ne fait jamais confiance à ce que l'appelant envoie pour
+//   ces rôles.
+async function resolveWarehouseId(req, dbClient, providedId) {
+  const runner = dbClient || pool;
+
+  if (req.user.role === 'manager') {
+    if (!providedId) {
+      throw { status: 400, message: 'La boutique est requise.' };
+    }
+    const result = await runner.query(
+      `SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+      [providedId, req.user.merchantId]
+    );
+    if (result.rows.length === 0) {
+      throw { status: 404, message: 'Boutique introuvable.' };
+    }
+    return providedId;
+  }
+
+  if (!req.user.warehouseId) {
+    throw { status: 403, message: "Vous n'êtes assigné à aucune boutique." };
+  }
+  return req.user.warehouseId;
+}
+
 // GET /products/pdf — catalogue produits en PDF (avant les routes /:id pour éviter tout conflit de route)
 router.get('/pdf', async (req, res) => {
   try {
+    let warehouseId;
+    try {
+      warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
+    } catch (err) {
+      return res.status(err.status || 500).json({ error: err.message || 'Erreur.' });
+    }
+
     const merchantResult = await pool.query(`SELECT business_name FROM merchants WHERE id = $1`, [req.user.merchantId]);
     const businessName = merchantResult.rows[0]?.business_name || 'Commerce';
+    const warehouseResult = await pool.query(`SELECT name FROM warehouses WHERE id = $1`, [warehouseId]);
+    const warehouseName = warehouseResult.rows[0]?.name || '';
 
     const result = await pool.query(
       `SELECT
-         p.name, p.sku, p.unit_price, p.quantity_in_stock,
+         p.name, p.sku, ps.quantity_in_stock,
+         p.unit_price, p.quantity_alert_threshold,
          CASE
-           WHEN p.quantity_in_stock = 0 THEN 'Rupture'
-           WHEN p.quantity_in_stock <= p.quantity_alert_threshold THEN 'Faible'
+           WHEN ps.quantity_in_stock = 0 THEN 'Rupture'
+           WHEN ps.quantity_in_stock <= p.quantity_alert_threshold THEN 'Faible'
            ELSE 'En stock'
          END AS status
-       FROM products p
-       WHERE p.merchant_id = $1 AND p.is_active = TRUE
+       FROM product_stock ps
+       JOIN products p ON p.id = ps.product_id
+       WHERE ps.warehouse_id = $1 AND p.merchant_id = $2 AND p.is_active = TRUE
        ORDER BY p.name`,
-      [req.user.merchantId]
+      [warehouseId, req.user.merchantId]
     );
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -38,7 +79,7 @@ router.get('/pdf', async (req, res) => {
     let y = dessinerEntete(doc, {
       businessName,
       titre: 'Catalogue produits',
-      sousTitre: `${result.rows.length} référence(s) · généré le ${new Date().toLocaleDateString('fr-FR')}`,
+      sousTitre: `${warehouseName} · ${result.rows.length} référence(s) · généré le ${new Date().toLocaleDateString('fr-FR')}`,
     });
     y += 10;
 
@@ -83,21 +124,30 @@ router.get('/pdf', async (req, res) => {
 
 // GET /products
 router.get('/', async (req, res) => {
+  let warehouseId;
+  try {
+    warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message || 'Erreur.' });
+  }
+
   try {
     const result = await pool.query(
       `SELECT
-         p.id, p.name, p.sku, p.unit_price, p.quantity_in_stock,
+         p.id, p.name, p.sku, p.unit_price,
+         COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock,
          p.quantity_alert_threshold, p.is_weighted, c.name AS category,
          CASE
-           WHEN p.quantity_in_stock = 0 THEN 'rupture'
-           WHEN p.quantity_in_stock <= p.quantity_alert_threshold THEN 'faible'
+           WHEN COALESCE(ps.quantity_in_stock, 0) = 0 THEN 'rupture'
+           WHEN ps.quantity_in_stock <= p.quantity_alert_threshold THEN 'faible'
            ELSE 'en_stock'
          END AS status
        FROM products p
        LEFT JOIN categories c ON c.id = p.category_id
+       LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $2
        WHERE p.merchant_id = $1 AND p.is_active = TRUE
        ORDER BY p.name`,
-      [req.user.merchantId]
+      [req.user.merchantId, warehouseId]
     );
 
     const unitsResult = await pool.query(
@@ -121,7 +171,7 @@ router.get('/', async (req, res) => {
 
 // POST /products
 router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted } = req.body;
+  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, warehouseId: warehouseIdInput } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: 'Le nom du produit est requis.' });
@@ -129,11 +179,13 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
 
   const client = await pool.connect();
   try {
+    const warehouseId = await resolveWarehouseId(req, client, warehouseIdInput);
+
     await client.query('BEGIN');
 
     const result = await client.query(
-      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_in_stock, quantity_alert_threshold, is_weighted)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_alert_threshold, is_weighted)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -141,12 +193,19 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
         name,
         sku || null,
         unitPrice || 0,
-        quantityInStock || 0,
         quantityAlertThreshold || 5,
         Boolean(isWeighted),
       ]
     );
     const product = result.rows[0];
+
+    // Le stock initial n'est créé que pour la boutique où le produit est
+    // ajouté ; les autres boutiques démarrent à 0 (COALESCE côté lecture).
+    await client.query(
+      `INSERT INTO product_stock (merchant_id, product_id, warehouse_id, quantity_in_stock)
+       VALUES ($1, $2, $3, $4)`,
+      [req.user.merchantId, product.id, warehouseId, quantityInStock || 0]
+    );
 
     const conditionnements = [];
     if (Array.isArray(units)) {
@@ -173,6 +232,7 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
     res.status(201).json({ ...product, units: conditionnements });
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la création du produit.' });
   } finally {
@@ -276,7 +336,7 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
 // Une entrée peut être au comptant ou à crédit ; le crédit exige un
 // fournisseur enregistré (pour pouvoir suivre la dette) et un montant total.
 router.post('/:id/stock-movement', async (req, res) => {
-  const { movementType, quantity, reason, supplierId, movementDate, paymentMethod, totalCost, cashMethod } = req.body;
+  const { movementType, quantity, reason, supplierId, movementDate, paymentMethod, totalCost, cashMethod, warehouseId: warehouseIdInput } = req.body;
   const validTypes = ['entree', 'sortie', 'ajustement'];
   const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
 
@@ -314,12 +374,16 @@ router.post('/:id/stock-movement', async (req, res) => {
 
   const client = await pool.connect();
   try {
+    const warehouseId = await resolveWarehouseId(req, client, warehouseIdInput);
+
     await client.query('BEGIN');
 
     const productResult = await client.query(
-      `SELECT id, name, quantity_in_stock, is_weighted FROM products
-       WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
-      [req.params.id, req.user.merchantId]
+      `SELECT p.id, p.name, p.is_weighted, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
+       FROM products p
+       LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
+       WHERE p.id = $1 AND p.merchant_id = $2 FOR UPDATE OF p`,
+      [req.params.id, req.user.merchantId, warehouseId]
     );
     const product = productResult.rows[0];
 
@@ -345,7 +409,7 @@ router.post('/:id/stock-movement', async (req, res) => {
     }
 
     const delta = movementType === 'sortie' ? -quantity : quantity;
-    const newQuantity = product.quantity_in_stock + delta;
+    const newQuantity = Number(product.quantity_in_stock) + delta;
 
     if (newQuantity < 0) {
       await client.query('ROLLBACK');
@@ -353,13 +417,16 @@ router.post('/:id/stock-movement', async (req, res) => {
     }
 
     await client.query(
-      `UPDATE products SET quantity_in_stock = $1 WHERE id = $2`,
-      [newQuantity, product.id]
+      `INSERT INTO product_stock (merchant_id, product_id, warehouse_id, quantity_in_stock)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (product_id, warehouse_id)
+       DO UPDATE SET quantity_in_stock = $4`,
+      [req.user.merchantId, product.id, warehouseId, newQuantity]
     );
 
     await client.query(
-      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, cash_method)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, cash_method, warehouse_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         req.user.merchantId,
         product.id,
@@ -372,13 +439,15 @@ router.post('/:id/stock-movement', async (req, res) => {
         paiementFinal,
         coutFinal,
         cashMethodFinal,
+        warehouseId,
       ]
     );
 
     await client.query('COMMIT');
-    res.json({ productId: product.id, quantityInStock: newQuantity });
+    res.json({ productId: product.id, warehouseId, quantityInStock: newQuantity });
   } catch (err) {
     await client.query('ROLLBACK');
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error(err);
     res.status(500).json({ error: "Erreur lors de l'enregistrement du mouvement de stock." });
   } finally {

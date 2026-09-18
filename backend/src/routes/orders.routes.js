@@ -15,6 +15,33 @@ const MODES_REDUCTION = ['pourcentage', 'montant'];
 const router = express.Router();
 router.use(authenticate);
 
+// Même logique que dans products_routes.js : manager choisit toujours
+// explicitement la boutique, les autres rôles utilisent la leur (assignée
+// via req.user.warehouseId), sans jamais faire confiance à un warehouseId
+// envoyé par un rôle assigné.
+async function resolveWarehouseId(req, dbClient, providedId) {
+  const runner = dbClient || pool;
+
+  if (req.user.role === 'manager') {
+    if (!providedId) {
+      throw { status: 400, message: 'La boutique est requise.' };
+    }
+    const result = await runner.query(
+      `SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+      [providedId, req.user.merchantId]
+    );
+    if (result.rows.length === 0) {
+      throw { status: 404, message: 'Boutique introuvable.' };
+    }
+    return providedId;
+  }
+
+  if (!req.user.warehouseId) {
+    throw { status: 403, message: "Vous n'êtes assigné à aucune boutique." };
+  }
+  return req.user.warehouseId;
+}
+
 // Filet de sécurité commun à toutes les générations de PDF de ce fichier :
 // si pdfkit échoue en cours de flux (logo corrompu, débordement de texte,
 // etc.) APRÈS que l'en-tête HTTP "Content-Type: application/pdf" soit déjà
@@ -40,25 +67,43 @@ function formatOrderNumber(order) {
   return `CMD-${annee}-${numero}`;
 }
 
-// GET /orders — liste des commandes récentes du commerçant
+// GET /orders — liste des commandes récentes du commerçant. Un employé
+// assigné à une boutique ne voit QUE les commandes de sa boutique ; le
+// manager voit tout, ou une boutique précise via ?warehouseId=.
 router.get('/', async (req, res) => {
   try {
+    const conditions = ['o.merchant_id = $1'];
+    const params = [req.user.merchantId];
+
+    if (req.user.role !== 'manager') {
+      if (!req.user.warehouseId) {
+        return res.status(403).json({ error: "Vous n'êtes assigné à aucune boutique." });
+      }
+      params.push(req.user.warehouseId);
+      conditions.push(`o.warehouse_id = $${params.length}`);
+    } else if (req.query.warehouseId) {
+      params.push(req.query.warehouseId);
+      conditions.push(`o.warehouse_id = $${params.length}`);
+    }
+
     const result = await pool.query(
       `SELECT o.id, o.order_seq, o.status, o.total_amount, o.subtotal_amount, o.tva_applicable,
               o.tva_amount, o.payment_method, o.amount_received, o.change_given,
               o.created_at, o.assigned_cashier_id, o.returned_at, o.returned_reason,
+              o.warehouse_id, w.name AS warehouse_name,
               c.full_name AS client_name,
               cr.status AS credit_request_status, cr.rejection_reason AS credit_request_reason
        FROM orders o
        LEFT JOIN clients c ON c.id = o.client_id
+       LEFT JOIN warehouses w ON w.id = o.warehouse_id
        LEFT JOIN LATERAL (
          SELECT status, rejection_reason FROM credit_requests
          WHERE order_id = o.id ORDER BY created_at DESC LIMIT 1
        ) cr ON true
-       WHERE o.merchant_id = $1
+       WHERE ${conditions.join(' AND ')}
        ORDER BY o.created_at DESC
        LIMIT 100`,
-      [req.user.merchantId]
+      params
     );
     const rows = result.rows.map((o) => ({ ...o, order_number: formatOrderNumber(o) }));
     res.json(rows);
@@ -76,6 +121,21 @@ router.get('/pdf', async (req, res) => {
   if (!from || !to) {
     return res.status(400).json({ error: 'La période (from/to) est requise.' });
   }
+
+  const conditions = ['o.merchant_id = $1', 'o.created_at::date BETWEEN $2 AND $3'];
+  const params = [req.user.merchantId, from, to];
+
+  if (req.user.role !== 'manager') {
+    if (!req.user.warehouseId) {
+      return res.status(403).json({ error: "Vous n'êtes assigné à aucune boutique." });
+    }
+    params.push(req.user.warehouseId);
+    conditions.push(`o.warehouse_id = $${params.length}`);
+  } else if (req.query.warehouseId) {
+    params.push(req.query.warehouseId);
+    conditions.push(`o.warehouse_id = $${params.length}`);
+  }
+
   try {
     const merchantResult = await pool.query(`SELECT business_name FROM merchants WHERE id = $1`, [req.user.merchantId]);
     const businessName = merchantResult.rows[0]?.business_name;
@@ -85,9 +145,9 @@ router.get('/pdf', async (req, res) => {
               c.full_name AS client_name
        FROM orders o
        LEFT JOIN clients c ON c.id = o.client_id
-       WHERE o.merchant_id = $1 AND o.created_at::date BETWEEN $2 AND $3
+       WHERE ${conditions.join(' AND ')}
        ORDER BY o.created_at ASC`,
-      [req.user.merchantId, from, to]
+      params
     );
     const rows = result.rows.map((o) => ({ ...o, order_number: formatOrderNumber(o) }));
 
@@ -110,6 +170,9 @@ router.get('/:id', async (req, res) => {
     const order = orderResult.rows[0];
     if (!order) {
       return res.status(404).json({ error: 'Commande introuvable.' });
+    }
+    if (req.user.role !== 'manager' && order.warehouse_id !== req.user.warehouseId) {
+      return res.status(403).json({ error: 'Cette commande ne concerne pas votre boutique.' });
     }
 
     const itemsResult = await pool.query(
@@ -140,7 +203,7 @@ router.get('/:id', async (req, res) => {
 //   disponible est insuffisant (vente en rupture autorisée). Le stock ne
 //   descend jamais sous zéro : il est simplement ramené à 0.
 router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) => {
-  const { clientId, items, notes, tvaApplicable, clientOrderId } = req.body;
+  const { clientId, items, notes, tvaApplicable, clientOrderId, warehouseId: warehouseIdInput } = req.body;
   // items attendu : [{ productId, quantity, unitId, customPrice, authorizeOutOfStock }, ...]
   // quantity = nombre de conditionnements vendus (ex: 2 cartons) ; unitId
   // facultatif = référence vers product_units (sinon vente au détail).
@@ -170,6 +233,8 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
 
   const client = await pool.connect();
   try {
+    const warehouseId = await resolveWarehouseId(req, client, warehouseIdInput);
+
     await client.query('BEGIN');
 
     let subtotalAmount = 0;
@@ -182,9 +247,12 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
       }
 
       const productResult = await client.query(
-        `SELECT id, name, unit_price, quantity_in_stock, is_weighted
-         FROM products WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
-        [item.productId, req.user.merchantId]
+        `SELECT p.id, p.name, p.unit_price, p.is_weighted,
+                COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
+         FROM products p
+         LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
+         WHERE p.id = $1 AND p.merchant_id = $2 FOR UPDATE OF p`,
+        [item.productId, req.user.merchantId, warehouseId]
       );
       const product = productResult.rows[0];
       if (!product) {
@@ -252,8 +320,8 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
 
     const orderResult = await client.query(
-      `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes, stock_override, client_order_id)
-       VALUES ($1, $2, $3, 'en_attente', $4, $5, $6, $7, $8, $9, $10, $11)
+      `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes, stock_override, client_order_id, warehouse_id)
+       VALUES ($1, $2, $3, 'en_attente', $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -267,6 +335,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
         notes || null,
         stockOverrideUtilise,
         clientOrderId || null,
+        warehouseId,
       ]
     );
     const order = orderResult.rows[0];
@@ -280,15 +349,18 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
 
       // Le stock ne descend jamais sous zéro, même en vente autorisée en rupture.
       const newQuantity = Math.max(0, resolved.product.quantity_in_stock - resolved.baseQuantity);
-      await client.query(`UPDATE products SET quantity_in_stock = $1 WHERE id = $2`, [
-        newQuantity,
-        resolved.product.id,
-      ]);
+      await client.query(
+        `INSERT INTO product_stock (merchant_id, product_id, warehouse_id, quantity_in_stock)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (product_id, warehouse_id)
+         DO UPDATE SET quantity_in_stock = $4`,
+        [req.user.merchantId, resolved.product.id, warehouseId, newQuantity]
+      );
 
       await client.query(
-        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason)
-         VALUES ($1, $2, $3, 'sortie', $4, $5)`,
-        [req.user.merchantId, resolved.product.id, req.user.id, resolved.baseQuantity, `Commande ${order.id}`]
+        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
+         VALUES ($1, $2, $3, 'sortie', $4, $5, $6)`,
+        [req.user.merchantId, resolved.product.id, req.user.id, resolved.baseQuantity, `Commande ${order.id}`, warehouseId]
       );
 
       if (resolved.originalUnitPrice !== null) {
@@ -398,11 +470,14 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
 
   try {
     const orderResult = await pool.query(
-      `SELECT id, total_amount, status, client_id FROM orders WHERE id = $1 AND merchant_id = $2`,
+      `SELECT id, total_amount, status, client_id, warehouse_id FROM orders WHERE id = $1 AND merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
     const order = orderResult.rows[0];
     if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+    if (req.user.role !== 'manager' && order.warehouse_id !== req.user.warehouseId) {
+      return res.status(403).json({ error: 'Cette commande ne concerne pas votre boutique.' });
+    }
     if (order.status !== 'en_attente') {
       return res.status(400).json({ error: 'Cette commande a déjà été traitée.' });
     }
@@ -530,11 +605,14 @@ router.patch('/:id/return-to-seller', requireRole('manager', 'caissier'), async 
 
   try {
     const orderResult = await pool.query(
-      `SELECT id, status FROM orders WHERE id = $1 AND merchant_id = $2`,
+      `SELECT id, status, warehouse_id FROM orders WHERE id = $1 AND merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
     const order = orderResult.rows[0];
     if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+    if (req.user.role !== 'manager' && order.warehouse_id !== req.user.warehouseId) {
+      return res.status(403).json({ error: 'Cette commande ne concerne pas votre boutique.' });
+    }
     if (order.status !== 'en_attente') {
       return res.status(400).json({ error: 'Seule une commande en attente d\'encaissement peut être renvoyée au vendeur.' });
     }
@@ -586,6 +664,9 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
     );
     const orderExistant = orderResult.rows[0];
     if (!orderExistant) throw { status: 404, message: 'Commande introuvable.' };
+    if (req.user.role !== 'manager' && orderExistant.warehouse_id !== req.user.warehouseId) {
+      throw { status: 403, message: 'Cette commande ne concerne pas votre boutique.' };
+    }
 
     if (req.user.role === 'vendeur') {
       if (status !== 'annulee') {
@@ -606,13 +687,16 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
       );
       for (const item of items.rows) {
         await client.query(
-          `UPDATE products SET quantity_in_stock = quantity_in_stock + $1 WHERE id = $2 AND merchant_id = $3`,
-          [item.quantity, item.product_id, req.user.merchantId]
+          `INSERT INTO product_stock (merchant_id, product_id, warehouse_id, quantity_in_stock)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (product_id, warehouse_id)
+           DO UPDATE SET quantity_in_stock = product_stock.quantity_in_stock + $4`,
+          [req.user.merchantId, item.product_id, orderExistant.warehouse_id, item.quantity]
         );
         await client.query(
-          `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason)
-           VALUES ($1, $2, $3, 'entree', $4, $5)`,
-          [req.user.merchantId, item.product_id, req.user.id, item.quantity, `Annulation commande ${formatOrderNumber(orderExistant)}`]
+          `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
+           VALUES ($1, $2, $3, 'entree', $4, $5, $6)`,
+          [req.user.merchantId, item.product_id, req.user.id, item.quantity, `Annulation commande ${formatOrderNumber(orderExistant)}`, orderExistant.warehouse_id]
         );
       }
     }
@@ -689,6 +773,12 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
     if (order.status !== 'renvoyee_vendeur') {
       throw { status: 400, message: 'Seule une commande renvoyée par le caissier peut être modifiée.' };
     }
+    if (req.user.role !== 'manager' && order.warehouse_id !== req.user.warehouseId) {
+      throw { status: 403, message: 'Cette commande ne concerne pas votre boutique.' };
+    }
+    // La boutique de la commande ne change pas lors d'une modification —
+    // elle reste celle d'origine (order.warehouse_id).
+    const warehouseId = order.warehouse_id;
 
     // 1. On remet en stock les anciens articles avant d'appliquer les nouveaux.
     const anciensItems = await client.query(
@@ -697,13 +787,16 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
     );
     for (const ancien of anciensItems.rows) {
       await client.query(
-        `UPDATE products SET quantity_in_stock = quantity_in_stock + $1 WHERE id = $2 AND merchant_id = $3`,
-        [ancien.quantity, ancien.product_id, req.user.merchantId]
+        `INSERT INTO product_stock (merchant_id, product_id, warehouse_id, quantity_in_stock)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (product_id, warehouse_id)
+         DO UPDATE SET quantity_in_stock = product_stock.quantity_in_stock + $4`,
+        [req.user.merchantId, ancien.product_id, warehouseId, ancien.quantity]
       );
       await client.query(
-        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason)
-         VALUES ($1, $2, $3, 'entree', $4, $5)`,
-        [req.user.merchantId, ancien.product_id, req.user.id, ancien.quantity, `Correction commande ${formatOrderNumber(order)} (retour caissier)`]
+        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
+         VALUES ($1, $2, $3, 'entree', $4, $5, $6)`,
+        [req.user.merchantId, ancien.product_id, req.user.id, ancien.quantity, `Correction commande ${formatOrderNumber(order)} (retour caissier)`, warehouseId]
       );
     }
     await client.query(`DELETE FROM order_items WHERE order_id = $1`, [order.id]);
@@ -719,9 +812,12 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
       }
 
       const productResult = await client.query(
-        `SELECT id, name, unit_price, quantity_in_stock, is_weighted
-         FROM products WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
-        [item.productId, req.user.merchantId]
+        `SELECT p.id, p.name, p.unit_price, p.is_weighted,
+                COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
+         FROM products p
+         LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
+         WHERE p.id = $1 AND p.merchant_id = $2 FOR UPDATE OF p`,
+        [item.productId, req.user.merchantId, warehouseId]
       );
       const product = productResult.rows[0];
       if (!product) {
@@ -795,15 +891,18 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
 
       // Le stock ne descend jamais sous zéro, même en vente autorisée en rupture.
       const newQuantity = Math.max(0, resolved.product.quantity_in_stock - resolved.baseQuantity);
-      await client.query(`UPDATE products SET quantity_in_stock = $1 WHERE id = $2`, [
-        newQuantity,
-        resolved.product.id,
-      ]);
+      await client.query(
+        `INSERT INTO product_stock (merchant_id, product_id, warehouse_id, quantity_in_stock)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (product_id, warehouse_id)
+         DO UPDATE SET quantity_in_stock = $4`,
+        [req.user.merchantId, resolved.product.id, warehouseId, newQuantity]
+      );
 
       await client.query(
-        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason)
-         VALUES ($1, $2, $3, 'sortie', $4, $5)`,
-        [req.user.merchantId, resolved.product.id, req.user.id, resolved.baseQuantity, `Commande ${formatOrderNumber(order)} (modifiée)`]
+        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
+         VALUES ($1, $2, $3, 'sortie', $4, $5, $6)`,
+        [req.user.merchantId, resolved.product.id, req.user.id, resolved.baseQuantity, `Commande ${formatOrderNumber(order)} (modifiée)`, warehouseId]
       );
 
       if (resolved.originalUnitPrice !== null) {

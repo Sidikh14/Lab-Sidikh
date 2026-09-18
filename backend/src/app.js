@@ -20,6 +20,8 @@ const pushRoutes = require('./routes/push.routes');
 const merchantRoutes = require('./routes/merchant.routes');
 const adminRoutes = require('./routes/admin.routes');
 const salariesRoutes = require('./routes/salaries.routes');
+const warehousesRoutes = require('./routes/warehouses.routes');
+const stockTransfersRoutes = require('./routes/stock-transfers.routes');
 
 const app = express();
 
@@ -57,6 +59,8 @@ app.use('/push', pushRoutes);
 app.use('/merchant', merchantRoutes);
 app.use('/admin', adminRoutes);
 app.use('/salaries', salariesRoutes);
+app.use('/warehouses', warehousesRoutes);
+app.use('/stock-transfers', stockTransfersRoutes);
 
 // Gestion des routes inconnues
 app.use((req, res) => {
