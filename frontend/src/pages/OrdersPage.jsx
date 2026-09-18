@@ -606,7 +606,7 @@ export function OrdersPage() {
                     <span className="tampon tampon-brique" style={{ marginTop: 4 }}>Rupture</span>
                   ) : (
                     <span className="carte-caisse-stock">
-                      {p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : p.quantity_in_stock}{p.is_weighted ? ' kg' : ''} en stock{p.units?.length > 0 ? ' · gros dispo' : ''}
+                      {p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''} en stock{p.units?.length > 0 ? ' · gros dispo' : ''}
                     </span>
                   )}
                 </button>
