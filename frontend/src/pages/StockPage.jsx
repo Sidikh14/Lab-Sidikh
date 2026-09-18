@@ -521,7 +521,7 @@ export function StockPage() {
                   <p className="carte-produit-nom">{p.name}</p>
                   <p className="carte-produit-sku">{codeInterne(p)}</p>
                   <p className="carte-produit-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA{p.is_weighted ? '/kg' : ''}</p>
-                  <p className="carte-produit-stock">{p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : p.quantity_in_stock}{p.is_weighted ? ' kg' : ''} en stock</p>
+                  <p className="carte-produit-stock">{p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''} en stock</p>
                   {peutGerer && (
                     <div className="carte-produit-actions">
                       <button
