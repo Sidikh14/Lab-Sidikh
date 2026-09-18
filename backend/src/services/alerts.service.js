@@ -26,7 +26,7 @@ async function creerAlerte({ merchantId, type, titre, message, montant = null, r
   const { rows: destinataires } = await pool.query(
     `SELECT id, email, alertes_push_actif, alertes_email_actif
      FROM users
-     WHERE merchant_id = $1 AND role::text = ANY($2) AND actif = true`,
+     WHERE merchant_id = $1 AND role::text = ANY($2) AND is_active = true`,
     [merchantId, roles]
   );
 
