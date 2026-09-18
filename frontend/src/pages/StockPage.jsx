@@ -105,6 +105,7 @@ function telechargerCsv(nomFichier, lignes) {
 export function StockPage() {
   const { user } = useAuth();
   const peutGerer = ROLES_GESTION.includes(user.role);
+  const estManager = user.role === 'manager';
   const [searchParams] = useSearchParams();
 
   const [onglet, setOnglet] = useState('catalogue');
@@ -140,9 +141,38 @@ export function StockPage() {
   const [produitsSelectionnes, setProduitsSelectionnes] = useState(new Set());
   const [impressionEnAttente, setImpressionEnAttente] = useState(false);
 
+  // Boutique active — seul le manager doit la choisir explicitement (les
+  // autres rôles sont assignés à la leur, le backend l'applique tout seul).
+  // Mémorisée en local pour ne pas la redemander à chaque navigation.
+  const [warehouses, setWarehouses] = useState([]);
+  const [warehouseId, setWarehouseId] = useState(() => (estManager ? localStorage.getItem('boutiqueActiveId') || '' : ''));
+  const [chargementBoutiques, setChargementBoutiques] = useState(estManager);
+
+  useEffect(() => {
+    if (!estManager) return;
+    api.getWarehouses()
+      .then((liste) => {
+        setWarehouses(liste);
+        const actives = liste.filter((w) => w.is_active);
+        setWarehouseId((avant) => {
+          if (avant && actives.some((w) => w.id === avant)) return avant;
+          return actives[0]?.id || '';
+        });
+      })
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementBoutiques(false));
+  }, [estManager]);
+
+  useEffect(() => {
+    if (estManager && warehouseId) localStorage.setItem('boutiqueActiveId', warehouseId);
+  }, [estManager, warehouseId]);
+
   function charger() {
+    // Un manager sans boutique sélectionnée ne doit pas appeler /products
+    // (le backend renverrait 400 "La boutique est requise").
+    if (estManager && !warehouseId) return;
     setChargement(true);
-    Promise.all([api.getProducts(), api.getSuppliers().catch(() => [])])
+    Promise.all([api.getProducts(warehouseId), api.getSuppliers().catch(() => [])])
       .then(([p, s]) => {
         setProducts(p);
         setSuppliers(s);
@@ -154,7 +184,7 @@ export function StockPage() {
       .finally(() => setChargement(false));
   }
 
-  useEffect(charger, []);
+  useEffect(charger, [warehouseId]);
 
   function basculerSelectionEtiquette(id) {
     setProduitsSelectionnes((avant) => {
@@ -227,6 +257,7 @@ export function StockPage() {
         quantityInStock: Number(nouveauProduit.quantityInStock) || 0,
         quantityAlertThreshold: Number(nouveauProduit.quantityAlertThreshold) || 5,
         isWeighted: nouveauProduit.isWeighted,
+        warehouseId: estManager ? warehouseId : undefined,
         units: conditionnements
           .filter((c) => c.label && Number(c.price) && Number(c.quantityPerUnit))
           .map((c) => ({ label: c.label, price: Number(c.price), quantityPerUnit: Number(c.quantityPerUnit) })),
@@ -340,6 +371,7 @@ export function StockPage() {
         paymentMethod: entreeStock.paymentMethod,
         totalCost: entreeStock.totalCost ? Number(entreeStock.totalCost) : undefined,
         cashMethod: entreeStock.paymentMethod === 'comptant' ? entreeStock.cashMethod : undefined,
+        warehouseId: estManager ? warehouseId : undefined,
       });
       setModaleEntreeOuverte(false);
       setEntreeStock({
@@ -420,17 +452,36 @@ export function StockPage() {
     <>
       <div className="entete-page">
         <h1>Produits</h1>
-        {peutGerer && onglet === 'catalogue' && (
-          <button
-            className="btn btn-principal"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
-            onClick={() => setModaleOuverte(true)}
-          >
-            <IconPlus />
-            Nouveau produit
-          </button>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {estManager && warehouses.length > 0 && (
+            <select
+              className="champ"
+              style={{ minWidth: 180 }}
+              value={warehouseId}
+              onChange={(e) => setWarehouseId(e.target.value)}
+            >
+              {warehouses.filter((w) => w.is_active).map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          )}
+          {peutGerer && onglet === 'catalogue' && (
+            <button
+              className="btn btn-principal"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
+              onClick={() => setModaleOuverte(true)}
+              disabled={estManager && !warehouseId}
+            >
+              <IconPlus />
+              Nouveau produit
+            </button>
+          )}
+        </div>
       </div>
+
+      {estManager && !chargementBoutiques && warehouses.length === 0 && (
+        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de gérer le stock.</p>
+      )}
 
       <div className="onglets">
         <button className={onglet === 'catalogue' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('catalogue')}>
@@ -499,7 +550,7 @@ export function StockPage() {
               })}
             </div>
             <button className="btn" onClick={handleExportCsv}>Exporter CSV</button>
-            <button className="btn" onClick={() => api.downloadProductsPdf().catch((err) => setErreur(err.message))}>Exporter PDF</button>
+            <button className="btn" onClick={() => api.downloadProductsPdf(estManager ? warehouseId : undefined).catch((err) => setErreur(err.message))}>Exporter PDF</button>
             {peutGerer && <button className="btn" onClick={() => setModaleEntreeOuverte(true)}>Entrée de stock</button>}
             {peutGerer && <button className="btn" onClick={ouvrirRevisionPrix}>Réviser les prix</button>}
           </div>

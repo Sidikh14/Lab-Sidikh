@@ -73,6 +73,16 @@ function IconSupprimer() {
   );
 }
 
+function IconBoutique() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 9l1.5-5h15L21 9" />
+      <path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" />
+      <path d="M9 20v-6h6v6" />
+    </svg>
+  );
+}
+
 const FILTRES_STATUT = [
   { value: 'tous', label: 'Tous' },
   { value: 'actifs', label: 'Actifs' },
@@ -127,7 +137,20 @@ export function TeamPage() {
     email: '',
     password: '',
     role: rolesProposes[0]?.value || 'vendeur',
+    warehouseId: '',
   });
+
+  // Boutiques : un manager doit choisir explicitement celle d'un nouveau
+  // membre (ou d'une réassignation) ; un gérant est confiné à la sienne, le
+  // backend l'impose déjà — pas besoin de sélecteur pour lui.
+  const [warehouses, setWarehouses] = useState([]);
+
+  useEffect(() => {
+    if (!estManager) return;
+    api.getWarehouses()
+      .then((liste) => setWarehouses(liste.filter((w) => w.is_active)))
+      .catch((err) => setErreur(err.message));
+  }, [estManager]);
 
   function charger() {
     setChargement(true);
@@ -167,10 +190,17 @@ export function TeamPage() {
       setErreur('Tous les champs sont requis.');
       return;
     }
+    // Un gérant crée toujours pour SA propre boutique (le backend l'impose
+    // de toute façon) ; un manager doit avoir choisi une boutique.
+    const warehouseId = estManager ? nouveauMembre.warehouseId : user.warehouseId;
+    if (!warehouseId) {
+      setErreur('La boutique est requise.');
+      return;
+    }
     try {
-      await api.createUser(nouveauMembre);
+      await api.createUser({ ...nouveauMembre, warehouseId });
       setModaleOuverte(false);
-      setNouveauMembre({ fullName: '', email: '', password: '', role: rolesProposes[0]?.value || 'vendeur' });
+      setNouveauMembre({ fullName: '', email: '', password: '', role: rolesProposes[0]?.value || 'vendeur', warehouseId: '' });
       charger();
     } catch (err) {
       setErreur(err.message);
@@ -286,6 +316,33 @@ export function TeamPage() {
     }
   }
 
+  const [membreBoutique, setMembreBoutique] = useState(null);
+  const [nouvelleBoutique, setNouvelleBoutique] = useState('');
+  const [enregistrementBoutique, setEnregistrementBoutique] = useState(false);
+
+  function ouvrirChangerBoutique(membre) {
+    setMembreBoutique(membre);
+    setNouvelleBoutique(membre.warehouse_id || '');
+  }
+
+  async function handleChangerBoutique(e) {
+    e.preventDefault();
+    if (!nouvelleBoutique) {
+      setErreur('La boutique est requise.');
+      return;
+    }
+    setEnregistrementBoutique(true);
+    try {
+      await api.setUserWarehouse(membreBoutique.id, nouvelleBoutique);
+      setMembreBoutique(null);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnregistrementBoutique(false);
+    }
+  }
+
   return (
     <>
       <div className="entete-page">
@@ -373,6 +430,7 @@ export function TeamPage() {
               <p className="carte-entite-nom">{m.full_name}</p>
               <p className="carte-entite-detail">{m.email}</p>
               <p className="carte-entite-metrique" style={{ textTransform: 'capitalize' }}>{m.role}</p>
+              {m.warehouse_name && <p className="carte-entite-detail">{m.warehouse_name}</p>}
               <p className="carte-entite-souslegende">Depuis le {new Date(m.created_at).toLocaleDateString('fr-FR')}</p>
               {estManager && m.role !== 'manager' && (
                 <div className="carte-entite-actions">
@@ -391,6 +449,15 @@ export function TeamPage() {
                   >
                     <IconRole />
                     Rôle
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ padding: '7px 10px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    onClick={() => ouvrirChangerBoutique(m)}
+                    title="Changer de boutique"
+                  >
+                    <IconBoutique />
+                    Boutique
                   </button>
                   <button
                     className="btn"
@@ -474,6 +541,22 @@ export function TeamPage() {
                   ))}
                 </select>
               </div>
+              {estManager && (
+                <div className="champ-groupe">
+                  <label className="etiquette" htmlFor="m-boutique">Boutique</label>
+                  <select
+                    id="m-boutique"
+                    className="champ"
+                    value={nouveauMembre.warehouseId}
+                    onChange={(e) => setNouveauMembre({ ...nouveauMembre, warehouseId: e.target.value })}
+                  >
+                    <option value="">Choisir une boutique</option>
+                    {warehouses.map((w) => (
+                      <option key={w.id} value={w.id}>{w.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="actions-modale">
                 <button type="button" className="btn" onClick={() => setModaleOuverte(false)}>
                   Annuler
@@ -580,6 +663,40 @@ export function TeamPage() {
                 </button>
                 <button type="submit" className="btn btn-principal" disabled={enregistrementRole}>
                   {enregistrementRole ? 'Enregistrement…' : 'Enregistrer'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+      {membreBoutique && (
+        <div className="modale-fond" onClick={() => setMembreBoutique(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Changer la boutique de {membreBoutique.full_name}</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+              Boutique actuelle : <strong>{membreBoutique.warehouse_name || 'aucune'}</strong>.
+            </p>
+            <form onSubmit={handleChangerBoutique}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="m-nouvelle-boutique">Nouvelle boutique</label>
+                <select
+                  id="m-nouvelle-boutique"
+                  className="champ"
+                  value={nouvelleBoutique}
+                  onChange={(e) => setNouvelleBoutique(e.target.value)}
+                >
+                  <option value="">Choisir une boutique</option>
+                  {warehouses.map((w) => (
+                    <option key={w.id} value={w.id}>{w.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={() => setMembreBoutique(null)}>
+                  Annuler
+                </button>
+                <button type="submit" className="btn btn-principal" disabled={enregistrementBoutique}>
+                  {enregistrementBoutique ? 'Enregistrement…' : 'Enregistrer'}
                 </button>
               </div>
             </form>

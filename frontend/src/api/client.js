@@ -54,7 +54,15 @@ export const api = {
       headers: { 'X-Admin-Key': adminKey || '' },
     }),
 
-  getProducts: () => request('/products'),
+  getWarehouses: () => request('/warehouses'),
+  createWarehouse: (data) =>
+    request('/warehouses', { method: 'POST', body: JSON.stringify(data) }),
+  updateWarehouse: (id, data) =>
+    request(`/warehouses/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  setWarehouseStatus: (id, isActive) =>
+    request(`/warehouses/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
+
+  getProducts: (warehouseId) => request(`/products${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   createProduct: (data) =>
     request('/products', { method: 'POST', body: JSON.stringify(data) }),
   updateProduct: (id, data) =>
@@ -106,6 +114,8 @@ export const api = {
     request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules }) }),
   resetUserPassword: (id, newPassword) =>
     request(`/users/${id}/password`, { method: 'PATCH', body: JSON.stringify({ newPassword }) }),
+  setUserWarehouse: (id, warehouseId) =>
+    request(`/users/${id}/warehouse`, { method: 'PATCH', body: JSON.stringify({ warehouseId }) }),
 
   getCreditRequests: (status) => request(`/credit-requests${status ? `?status=${status}` : ''}`),
   createCreditRequest: (data) =>
@@ -171,7 +181,7 @@ export const api = {
   downloadCashMovementsPdf: (method, from, to, cashier) =>
     previewFile(`/cash/movements/pdf?method=${method}&from=${from}&to=${to}${cashier && cashier !== 'tous' ? `&cashier=${cashier}` : ''}`),
   getCashCashiers: () => request('/cash/cashiers'),
-  downloadProductsPdf: () => previewFile('/products/pdf'),
+  downloadProductsPdf: (warehouseId) => previewFile(`/products/pdf${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
 
   getSalaries: (month) => request(`/salaries${month ? `?month=${month}` : ''}`),
   setSalary: (userId, data) =>

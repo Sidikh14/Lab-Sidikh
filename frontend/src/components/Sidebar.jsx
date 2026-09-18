@@ -103,6 +103,16 @@ function IconSalaires() {
   );
 }
 
+function IconBoutique() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M3 9l1.5-5h15L21 9" />
+      <path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" />
+      <path d="M9 20v-6h6v6" />
+    </svg>
+  );
+}
+
 const TOUS_LES_LIENS = [
   { to: '/stock', label: 'Produits', icone: IconStock, module: 'stock' },
   { to: '/ventes', label: 'Ventes', icone: IconVentes, module: 'ventes' },
@@ -199,6 +209,14 @@ export function Sidebar({ ouvert = false, onFermer }) {
             <NavLink to="/salaires" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
               <IconSalaires />
               Salaires
+            </NavLink>
+          </li>
+        )}
+        {estManager && (
+          <li>
+            <NavLink to="/boutiques" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
+              <IconBoutique />
+              Boutiques
             </NavLink>
           </li>
         )}
