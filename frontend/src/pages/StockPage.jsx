@@ -251,6 +251,8 @@ export function StockPage() {
     }
   }
 
+  const [nouveauConditionnementEdition, setNouveauConditionnementEdition] = useState({ label: '', price: '', quantityPerUnit: '' });
+
   function ouvrirEdition(product) {
     setProduitEnEdition({
       id: product.id,
@@ -259,7 +261,38 @@ export function StockPage() {
       unitPrice: product.unit_price,
       quantityAlertThreshold: product.quantity_alert_threshold,
       isWeighted: product.is_weighted,
+      units: product.units || [],
     });
+    setNouveauConditionnementEdition({ label: '', price: '', quantityPerUnit: '' });
+  }
+
+  async function handleAjouterConditionnementEdition() {
+    if (!nouveauConditionnementEdition.label || !Number(nouveauConditionnementEdition.price) || !Number(nouveauConditionnementEdition.quantityPerUnit)) {
+      setErreur('Remplissez le libellé, le prix et la quantité du conditionnement.');
+      return;
+    }
+    try {
+      const unite = await api.addProductUnit(produitEnEdition.id, {
+        label: nouveauConditionnementEdition.label,
+        price: Number(nouveauConditionnementEdition.price),
+        quantityPerUnit: Number(nouveauConditionnementEdition.quantityPerUnit),
+      });
+      setProduitEnEdition({ ...produitEnEdition, units: [...produitEnEdition.units, unite] });
+      setNouveauConditionnementEdition({ label: '', price: '', quantityPerUnit: '' });
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
+  async function handleSupprimerConditionnementEdition(unitId) {
+    try {
+      await api.deleteProductUnit(produitEnEdition.id, unitId);
+      setProduitEnEdition({ ...produitEnEdition, units: produitEnEdition.units.filter((u) => u.id !== unitId) });
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
   }
 
   async function handleEnregistrerEdition(e) {
@@ -487,8 +520,8 @@ export function StockPage() {
                   </div>
                   <p className="carte-produit-nom">{p.name}</p>
                   <p className="carte-produit-sku">{codeInterne(p)}</p>
-                  <p className="carte-produit-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
-                  <p className="carte-produit-stock">{p.quantity_in_stock} en stock</p>
+                  <p className="carte-produit-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA{p.is_weighted ? '/kg' : ''}</p>
+                  <p className="carte-produit-stock">{p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : p.quantity_in_stock}{p.is_weighted ? ' kg' : ''} en stock</p>
                   {peutGerer && (
                     <div className="carte-produit-actions">
                       <button
@@ -618,7 +651,7 @@ export function StockPage() {
                 <input
                   id="p-qty"
                   type="number"
-                  step={nouveauProduit.isWeighted ? '0.001' : '1'}
+                  step={nouveauProduit.isWeighted ? '0.1' : '1'}
                   className="champ"
                   value={nouveauProduit.quantityInStock}
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, quantityInStock: e.target.value })}
@@ -741,8 +774,8 @@ export function StockPage() {
                 <input
                   id="e-qte"
                   type="number"
-                  min={produitEntreeSelectionne?.is_weighted ? '0.001' : '1'}
-                  step={produitEntreeSelectionne?.is_weighted ? '0.001' : '1'}
+                  min={produitEntreeSelectionne?.is_weighted ? '0.1' : '1'}
+                  step={produitEntreeSelectionne?.is_weighted ? '0.1' : '1'}
                   className="champ"
                   value={entreeStock.quantity}
                   onChange={(e) => setEntreeStock({ ...entreeStock, quantity: e.target.value })}
@@ -933,6 +966,7 @@ export function StockPage() {
                   onChange={(e) => setProduitEnEdition({ ...produitEnEdition, unitPrice: e.target.value })}
                 />
               </div>
+
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="pe-alert">Seuil d'alerte</label>
                 <input
@@ -942,6 +976,50 @@ export function StockPage() {
                   value={produitEnEdition.quantityAlertThreshold}
                   onChange={(e) => setProduitEnEdition({ ...produitEnEdition, quantityAlertThreshold: e.target.value })}
                 />
+              </div>
+
+              <div className="champ-groupe">
+                <label className="etiquette">
+                  Conditionnements (ex : sac 25kg à prix fixe)
+                </label>
+                {produitEnEdition.units.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                    {produitEnEdition.units.map((u) => (
+                      <div key={u.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--fond-alterne, #f5f5f5)', borderRadius: 6 }}>
+                        <span style={{ fontSize: 13 }}>
+                          {u.label} — {Math.round(u.price).toLocaleString('fr-FR')} FCFA
+                          {produitEnEdition.isWeighted ? ` (${u.quantity_per_unit} kg)` : ` (${u.quantity_per_unit} unités)`}
+                        </span>
+                        <button type="button" className="btn" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => handleSupprimerConditionnementEdition(u.id)}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    className="champ"
+                    placeholder="Libellé (ex : Sac 25kg)"
+                    value={nouveauConditionnementEdition.label}
+                    onChange={(e) => setNouveauConditionnementEdition({ ...nouveauConditionnementEdition, label: e.target.value })}
+                  />
+                  <input
+                    type="number"
+                    className="champ"
+                    style={{ width: 90 }}
+                    placeholder="Prix"
+                    value={nouveauConditionnementEdition.price}
+                    onChange={(e) => setNouveauConditionnementEdition({ ...nouveauConditionnementEdition, price: e.target.value })}
+                  />
+                  <input
+                    type="number"
+                    className="champ"
+                    style={{ width: 90 }}
+                    placeholder={produitEnEdition.isWeighted ? 'Kg' : 'Qté'}
+                    value={nouveauConditionnementEdition.quantityPerUnit}
+                    onChange={(e) => setNouveauConditionnementEdition({ ...nouveauConditionnementEdition, quantityPerUnit: e.target.value })}
+                  />
+                  <button type="button" className="btn" onClick={handleAjouterConditionnementEdition}>+</button>
+                </div>
               </div>
 
               <div className="actions-modale" style={{ justifyContent: user.role === 'manager' ? 'space-between' : 'flex-end' }}>

@@ -131,7 +131,12 @@ function IconCoche() {
 }
 
 function optionsDeVente(produit) {
-  const detail = { unitId: null, label: 'Détail', price: Number(produit.unit_price), quantityPerUnit: 1 };
+  const detail = {
+    unitId: null,
+    label: produit.is_weighted ? 'Au poids' : 'Détail',
+    price: Number(produit.unit_price),
+    quantityPerUnit: 1,
+  };
   const gros = (produit.units || []).map((u) => ({
     unitId: u.id,
     label: u.label,
@@ -328,8 +333,16 @@ export function OrdersPage() {
 
   function demarrerAjout(produit) {
     if (produit.is_weighted) {
-      setValeurPoids('');
-      setSaisiePoids(produit);
+      const options = optionsDeVente(produit);
+      if (options.length === 1) {
+        // Aucun sac configuré pour ce produit : vente au poids directe.
+        setValeurPoids('');
+        setSaisiePoids(produit);
+      } else {
+        // Des sacs à prix fixe existent (ex: sac de pommes de terre) :
+        // on laisse choisir entre "au poids" et un des sacs.
+        setChoixConditionnement(produit);
+      }
       return;
     }
     const options = optionsDeVente(produit);
@@ -399,6 +412,11 @@ export function OrdersPage() {
     );
   }
 
+  // Arrondit à 1 décimale (100g près) : on ne vend pas au gramme près.
+  function arrondirPoids(valeur) {
+    return Math.round(valeur * 10) / 10;
+  }
+
   function ajouterPeseAuPanier(produit, poids) {
     const stockDisponible = produit.quantity_in_stock;
     if (!(poids > 0) || poids > stockDisponible) return;
@@ -407,10 +425,10 @@ export function OrdersPage() {
       const cle = cleLigne(produit.id, null);
       const existant = prev.find((l) => cleLigne(l.productId, l.unitId) === cle);
       if (existant) {
-        const nouveauPoids = Math.min(existant.quantity + poids, stockDisponible);
+        const nouveauPoids = arrondirPoids(Math.min(existant.quantity + poids, stockDisponible));
         return prev.map((l) => (cleLigne(l.productId, l.unitId) === cle ? { ...l, quantity: nouveauPoids } : l));
       }
-      return [...prev, { productId: produit.id, unitId: null, quantity: poids }];
+      return [...prev, { productId: produit.id, unitId: null, quantity: arrondirPoids(poids) }];
     });
     setSaisiePoids(null);
     setValeurPoids('');
@@ -418,13 +436,13 @@ export function OrdersPage() {
 
   function handleValiderPoids(e) {
     e.preventDefault();
-    const poids = Number(valeurPoids);
+    const poids = arrondirPoids(Number(valeurPoids));
     if (!poids || poids <= 0) {
       setErreur('Entrez un poids valide (ex : 0.5).');
       return;
     }
     if (poids > saisiePoids.quantity_in_stock) {
-      setErreur(`Stock insuffisant : ${saisiePoids.quantity_in_stock} kg disponible(s).`);
+      setErreur(`Stock insuffisant : ${Number(saisiePoids.quantity_in_stock).toFixed(1)} kg disponible(s).`);
       return;
     }
     setErreur('');
@@ -432,7 +450,7 @@ export function OrdersPage() {
   }
 
   function modifierPoidsLigne(productId, unitId, nouveauPoidsStr) {
-    const nouveauPoids = Number(nouveauPoidsStr);
+    const nouveauPoids = arrondirPoids(Number(nouveauPoidsStr));
     setPanier((prev) =>
       prev
         .map((l) => (l.productId === productId && l.unitId === unitId ? { ...l, quantity: nouveauPoids } : l))
@@ -588,7 +606,7 @@ export function OrdersPage() {
                     <span className="tampon tampon-brique" style={{ marginTop: 4 }}>Rupture</span>
                   ) : (
                     <span className="carte-caisse-stock">
-                      {p.quantity_in_stock}{p.is_weighted ? ' kg' : ''} en stock{p.units?.length > 0 ? ' · gros dispo' : ''}
+                      {p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : p.quantity_in_stock}{p.is_weighted ? ' kg' : ''} en stock{p.units?.length > 0 ? ' · gros dispo' : ''}
                     </span>
                   )}
                 </button>
@@ -648,8 +666,8 @@ export function OrdersPage() {
                       <div className="ticket-ligne-qte">
                         <input
                           type="number"
-                          min="0.001"
-                          step="0.001"
+                          min="0.1"
+                          step="0.1"
                           value={l.quantity}
                           onChange={(e) => modifierPoidsLigne(l.productId, l.unitId, e.target.value)}
                           style={{ width: 64, textAlign: 'center' }}
@@ -826,10 +844,26 @@ export function OrdersPage() {
                   type="button"
                   className="btn"
                   style={{ justifyContent: 'space-between', padding: '12px 16px' }}
-                  onClick={() => ajouterAuPanier(choixConditionnement, option)}
+                  onClick={() => {
+                    if (option.unitId === null && choixConditionnement.is_weighted) {
+                      const produit = choixConditionnement;
+                      setChoixConditionnement(null);
+                      setValeurPoids('');
+                      setSaisiePoids(produit);
+                    } else {
+                      ajouterAuPanier(choixConditionnement, option);
+                    }
+                  }}
                 >
-                  <span>{option.label}{option.quantityPerUnit > 1 ? ` (${option.quantityPerUnit} unités)` : ''}</span>
-                  <span className="chiffre">{Math.round(option.price).toLocaleString('fr-FR')} FCFA</span>
+                  <span>
+                    {option.label}
+                    {option.quantityPerUnit > 1 ? ` (${option.quantityPerUnit}${choixConditionnement.is_weighted ? ' kg' : ' unités'})` : ''}
+                  </span>
+                  <span className="chiffre">
+                    {option.unitId === null && choixConditionnement.is_weighted
+                      ? `${Math.round(option.price).toLocaleString('fr-FR')} FCFA/kg`
+                      : `${Math.round(option.price).toLocaleString('fr-FR')} FCFA`}
+                  </span>
                 </button>
               ))}
             </div>
@@ -845,7 +879,7 @@ export function OrdersPage() {
           <div className="modale" onClick={(e) => e.stopPropagation()}>
             <h2>{saisiePoids.name}</h2>
             <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-              {Math.round(saisiePoids.unit_price).toLocaleString('fr-FR')} FCFA/kg · {saisiePoids.quantity_in_stock} kg en stock
+              {Math.round(saisiePoids.unit_price).toLocaleString('fr-FR')} FCFA/kg · {Number(saisiePoids.quantity_in_stock).toFixed(1)} kg en stock
             </p>
             <form onSubmit={handleValiderPoids}>
               <div className="champ-groupe">
@@ -853,8 +887,8 @@ export function OrdersPage() {
                 <input
                   id="poids-saisi"
                   type="number"
-                  step="0.001"
-                  min="0.001"
+                  step="0.1"
+                  min="0.1"
                   autoFocus
                   className="champ"
                   placeholder="Ex : 0.5"
