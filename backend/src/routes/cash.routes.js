@@ -9,7 +9,7 @@ const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = requi
 const router = express.Router();
 router.use(authenticate);
 
-const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
+const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque'];
 const LABEL_METHODE = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
 
 function bornesJour(dateStr) {
@@ -64,14 +64,22 @@ async function calculerMouvements(req, debutISO, finISO) {
   const sortiesResult = await pool.query(
     `SELECT payment_method, COALESCE(SUM(amount), 0) AS total
      FROM cash_expenses
-     WHERE merchant_id = $1 AND expense_date >= $2 AND expense_date < $3
+     WHERE merchant_id = $1 AND expense_date >= $2 AND expense_date < $3 AND movement_type = 'sortie'
+     GROUP BY payment_method`,
+    paramsDate
+  );
+
+  const entreesManuellesResult = await pool.query(
+    `SELECT payment_method, COALESCE(SUM(amount), 0) AS total
+     FROM cash_expenses
+     WHERE merchant_id = $1 AND expense_date >= $2 AND expense_date < $3 AND movement_type = 'entree'
      GROUP BY payment_method`,
     paramsDate
   );
 
   const parMethode = {};
   MOYENS_PAIEMENT.forEach((m) => {
-    parMethode[m] = { encaissements: 0, reglementsCredit: 0, achatsStock: 0, reglementsFournisseur: 0, sorties: 0 };
+    parMethode[m] = { encaissements: 0, reglementsCredit: 0, achatsStock: 0, reglementsFournisseur: 0, sorties: 0, entreesManuelles: 0 };
   });
 
   encaissementsResult.rows.forEach((r) => { if (parMethode[r.payment_method]) parMethode[r.payment_method].encaissements = Number(r.total); });
@@ -79,10 +87,11 @@ async function calculerMouvements(req, debutISO, finISO) {
   achatsStockResult.rows.forEach((r) => { if (r.payment_method && parMethode[r.payment_method]) parMethode[r.payment_method].achatsStock = Number(r.total); });
   reglementsFournisseurResult.rows.forEach((r) => { if (parMethode[r.payment_method]) parMethode[r.payment_method].reglementsFournisseur = Number(r.total); });
   sortiesResult.rows.forEach((r) => { if (parMethode[r.payment_method]) parMethode[r.payment_method].sorties = Number(r.total); });
+  entreesManuellesResult.rows.forEach((r) => { if (parMethode[r.payment_method]) parMethode[r.payment_method].entreesManuelles = Number(r.total); });
 
   MOYENS_PAIEMENT.forEach((m) => {
     const d = parMethode[m];
-    d.entrees = d.encaissements + d.reglementsCredit;
+    d.entrees = d.encaissements + d.reglementsCredit + d.entreesManuelles;
     d.sortiesTotal = d.achatsStock + d.reglementsFournisseur + d.sorties;
     d.theoretical = d.entrees - d.sortiesTotal;
   });
@@ -184,14 +193,26 @@ async function recupererMouvementsDetailles(req, method, from, to, cashier) {
             ce.user_id AS user_id, u.full_name AS user_name
      FROM cash_expenses ce
      LEFT JOIN users u ON u.id = ce.user_id
-     WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3
+     WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 AND ce.movement_type = 'sortie'
        ${dates.idxMethode ? `AND ce.payment_method = $${dates.idxMethode}` : ''}
        ${dates.idxCaissier ? `AND ce.user_id = $${dates.idxCaissier}` : ''}
      ORDER BY ce.expense_date`,
     dates.params
   );
 
-  const entrees = [...encaissements.rows, ...reglementsCredit.rows].map((r) => ({ ...r, sens: 'entree' }));
+  const entreesManuelles = await pool.query(
+    `SELECT ce.id, 'entree_manuelle' AS type, ce.expense_date AS date, ce.amount, ce.payment_method, ce.reason,
+            ce.user_id AS user_id, u.full_name AS user_name
+     FROM cash_expenses ce
+     LEFT JOIN users u ON u.id = ce.user_id
+     WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 AND ce.movement_type = 'entree'
+       ${dates.idxMethode ? `AND ce.payment_method = $${dates.idxMethode}` : ''}
+       ${dates.idxCaissier ? `AND ce.user_id = $${dates.idxCaissier}` : ''}
+     ORDER BY ce.expense_date`,
+    dates.params
+  );
+
+  const entrees = [...encaissements.rows, ...reglementsCredit.rows, ...entreesManuelles.rows].map((r) => ({ ...r, sens: 'entree' }));
   const dehors = [...achatsStock.rows, ...reglementsFournisseur.rows, ...sorties.rows].map((r) => ({ ...r, sens: 'sortie' }));
 
   return [...entrees, ...dehors].sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -209,6 +230,7 @@ function texteMouvement(m) {
   if (m.type === 'achat_stock') return `Achat stock — ${m.product_name}${m.supplier_name ? ` (${m.supplier_name})` : ''}`;
   if (m.type === 'reglement_fournisseur') return `Règlement fournisseur — ${m.supplier_name}`;
   if (m.type === 'sortie') return `Sortie de caisse — ${m.reason}`;
+  if (m.type === 'entree_manuelle') return `Entrée de caisse — ${m.reason}`;
   return '';
 }
 
@@ -367,8 +389,8 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier'), async (re
 
   try {
     const result = await pool.query(
-      `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type)
+       VALUES ($1, $2, $3, $4, $5, $6, 'sortie') RETURNING *`,
       [req.user.merchantId, req.user.id, paymentMethod, Number(amount), reason, expenseDate || new Date().toISOString().slice(0, 10)]
     );
 
@@ -400,7 +422,7 @@ router.get('/expenses', requireRole('manager', 'gerant', 'caissier'), async (req
     const result = await pool.query(
       `SELECT ce.*, u.full_name AS user_name
        FROM cash_expenses ce LEFT JOIN users u ON u.id = ce.user_id
-       WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 ${filtre}
+       WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 AND ce.movement_type = 'sortie' ${filtre}
        ORDER BY ce.expense_date DESC, ce.created_at DESC`,
       params
     );
@@ -408,6 +430,68 @@ router.get('/expenses', requireRole('manager', 'gerant', 'caissier'), async (req
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération des sorties de caisse.' });
+  }
+});
+
+// POST /cash/deposits — enregistrer une entrée de caisse manuelle (ex : de
+// l'argent liquide remis en caisse après l'encaissement d'un chèque à la
+// banque). Symétrique de /cash/expenses, même table (cash_expenses),
+// distinguée par movement_type = 'entree'.
+router.post('/deposits', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+  const { paymentMethod, amount, reason, expenseDate } = req.body;
+  if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
+    return res.status(400).json({ error: 'Moyen de paiement invalide.' });
+  }
+  if (!Number(amount) || Number(amount) <= 0) {
+    return res.status(400).json({ error: 'Montant invalide.' });
+  }
+  if (!reason) {
+    return res.status(400).json({ error: "Le motif de l'entrée de caisse est requis." });
+  }
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type)
+       VALUES ($1, $2, $3, $4, $5, $6, 'entree') RETURNING *`,
+      [req.user.merchantId, req.user.id, paymentMethod, Number(amount), reason, expenseDate || new Date().toISOString().slice(0, 10)]
+    );
+
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'cash_deposit',
+      description: `a enregistré une entrée de caisse de ${Math.round(Number(amount)).toLocaleString('fr-FR')} FCFA (${LABEL_METHODE[paymentMethod]}) : ${reason}`,
+    });
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors de l'enregistrement de l'entrée de caisse." });
+  }
+});
+
+// GET /cash/deposits?from=&to=&method= — liste des entrées de caisse manuelles
+router.get('/deposits', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+  const { from, to, method } = req.query;
+  if (!from || !to) return res.status(400).json({ error: 'Les dates "from" et "to" sont requises.' });
+  try {
+    const params = [req.user.merchantId, from, to];
+    let filtre = '';
+    if (method) {
+      params.push(method);
+      filtre = `AND payment_method = $${params.length}`;
+    }
+    const result = await pool.query(
+      `SELECT ce.*, u.full_name AS user_name
+       FROM cash_expenses ce LEFT JOIN users u ON u.id = ce.user_id
+       WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 AND ce.movement_type = 'entree' ${filtre}
+       ORDER BY ce.expense_date DESC, ce.created_at DESC`,
+      params
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des entrées de caisse.' });
   }
 });
 

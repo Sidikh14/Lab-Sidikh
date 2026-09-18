@@ -151,8 +151,6 @@ export const api = {
   getMerchantTeam: (id) => request(`/admin/merchants/${id}/users`),
   setAdminUserStatus: (id, isActive) =>
     request(`/admin/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
-  resetAdminUserPassword: (id, newPassword) =>
-    request(`/admin/users/${id}/password`, { method: 'PATCH', body: JSON.stringify({ newPassword }) }),
   deleteAdminUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
 
   getCashSummary: (date) => request(`/cash/summary${date ? `?date=${date}` : ''}`),
@@ -164,6 +162,10 @@ export const api = {
     request('/cash/expenses', { method: 'POST', body: JSON.stringify(data) }),
   getCashExpenses: (from, to, method) =>
     request(`/cash/expenses?from=${from}&to=${to}${method ? `&method=${method}` : ''}`),
+  createCashDeposit: (data) =>
+    request('/cash/deposits', { method: 'POST', body: JSON.stringify(data) }),
+  getCashDeposits: (from, to, method) =>
+    request(`/cash/deposits?from=${from}&to=${to}${method ? `&method=${method}` : ''}`),
   getCashMovements: (method, from, to, cashier) =>
     request(`/cash/movements?method=${method}&from=${from}&to=${to}${cashier && cashier !== 'tous' ? `&cashier=${cashier}` : ''}`),
   downloadCashMovementsPdf: (method, from, to, cashier) =>
@@ -178,12 +180,6 @@ export const api = {
     request(`/salaries/${userId}/pay`, { method: 'POST', body: JSON.stringify(data) }),
   getSalaryAlert: () => request('/salaries/alert'),
   getSalaryMaxMonth: () => request('/salaries/max-month'),
-
-  getVapidPublicKey: () => request('/push/vapid-public-key'),
-  subscribeToPush: (subscription) =>
-    request('/push/subscribe', { method: 'POST', body: JSON.stringify(subscription) }),
-  unsubscribeFromPush: (endpoint) =>
-    request('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint }) }),
 
   getInventorySessions: () => request('/inventory-sessions'),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),

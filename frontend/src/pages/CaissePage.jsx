@@ -7,7 +7,6 @@ const MOYENS_PAIEMENT = [
   { value: 'wave', label: 'Wave' },
   { value: 'orange_money', label: 'Orange Money' },
   { value: 'cheque', label: 'Chèque' },
-  { value: 'virement', label: 'Virement' },
 ];
 
 // Pour le relevé uniquement : en plus d'un moyen de paiement précis, on
@@ -161,6 +160,53 @@ export function CaissePage() {
     }
   }
 
+  // --- Entrées de caisse (symétrique des sorties) ---
+  const [nouvelleEntree, setNouvelleEntree] = useState({
+    paymentMethod: 'especes',
+    amount: '',
+    reason: '',
+    expenseDate: dateAujourdHui(),
+  });
+  const [entrees, setEntrees] = useState([]);
+  const [chargementEntrees, setChargementEntrees] = useState(true);
+  const [enregistrementEntree, setEnregistrementEntree] = useState(false);
+  const [periodeEntrees, setPeriodeEntrees] = useState({ from: dateAujourdHui(), to: dateAujourdHui() });
+
+  function chargerEntrees() {
+    setChargementEntrees(true);
+    api
+      .getCashDeposits(periodeEntrees.from, periodeEntrees.to)
+      .then(setEntrees)
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementEntrees(false));
+  }
+
+  useEffect(() => {
+    if (onglet === 'entrees') chargerEntrees();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onglet, periodeEntrees]);
+
+  async function handleAjouterEntree(e) {
+    e.preventDefault();
+    if (!Number(nouvelleEntree.amount) || !nouvelleEntree.reason) {
+      setErreur('Montant et motif sont requis.');
+      return;
+    }
+    setEnregistrementEntree(true);
+    try {
+      await api.createCashDeposit({
+        ...nouvelleEntree,
+        amount: Number(nouvelleEntree.amount),
+      });
+      setNouvelleEntree({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui() });
+      chargerEntrees();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnregistrementEntree(false);
+    }
+  }
+
   // --- Relevés ---
   const [releveMoyen, setReleveMoyen] = useState('especes');
   const [releveCaissier, setReleveCaissier] = useState('tous');
@@ -224,6 +270,9 @@ export function CaissePage() {
         </button>
         <button className={`onglet ${onglet === 'sorties' ? 'onglet-actif' : ''}`} onClick={() => setOnglet('sorties')}>
           Sorties de caisse
+        </button>
+        <button className={`onglet ${onglet === 'entrees' ? 'onglet-actif' : ''}`} onClick={() => setOnglet('entrees')}>
+          Entrées de caisse
         </button>
         <button className={`onglet ${onglet === 'releves' ? 'onglet-actif' : ''}`} onClick={() => setOnglet('releves')}>
           Relevés
@@ -401,6 +450,102 @@ export function CaissePage() {
         </>
       )}
 
+      {onglet === 'entrees' && (
+        <>
+          <div className="modale" style={{ maxWidth: 480, marginBottom: 24, padding: 20 }}>
+            <h2 style={{ fontSize: 16, marginBottom: 12 }}>Nouvelle entrée de caisse</h2>
+            <form onSubmit={handleAjouterEntree}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="e-moyen">Moyen de paiement</label>
+                <select
+                  id="e-moyen"
+                  className="champ"
+                  value={nouvelleEntree.paymentMethod}
+                  onChange={(e) => setNouvelleEntree({ ...nouvelleEntree, paymentMethod: e.target.value })}
+                >
+                  {MOYENS_PAIEMENT.map((m) => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="e-montant">Montant (FCFA)</label>
+                <input
+                  id="e-montant"
+                  type="number"
+                  className="champ"
+                  value={nouvelleEntree.amount}
+                  onChange={(e) => setNouvelleEntree({ ...nouvelleEntree, amount: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="e-motif">Motif</label>
+                <input
+                  id="e-motif"
+                  className="champ"
+                  placeholder="Ex : chèque encaissé à la banque, apport…"
+                  value={nouvelleEntree.reason}
+                  onChange={(e) => setNouvelleEntree({ ...nouvelleEntree, reason: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="e-date">Date</label>
+                <input
+                  id="e-date"
+                  type="date"
+                  className="champ"
+                  value={nouvelleEntree.expenseDate}
+                  onChange={(e) => setNouvelleEntree({ ...nouvelleEntree, expenseDate: e.target.value })}
+                />
+              </div>
+              <button type="submit" className="btn btn-principal" disabled={enregistrementEntree}>
+                {enregistrementEntree ? 'Enregistrement…' : "Enregistrer l'entrée"}
+              </button>
+            </form>
+          </div>
+
+          <div className="barre-filtres" style={{ marginBottom: 16 }}>
+            <div className="champ-groupe" style={{ marginBottom: 0 }}>
+              <label className="etiquette" htmlFor="ep-debut">Du</label>
+              <input id="ep-debut" type="date" className="champ" value={periodeEntrees.from} onChange={(e) => setPeriodeEntrees({ ...periodeEntrees, from: e.target.value })} />
+            </div>
+            <div className="champ-groupe" style={{ marginBottom: 0 }}>
+              <label className="etiquette" htmlFor="ep-fin">Au</label>
+              <input id="ep-fin" type="date" className="champ" value={periodeEntrees.to} onChange={(e) => setPeriodeEntrees({ ...periodeEntrees, to: e.target.value })} />
+            </div>
+          </div>
+
+          {chargementEntrees ? (
+            <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+          ) : entrees.length === 0 ? (
+            <p className="etat-vide">Aucune entrée de caisse sur cette période.</p>
+          ) : (
+            <table className="registre">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Motif</th>
+                  <th>Moyen</th>
+                  <th>Enregistré par</th>
+                  <th>Montant</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entrees.map((e) => (
+                  <tr key={e.id}>
+                    <td>{new Date(e.expense_date).toLocaleDateString('fr-FR')}</td>
+                    <td>{e.reason}</td>
+                    <td>{MOYENS_PAIEMENT.find((m) => m.value === e.payment_method)?.label || e.payment_method}</td>
+                    <td>{e.user_name}</td>
+                    <td className="chiffre">{Math.round(e.amount).toLocaleString('fr-FR')} FCFA</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+
       {onglet === 'releves' && (
         <>
           <div className="barre-filtres" style={{ marginBottom: 16 }}>
@@ -468,6 +613,7 @@ export function CaissePage() {
                   else if (m.type === 'achat_stock') libelle = `Achat stock — ${m.product_name}${m.supplier_name ? ` (${m.supplier_name})` : ''}`;
                   else if (m.type === 'reglement_fournisseur') libelle = `Règlement fournisseur — ${m.supplier_name}`;
                   else if (m.type === 'sortie') libelle = `Sortie de caisse — ${m.reason}`;
+                  else if (m.type === 'entree_manuelle') libelle = `Entrée de caisse — ${m.reason}`;
                   return (
                     <tr key={`${m.type}-${m.id}`}>
                       <td>{new Date(m.date).toLocaleDateString('fr-FR')}</td>
