@@ -183,7 +183,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
       }
 
       const productResult = await client.query(
-        `SELECT id, name, unit_price, quantity_in_stock
+        `SELECT id, name, unit_price, quantity_in_stock, quantity_alert_threshold
          FROM products WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
         [item.productId, req.user.merchantId]
       );
@@ -269,6 +269,8 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
     );
     const order = orderResult.rows[0];
 
+    const alertesStock = [];
+
     for (const resolved of resolvedItems) {
       await client.query(
         `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity)
@@ -282,6 +284,15 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
         newQuantity,
         resolved.product.id,
       ]);
+
+      // Alerte rupture / seuil bas : seulement au moment où la vente fait
+      // passer le produit sous le seuil (pas s'il y était déjà), même
+      // logique que le mouvement de stock manuel dans products.routes.js.
+      const seuil = resolved.product.quantity_alert_threshold;
+      const etaitDejaBas = resolved.product.quantity_in_stock <= seuil;
+      if (!etaitDejaBas && newQuantity <= seuil) {
+        alertesStock.push({ productId: resolved.product.id, productName: resolved.product.name, newQuantity });
+      }
 
       await client.query(
         `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason)
@@ -312,6 +323,18 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
     // Diffusion en temps réel : la caisse (OrdersPage.jsx côté caissier)
     // n'a pas besoin d'actualiser la page pour voir apparaître cette vente.
     broadcast(req.user.merchantId, 'order:created', orderComplet);
+
+    alertesStock.forEach(({ productId, productName, newQuantity }) => {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: newQuantity === 0 ? 'rupture_stock' : 'seuil_stock',
+        titre: newQuantity === 0 ? 'Rupture de stock' : "Stock sous le seuil d'alerte",
+        message: newQuantity === 0
+          ? `${productName} est en rupture de stock.`
+          : `${productName} est passé sous le seuil d'alerte (${newQuantity} restant(s)).`,
+        referenceId: productId,
+      }).catch((err) => console.error('Erreur alerte stock (vente) :', err));
+    });
 
     // Notification push/e-mail aux caissiers : seulement quand c'est un
     // vendeur qui vient de créer la vente (pas le manager/gérant qui
@@ -760,7 +783,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
       }
 
       const productResult = await client.query(
-        `SELECT id, name, unit_price, quantity_in_stock
+        `SELECT id, name, unit_price, quantity_in_stock, quantity_alert_threshold
          FROM products WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
         [item.productId, req.user.merchantId]
       );
@@ -824,6 +847,8 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
     const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
 
+    const alertesStock = [];
+
     for (const resolved of resolvedItems) {
       await client.query(
         `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity)
@@ -837,6 +862,14 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
         newQuantity,
         resolved.product.id,
       ]);
+
+      // Alerte rupture / seuil bas : même logique que la création de
+      // commande et que le mouvement de stock manuel.
+      const seuil = resolved.product.quantity_alert_threshold;
+      const etaitDejaBas = resolved.product.quantity_in_stock <= seuil;
+      if (!etaitDejaBas && newQuantity <= seuil) {
+        alertesStock.push({ productId: resolved.product.id, productName: resolved.product.name, newQuantity });
+      }
 
       await client.query(
         `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason)
@@ -881,6 +914,18 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
     const orderMisAJour = updateResult.rows[0];
 
     await client.query('COMMIT');
+
+    alertesStock.forEach(({ productId, productName, newQuantity }) => {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: newQuantity === 0 ? 'rupture_stock' : 'seuil_stock',
+        titre: newQuantity === 0 ? 'Rupture de stock' : "Stock sous le seuil d'alerte",
+        message: newQuantity === 0
+          ? `${productName} est en rupture de stock.`
+          : `${productName} est passé sous le seuil d'alerte (${newQuantity} restant(s)).`,
+        referenceId: productId,
+      }).catch((err) => console.error('Erreur alerte stock (vente) :', err));
+    });
 
     await logActivity({
       merchantId: req.user.merchantId,
