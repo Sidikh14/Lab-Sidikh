@@ -242,7 +242,13 @@ function texteMouvement(m) {
 router.get('/balances', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const debut = new Date(0).toISOString();
-    const fin = new Date().toISOString();
+    // Borne de fin = demain minuit (comme bornesJour), pour que la
+    // comparaison stricte "<" sur expense_date (colonne DATE, sans heure)
+    // inclue bien les mouvements d'aujourd'hui — sinon ils n'apparaissaient
+    // dans le solde qu'à partir du lendemain.
+    const finDate = new Date();
+    finDate.setDate(finDate.getDate() + 1);
+    const fin = finDate.toISOString();
     const mouvements = await calculerMouvements(req, debut, fin);
     const soldes = MOYENS_PAIEMENT.map((m) => ({
       method: m,
