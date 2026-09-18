@@ -14,6 +14,8 @@ import { CaissePage } from './pages/CaissePage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminPage } from './pages/AdminPage';
 import { SalariesPage } from './pages/SalariesPage';
+import { WarehousesPage } from './pages/WarehousesPage';
+import { TransfersPage } from './pages/TransfersPage';
 import { api } from './api/client';
 import OfflineBanner from './offline/OfflineBanner';
 import CreditRequestNotifications from './components/CreditRequestNotifications';
@@ -61,6 +63,8 @@ export default function App() {
           <Route path="/caisse" element={<RouteCommercant><CaissePage /></RouteCommercant>} />
           <Route path="/entreprise" element={<RouteCommercant><SettingsPage /></RouteCommercant>} />
           <Route path="/salaires" element={<RouteCommercant><SalariesPage /></RouteCommercant>} />
+          <Route path="/boutiques" element={<RouteCommercant><WarehousesPage /></RouteCommercant>} />
+          <Route path="/transferts" element={<RouteCommercant><TransfersPage /></RouteCommercant>} />
           <Route path="/equipe" element={<RouteCommercant><TeamPage /></RouteCommercant>} />
           <Route
             path="/admin"

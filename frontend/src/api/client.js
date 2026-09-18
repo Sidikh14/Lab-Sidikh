@@ -62,6 +62,13 @@ export const api = {
   setWarehouseStatus: (id, isActive) =>
     request(`/warehouses/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
 
+  getStockTransfers: () => request('/stock-transfers'),
+  getStockTransfer: (id) => request(`/stock-transfers/${id}`),
+  createStockTransfer: (data) =>
+    request('/stock-transfers', { method: 'POST', body: JSON.stringify(data) }),
+  receiveStockTransfer: (id) => request(`/stock-transfers/${id}/receive`, { method: 'PATCH' }),
+  cancelStockTransfer: (id) => request(`/stock-transfers/${id}/cancel`, { method: 'PATCH' }),
+
   getProducts: (warehouseId) => request(`/products${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   createProduct: (data) =>
     request('/products', { method: 'POST', body: JSON.stringify(data) }),

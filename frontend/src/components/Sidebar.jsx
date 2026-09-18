@@ -113,6 +113,17 @@ function IconBoutique() {
   );
 }
 
+function IconTransferts() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M4 8h13" />
+      <path d="M13 4l4 4-4 4" />
+      <path d="M20 16H7" />
+      <path d="M11 12l-4 4 4 4" />
+    </svg>
+  );
+}
+
 const TOUS_LES_LIENS = [
   { to: '/stock', label: 'Produits', icone: IconStock, module: 'stock' },
   { to: '/ventes', label: 'Ventes', icone: IconVentes, module: 'ventes' },
@@ -152,6 +163,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
   const autorises = modulesAutorises(user);
   const liens = TOUS_LES_LIENS.filter((lien) => autorises.includes(lien.module));
   const voitEquipe = ['manager', 'gerant'].includes(user?.role);
+  const voitTransferts = ['manager', 'gerant'].includes(user?.role);
   const estManager = user?.role === 'manager';
 
   const initiales = (user?.fullName || '?')
@@ -217,6 +229,14 @@ export function Sidebar({ ouvert = false, onFermer }) {
             <NavLink to="/boutiques" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
               <IconBoutique />
               Boutiques
+            </NavLink>
+          </li>
+        )}
+        {voitTransferts && (
+          <li>
+            <NavLink to="/transferts" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
+              <IconTransferts />
+              Transferts
             </NavLink>
           </li>
         )}
