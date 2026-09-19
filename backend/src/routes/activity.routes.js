@@ -123,6 +123,42 @@ router.get('/revenue', requireRole('manager'), async (req, res) => {
   }
 });
 
+// GET /activity/revenue-by-warehouse — ventes encaissées groupées par
+// boutique. Contrairement à /revenue (chiffre d'affaires global, manager
+// uniquement), cette route est ouverte au gérant, mais SEULEMENT pour sa
+// propre boutique (req.user.warehouseId) — jamais les autres. Le manager,
+// lui, voit toutes les boutiques du commerçant.
+router.get('/revenue-by-warehouse', requireRole('manager', 'gerant'), async (req, res) => {
+  try {
+    const limiteBoutique = req.user.role !== 'manager';
+    if (limiteBoutique && !req.user.warehouseId) {
+      return res.status(403).json({ error: "Vous n'êtes assigné à aucune boutique." });
+    }
+
+    const params = limiteBoutique ? [req.user.merchantId, req.user.warehouseId] : [req.user.merchantId];
+    const result = await pool.query(
+      `SELECT w.id AS warehouse_id, w.name AS warehouse_name,
+              COALESCE(SUM(o.total_amount), 0) AS total
+       FROM warehouses w
+       LEFT JOIN orders o
+         ON o.warehouse_id = w.id AND o.validated_at IS NOT NULL
+       WHERE w.merchant_id = $1${limiteBoutique ? ' AND w.id = $2' : ''}
+       GROUP BY w.id, w.name
+       ORDER BY w.name`,
+      params
+    );
+
+    res.json(result.rows.map((r) => ({
+      warehouseId: r.warehouse_id,
+      warehouseName: r.warehouse_name,
+      total: Number(r.total),
+    })));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du calcul des ventes par boutique.' });
+  }
+});
+
 // GET /activity/today — utilisé par le tableau de bord (Pilotage)
 router.get('/today', async (req, res) => {
   try {
