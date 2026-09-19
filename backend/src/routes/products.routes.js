@@ -5,7 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
-const { creerAlerte } = require('../services/alerts.service');
+const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -315,13 +315,18 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
         action: 'product_price_updated',
         description: `a changé le prix de ${nomProduit} : ${Math.round(ancienPrix).toLocaleString('fr-FR')} → ${Math.round(Number(unitPrice)).toLocaleString('fr-FR')} FCFA`,
       });
-      await creerAlerte({
-        merchantId: req.user.merchantId,
-        type: 'prix_modifie',
-        titre: 'Prix modifié',
-        message: `Prix de ${nomProduit} changé : ${Math.round(ancienPrix).toLocaleString('fr-FR')} → ${Math.round(Number(unitPrice)).toLocaleString('fr-FR')} FCFA.`,
-        referenceId: req.params.id,
-      });
+      // Fire-and-forget : une alerte qui échoue (ex : valeur d'enum pas
+      // encore migrée) ne doit jamais faire échouer la mise à jour du prix,
+      // déjà enregistrée en base à ce stade.
+      getNomUtilisateur(req.user.id).then((nomAuteur) => {
+        creerAlerte({
+          merchantId: req.user.merchantId,
+          type: 'prix_modifie',
+          titre: 'Prix produit modifié',
+          message: `${nomAuteur || 'Un membre de l\'équipe'} a changé le prix de ${nomProduit} : ${Math.round(ancienPrix).toLocaleString('fr-FR')} → ${Math.round(Number(unitPrice)).toLocaleString('fr-FR')} FCFA.`,
+          referenceId: req.params.id,
+        }).catch((err) => console.error('Erreur alerte prix_modifie :', err));
+      }).catch((err) => console.error('Erreur getNomUtilisateur (prix_modifie) :', err));
     } else if (name !== undefined || sku !== undefined || quantityAlertThreshold !== undefined) {
       await logActivity({
         merchantId: req.user.merchantId,
@@ -387,7 +392,7 @@ router.post('/:id/stock-movement', async (req, res) => {
     await client.query('BEGIN');
 
     const productResult = await client.query(
-      `SELECT p.id, p.name, p.is_weighted, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
+      `SELECT p.id, p.name, p.is_weighted, p.quantity_alert_threshold, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
        FROM products p
        LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
        WHERE p.id = $1 AND p.merchant_id = $2 FOR UPDATE OF p`,
@@ -452,6 +457,29 @@ router.post('/:id/stock-movement', async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    // Alerte rupture / seuil bas : seulement au franchissement du seuil (pas
+    // à chaque sortie si le produit y était déjà, pour éviter de spammer) —
+    // sauf la rupture complète (newQuantity === 0), toujours notifiée même
+    // si le seuil avait déjà été franchi avant, car plus grave que "bas".
+    // Fire-and-forget après le COMMIT : une alerte qui échoue ne doit jamais
+    // faire échouer le mouvement de stock, déjà enregistré en base.
+    const seuil = product.quantity_alert_threshold;
+    const etaitDejaBas = product.quantity_in_stock <= seuil;
+    const franchitSeuil = !etaitDejaBas && newQuantity <= seuil;
+    const entreEnRupture = newQuantity === 0 && product.quantity_in_stock > 0;
+    if (franchitSeuil || entreEnRupture) {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: newQuantity === 0 ? 'rupture_stock' : 'seuil_stock',
+        titre: newQuantity === 0 ? 'Rupture de stock' : "Stock sous le seuil d'alerte",
+        message: newQuantity === 0
+          ? `${product.name} est en rupture de stock.`
+          : `${product.name} est passé sous le seuil d'alerte (${newQuantity} restant(s)).`,
+        referenceId: product.id,
+      }).catch((err) => console.error('Erreur alerte stock :', err));
+    }
+
     res.json({ productId: product.id, warehouseId, quantityInStock: newQuantity });
   } catch (err) {
     await client.query('ROLLBACK');
