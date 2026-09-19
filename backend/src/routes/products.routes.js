@@ -6,6 +6,7 @@ const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
 const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
+const { getSoldeActuel, LABEL_METHODE } = require('../utils/cashBalance');
 
 const router = express.Router();
 router.use(authenticate);
@@ -388,6 +389,18 @@ router.post('/:id/stock-movement', async (req, res) => {
   const client = await pool.connect();
   try {
     const warehouseId = await resolveWarehouseId(req, client, warehouseIdInput);
+
+    // Un achat au comptant ne doit jamais rendre une caisse négative : on
+    // vérifie le solde théorique actuel de la caisse choisie (même calcul
+    // que /cash/balances) AVANT d'ouvrir la transaction de stock.
+    if (cashMethodFinal) {
+      const soldeActuel = await getSoldeActuel(req, warehouseId, cashMethodFinal);
+      if (soldeActuel < coutFinal) {
+        return res.status(400).json({
+          error: `Solde insuffisant sur ${LABEL_METHODE[cashMethodFinal]} (solde actuel : ${Math.round(soldeActuel).toLocaleString('fr-FR')} FCFA, achat : ${Math.round(coutFinal).toLocaleString('fr-FR')} FCFA).`,
+        });
+      }
+    }
 
     await client.query('BEGIN');
 
