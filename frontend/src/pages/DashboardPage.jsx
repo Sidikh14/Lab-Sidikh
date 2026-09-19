@@ -115,6 +115,7 @@ export function DashboardPage() {
   const [commandeAEncaisser, setCommandeAEncaisser] = useState(null);
   const [demandesCredit, setDemandesCredit] = useState([]);
   const [chiffreAffaires, setChiffreAffaires] = useState(null);
+  const [venteParBoutique, setVenteParBoutique] = useState(null);
   const [alerteSalaires, setAlerteSalaires] = useState(null);
   const estManager = user.role === 'manager';
 
@@ -203,6 +204,7 @@ export function DashboardPage() {
 
     if (vueEquipe) {
       api.getCreditRequests('en_attente').then(setDemandesCredit).catch((err) => setErreur(err.message));
+      api.getRevenueByWarehouse().then(setVenteParBoutique).catch((err) => setErreur(err.message));
     }
     if (estManager) {
       api.getRevenue().then(setChiffreAffaires).catch((err) => setErreur(err.message));
@@ -662,6 +664,22 @@ export function DashboardPage() {
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {vueEquipe && venteParBoutique && venteParBoutique.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <h2 style={{ fontSize: 16, marginBottom: 12 }}>Ventes par boutique</h2>
+              <div className="grille-resume-equipe">
+                {venteParBoutique.map((v) => (
+                  <div key={v.warehouseId} className="carte-resume-membre">
+                    <div style={{ minWidth: 0 }}>
+                      <p className="carte-resume-membre-nom">{v.warehouseName}</p>
+                    </div>
+                    <p className="carte-resume-membre-total">{Math.round(v.total).toLocaleString('fr-FR')} FCFA</p>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

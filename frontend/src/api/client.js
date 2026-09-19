@@ -153,6 +153,7 @@ export const api = {
   getActivityRange: (from, to) => request(`/activity/range?from=${from}&to=${to}`),
   downloadActivityPdf: (from, to) => previewFile(`/activity/pdf?from=${from}&to=${to}`),
   getRevenue: () => request('/activity/revenue'),
+  getRevenueByWarehouse: () => request('/activity/revenue-by-warehouse'),
 
   getMerchantProfile: () => request('/merchant/profile'),
   updateMerchantProfile: (data) =>
