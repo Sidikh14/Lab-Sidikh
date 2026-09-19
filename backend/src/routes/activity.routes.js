@@ -15,11 +15,21 @@ function estLimiteAuxSiennes(role) {
 }
 
 async function recupererActivite(req, dateDebut, dateFin) {
-  const limite = estLimiteAuxSiennes(req.user.role);
-  const params = limite
-    ? [req.user.merchantId, dateDebut, dateFin, req.user.id]
-    : [req.user.merchantId, dateDebut, dateFin];
-  const filtreUtilisateur = (colonne) => (limite ? `AND ${colonne} = $4` : '');
+  const limiteUtilisateur = estLimiteAuxSiennes(req.user.role);
+  const limiteBoutique = req.user.role === 'gerant';
+
+  const params = [req.user.merchantId, dateDebut, dateFin];
+  let paramIndex = 3;
+  if (limiteUtilisateur) {
+    params.push(req.user.id);
+    paramIndex = params.length;
+  } else if (limiteBoutique) {
+    params.push(req.user.warehouseId);
+    paramIndex = params.length;
+  }
+
+  const filtreUtilisateur = (colonne) => (limiteUtilisateur ? `AND ${colonne} = $${paramIndex}` : '');
+  const filtreBoutique = (colonne) => (limiteBoutique ? `AND ${colonne} = $${paramIndex}` : '');
 
   const ordersResult = await pool.query(
     `SELECT o.id, 'vente' AS type, o.total_amount AS montant, o.created_at,
@@ -28,7 +38,7 @@ async function recupererActivite(req, dateDebut, dateFin) {
      LEFT JOIN users u ON u.id = o.created_by
      LEFT JOIN clients c ON c.id = o.client_id
      WHERE o.merchant_id = $1 AND o.created_at >= $2 AND o.created_at < $3
-     ${filtreUtilisateur('o.created_by')}
+     ${filtreUtilisateur('o.created_by')}${filtreBoutique('o.warehouse_id')}
      ORDER BY o.created_at DESC LIMIT 300`,
     params
   );
@@ -40,7 +50,7 @@ async function recupererActivite(req, dateDebut, dateFin) {
      LEFT JOIN users u ON u.id = o.validated_by
      LEFT JOIN clients c ON c.id = o.client_id
      WHERE o.merchant_id = $1 AND o.validated_at >= $2 AND o.validated_at < $3
-     ${filtreUtilisateur('o.validated_by')}
+     ${filtreUtilisateur('o.validated_by')}${filtreBoutique('o.warehouse_id')}
      ORDER BY o.validated_at DESC LIMIT 300`,
     params
   );
@@ -52,7 +62,7 @@ async function recupererActivite(req, dateDebut, dateFin) {
      LEFT JOIN users u ON u.id = o.delivered_by
      LEFT JOIN clients c ON c.id = o.client_id
      WHERE o.merchant_id = $1 AND o.delivered_at >= $2 AND o.delivered_at < $3
-     ${filtreUtilisateur('o.delivered_by')}
+     ${filtreUtilisateur('o.delivered_by')}${filtreBoutique('o.warehouse_id')}
      ORDER BY o.delivered_at DESC LIMIT 300`,
     params
   );
@@ -65,7 +75,7 @@ async function recupererActivite(req, dateDebut, dateFin) {
      LEFT JOIN products p ON p.id = sm.product_id
      LEFT JOIN suppliers s ON s.id = sm.supplier_id
      WHERE sm.merchant_id = $1 AND sm.created_at >= $2 AND sm.created_at < $3
-     ${filtreUtilisateur('sm.user_id')}
+     ${filtreUtilisateur('sm.user_id')}${filtreBoutique('sm.warehouse_id')}
      ORDER BY sm.created_at DESC LIMIT 300`,
     params
   );
