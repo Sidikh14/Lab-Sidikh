@@ -411,10 +411,12 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
   }
 });
 
-// PATCH /orders/:id/payment — encaissement par le caissier (ou le manager)
+// PATCH /orders/:id/payment — encaissement par le caissier, le manager, ou
+// le gérant (uniquement pour une vente qu'il a créée lui-même — voir la
+// vérification plus bas juste après la récupération de la commande).
 // Enregistre le moyen de paiement, le montant reçu, calcule la monnaie à
 // rendre, et fait passer la commande au statut "validée".
-router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res) => {
+router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant'), async (req, res) => {
   const {
     paymentMethod, amountReceived, needsDelivery, deliveryFee, deliveryAddress,
     discountType, discountMode, discountValue, advanceAmount, advancePaymentMethod,
@@ -487,13 +489,18 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
 
   try {
     const orderResult = await pool.query(
-      `SELECT id, total_amount, status, client_id, warehouse_id FROM orders WHERE id = $1 AND merchant_id = $2`,
+      `SELECT id, total_amount, status, client_id, warehouse_id, created_by FROM orders WHERE id = $1 AND merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
     const order = orderResult.rows[0];
     if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
     if (req.user.role !== 'manager' && order.warehouse_id !== req.user.warehouseId) {
       return res.status(403).json({ error: 'Cette commande ne concerne pas votre boutique.' });
+    }
+    // Le gérant ne peut encaisser que les ventes qu'il a lui-même créées ;
+    // au-delà, c'est au caissier (ou au manager) de s'en charger.
+    if (req.user.role === 'gerant' && order.created_by !== req.user.id) {
+      return res.status(403).json({ error: 'Vous ne pouvez encaisser que les ventes que vous avez vous-même créées.' });
     }
     if (order.status !== 'en_attente') {
       return res.status(400).json({ error: 'Cette commande a déjà été traitée.' });
