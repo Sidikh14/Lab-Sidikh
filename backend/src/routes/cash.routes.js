@@ -5,7 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
-const { MOYENS_PAIEMENT, LABEL_METHODE, calculerMouvements } = require('../utils/cashBalance');
+const { MOYENS_PAIEMENT, LABEL_METHODE, calculerMouvements, getSoldeActuel } = require('../utils/cashBalance');
 
 const router = express.Router();
 router.use(authenticate);
@@ -351,6 +351,16 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier'), async (re
 
   try {
     const warehouseId = await resolveWarehouseId(req, null, warehouseIdInput);
+
+    // Même règle que pour un achat de stock au comptant : une sortie
+    // manuelle ne doit jamais rendre une caisse négative.
+    const soldeActuel = await getSoldeActuel(req, warehouseId, paymentMethod);
+    if (soldeActuel < Number(amount)) {
+      return res.status(400).json({
+        error: `Solde insuffisant sur ${LABEL_METHODE[paymentMethod]} (solde actuel : ${Math.round(soldeActuel).toLocaleString('fr-FR')} FCFA, sortie : ${Math.round(Number(amount)).toLocaleString('fr-FR')} FCFA).`,
+      });
+    }
+
     const result = await pool.query(
       `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id)
        VALUES ($1, $2, $3, $4, $5, $6, 'sortie', $7) RETURNING *`,
