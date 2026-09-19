@@ -275,16 +275,44 @@ export function CaissePage() {
       <div className="entete-page">
         <h1>Caisse</h1>
         {estManager && warehouses.length > 0 && (
-          <select
-            className="champ"
-            style={{ minWidth: 180 }}
-            value={warehouseId}
-            onChange={(e) => setWarehouseId(e.target.value)}
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '5px 10px 5px 11px',
+              borderRadius: 999,
+              border: '1px solid var(--trait)',
+              background: 'var(--accent-clair)',
+            }}
           >
-            {warehouses.filter((w) => w.is_active).map((w) => (
-              <option key={w.id} value={w.id}>{w.name}</option>
-            ))}
-          </select>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" style={{ flexShrink: 0 }}>
+              <path d="M3 9l1.5-5h15L21 9" />
+              <path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" />
+              <path d="M9 20v-6h6v6" />
+            </svg>
+            <select
+              value={warehouseId}
+              onChange={(e) => setWarehouseId(e.target.value)}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                fontSize: 13,
+                fontWeight: 600,
+                color: 'var(--accent)',
+                outline: 'none',
+                cursor: 'pointer',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+                padding: 0,
+                maxWidth: 130,
+              }}
+            >
+              {warehouses.filter((w) => w.is_active).map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          </div>
         )}
       </div>
 
