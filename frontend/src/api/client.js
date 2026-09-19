@@ -142,7 +142,7 @@ export const api = {
   deleteSupplier: (id) => request(`/suppliers/${id}`, { method: 'DELETE' }),
   downloadSupplierPurchasesPdf: (from, to) => previewFile(`/suppliers/purchases/pdf?from=${from}&to=${to}`),
 
-  getPurchaseOrders: () => request('/purchase-orders'),
+  getPurchaseOrders: (warehouseId) => request(`/purchase-orders${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   getPurchaseOrder: (id) => request(`/purchase-orders/${id}`),
   createPurchaseOrder: (data) =>
     request('/purchase-orders', { method: 'POST', body: JSON.stringify(data) }),

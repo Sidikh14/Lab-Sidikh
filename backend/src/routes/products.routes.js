@@ -350,7 +350,12 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
 // Une entrée peut être au comptant ou à crédit ; le crédit exige un
 // fournisseur enregistré (pour pouvoir suivre la dette) et un montant total.
 router.post('/:id/stock-movement', async (req, res) => {
-  const { movementType, quantity, reason, supplierId, movementDate, paymentMethod, totalCost, cashMethod, warehouseId: warehouseIdInput } = req.body;
+  const {
+    movementType, quantity, reason, supplierId, movementDate,
+    paymentMethod, totalCost, cashMethod,
+    advanceAmount, advanceCashMethod,
+    warehouseId: warehouseIdInput,
+  } = req.body;
   const validTypes = ['entree', 'sortie', 'ajustement'];
   const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
 
@@ -361,6 +366,8 @@ router.post('/:id/stock-movement', async (req, res) => {
   let paiementFinal = null;
   let coutFinal = null;
   let cashMethodFinal = null;
+  let avanceFinale = null;
+  let avanceCashMethodFinal = null;
   if (movementType === 'entree' && paymentMethod) {
     if (!['comptant', 'a_credit'].includes(paymentMethod)) {
       return res.status(400).json({ error: 'Mode de paiement invalide.' });
@@ -371,6 +378,22 @@ router.post('/:id/stock-movement', async (req, res) => {
       }
       if (!Number(totalCost) || Number(totalCost) <= 0) {
         return res.status(400).json({ error: "Le montant total de l'achat est requis pour une entrée à crédit." });
+      }
+      // Avance facultative : un versement immédiat au fournisseur, prélevé
+      // sur une caisse, qui réduit la dette dès la création de l'entrée
+      // (via une ligne supplier_payments insérée dans la même transaction).
+      if (advanceAmount !== undefined && advanceAmount !== null && advanceAmount !== '') {
+        if (!Number(advanceAmount) || Number(advanceAmount) <= 0) {
+          return res.status(400).json({ error: "Le montant de l'avance est invalide." });
+        }
+        if (Number(advanceAmount) > Number(totalCost)) {
+          return res.status(400).json({ error: "L'avance ne peut pas dépasser le montant total de l'achat." });
+        }
+        if (!MOYENS_PAIEMENT.includes(advanceCashMethod)) {
+          return res.status(400).json({ error: "Le moyen de paiement de l'avance (espèces, Wave...) est requis." });
+        }
+        avanceFinale = Number(advanceAmount);
+        avanceCashMethodFinal = advanceCashMethod;
       }
     }
     if (paymentMethod === 'comptant') {
@@ -398,6 +421,16 @@ router.post('/:id/stock-movement', async (req, res) => {
       if (soldeActuel < coutFinal) {
         return res.status(400).json({
           error: `Solde insuffisant sur ${LABEL_METHODE[cashMethodFinal]} (solde actuel : ${Math.round(soldeActuel).toLocaleString('fr-FR')} FCFA, achat : ${Math.round(coutFinal).toLocaleString('fr-FR')} FCFA).`,
+        });
+      }
+    }
+    // Même contrôle pour l'avance sur un achat à crédit : c'est elle, et
+    // elle seule, qui sort réellement de la caisse à cet instant.
+    if (avanceCashMethodFinal) {
+      const soldeAvance = await getSoldeActuel(req, warehouseId, avanceCashMethodFinal);
+      if (soldeAvance < avanceFinale) {
+        return res.status(400).json({
+          error: `Solde insuffisant sur ${LABEL_METHODE[avanceCashMethodFinal]} pour l'avance (solde actuel : ${Math.round(soldeAvance).toLocaleString('fr-FR')} FCFA, avance : ${Math.round(avanceFinale).toLocaleString('fr-FR')} FCFA).`,
         });
       }
     }
@@ -469,6 +502,21 @@ router.post('/:id/stock-movement', async (req, res) => {
       ]
     );
 
+    if (avanceFinale) {
+      await client.query(
+        `INSERT INTO supplier_payments (merchant_id, supplier_id, user_id, amount, payment_method, notes)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          req.user.merchantId,
+          supplierId,
+          req.user.id,
+          avanceFinale,
+          avanceCashMethodFinal,
+          "Avance versée à la création de l'entrée de stock",
+        ]
+      );
+    }
+
     await client.query('COMMIT');
 
     // Alerte rupture / seuil bas : seulement au franchissement du seuil (pas
@@ -493,7 +541,12 @@ router.post('/:id/stock-movement', async (req, res) => {
       }).catch((err) => console.error('Erreur alerte stock :', err));
     }
 
-    res.json({ productId: product.id, warehouseId, quantityInStock: newQuantity });
+    res.json({
+      productId: product.id,
+      warehouseId,
+      quantityInStock: newQuantity,
+      advancePaid: avanceFinale || 0,
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     if (err.status) return res.status(err.status).json({ error: err.message });
@@ -515,7 +568,11 @@ router.post('/:id/stock-movement', async (req, res) => {
 // ailleurs (dette fournisseur, solde de caisse) ne comptent ce montant
 // qu'une seule fois — cette appli ne suit pas de coût par article.
 router.post('/purchases', async (req, res) => {
-  const { items, supplierId, movementDate, paymentMethod, totalCost, cashMethod, warehouseId: warehouseIdInput } = req.body;
+  const {
+    items, supplierId, movementDate, paymentMethod, totalCost, cashMethod,
+    advanceAmount, advanceCashMethod,
+    warehouseId: warehouseIdInput,
+  } = req.body;
   const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -548,6 +605,25 @@ router.post('/purchases', async (req, res) => {
   }
   const coutFinal = Number(totalCost);
 
+  // Avance facultative sur un achat groupé à crédit — même règle que pour
+  // une entrée unitaire : réduit la dette dès la création, via une ligne
+  // supplier_payments insérée dans la même transaction.
+  let avanceFinale = null;
+  let avanceCashMethodFinal = null;
+  if (paymentMethod === 'a_credit' && advanceAmount !== undefined && advanceAmount !== null && advanceAmount !== '') {
+    if (!Number(advanceAmount) || Number(advanceAmount) <= 0) {
+      return res.status(400).json({ error: "Le montant de l'avance est invalide." });
+    }
+    if (Number(advanceAmount) > coutFinal) {
+      return res.status(400).json({ error: "L'avance ne peut pas dépasser le montant total de l'achat." });
+    }
+    if (!MOYENS_PAIEMENT.includes(advanceCashMethod)) {
+      return res.status(400).json({ error: "Le moyen de paiement de l'avance (espèces, Wave...) est requis." });
+    }
+    avanceFinale = Number(advanceAmount);
+    avanceCashMethodFinal = advanceCashMethod;
+  }
+
   const client = await pool.connect();
   try {
     const warehouseId = await resolveWarehouseId(req, client, warehouseIdInput);
@@ -559,6 +635,14 @@ router.post('/purchases', async (req, res) => {
       if (soldeActuel < coutFinal) {
         return res.status(400).json({
           error: `Solde insuffisant sur ${LABEL_METHODE[cashMethodFinal]} (solde actuel : ${Math.round(soldeActuel).toLocaleString('fr-FR')} FCFA, achat : ${Math.round(coutFinal).toLocaleString('fr-FR')} FCFA).`,
+        });
+      }
+    }
+    if (avanceCashMethodFinal) {
+      const soldeAvance = await getSoldeActuel(req, warehouseId, avanceCashMethodFinal);
+      if (soldeAvance < avanceFinale) {
+        return res.status(400).json({
+          error: `Solde insuffisant sur ${LABEL_METHODE[avanceCashMethodFinal]} pour l'avance (solde actuel : ${Math.round(soldeAvance).toLocaleString('fr-FR')} FCFA, avance : ${Math.round(avanceFinale).toLocaleString('fr-FR')} FCFA).`,
         });
       }
     }
@@ -637,6 +721,21 @@ router.post('/purchases', async (req, res) => {
       }
     }
 
+    if (avanceFinale) {
+      await client.query(
+        `INSERT INTO supplier_payments (merchant_id, supplier_id, user_id, amount, payment_method, notes)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          req.user.merchantId,
+          supplierId,
+          req.user.id,
+          avanceFinale,
+          avanceCashMethodFinal,
+          "Avance versée à la création de l'achat groupé",
+        ]
+      );
+    }
+
     await client.query('COMMIT');
 
     // Fire-and-forget après le COMMIT, comme partout ailleurs : une alerte
@@ -653,7 +752,7 @@ router.post('/purchases', async (req, res) => {
       }).catch((err) => console.error('Erreur alerte stock (achat groupé) :', err));
     });
 
-    res.status(201).json({ warehouseId, movementIds: mouvementsCrees });
+    res.status(201).json({ warehouseId, movementIds: mouvementsCrees, advancePaid: avanceFinale || 0 });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     if (err.status) return res.status(err.status).json({ error: err.message });
