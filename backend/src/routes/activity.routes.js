@@ -89,11 +89,12 @@ async function recupererActivite(req, dateDebut, dateFin) {
   ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 }
 
-// GET /activity/revenue — chiffre d'affaires total et par mois (manager/gérant
-// uniquement). Basé sur les commandes encaissées (validated_at renseigné),
-// pas sur les commandes simplement créées : une vente annulée ou pas encore
-// payée ne compte pas dans le chiffre d'affaires.
-router.get('/revenue', requireRole('manager', 'gerant'), async (req, res) => {
+// GET /activity/revenue — chiffre d'affaires total et par mois (manager
+// uniquement — le gérant n'y a pas accès). Basé sur les commandes
+// encaissées (validated_at renseigné), pas sur les commandes simplement
+// créées : une vente annulée ou pas encore payée ne compte pas dans le
+// chiffre d'affaires.
+router.get('/revenue', requireRole('manager'), async (req, res) => {
   try {
     const totalResult = await pool.query(
       `SELECT COALESCE(SUM(total_amount), 0) AS total

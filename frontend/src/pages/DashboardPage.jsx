@@ -203,9 +203,9 @@ export function DashboardPage() {
 
     if (vueEquipe) {
       api.getCreditRequests('en_attente').then(setDemandesCredit).catch((err) => setErreur(err.message));
-      api.getRevenue().then(setChiffreAffaires).catch((err) => setErreur(err.message));
     }
     if (estManager) {
+      api.getRevenue().then(setChiffreAffaires).catch((err) => setErreur(err.message));
       api.getSalaryAlert().then(setAlerteSalaires).catch((err) => setErreur(err.message));
     }
   }
@@ -637,7 +637,7 @@ export function DashboardPage() {
 
       {onglet === 'activite' && (
         <>
-          {vueEquipe && chiffreAffaires && (
+          {estManager && chiffreAffaires && (
             <div style={{ marginBottom: 24 }}>
               <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 20 }}>
                 <div className="stat">
