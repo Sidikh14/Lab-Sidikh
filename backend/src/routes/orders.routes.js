@@ -6,6 +6,7 @@ const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerPiedDePage, traitSeparateur, enregistrerPolices } = require('../utils/pdfHelpers');
+const { creerAlerte, getSeuilVenteElevee } = require('../services/alerts.service');
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement', 'a_credit'];
@@ -378,6 +379,13 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
           action: 'order_stock_override',
           description: `a autorisé une vente en rupture de stock pour ${resolved.product.name} sur la commande ${formatOrderNumber(order)}`,
         });
+        await creerAlerte({
+          merchantId: req.user.merchantId,
+          type: 'rupture_stock',
+          titre: 'Vente en rupture de stock',
+          message: `${resolved.product.name} vendu en rupture de stock sur la commande ${formatOrderNumber(order)}.`,
+          referenceId: order.id,
+        });
       }
     }
 
@@ -628,6 +636,18 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant'), async
         userId: req.user.id,
         action: 'order_credit_advance',
         description: `a encaissé une avance de ${formatMontant(advanceAmount)} sur la commande ${formatOrderNumber(orderMisAJour)}`,
+      });
+    }
+
+    const seuilVenteElevee = await getSeuilVenteElevee(req.user.merchantId);
+    if (Number(orderMisAJour.total_amount) >= seuilVenteElevee) {
+      await creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'vente_elevee',
+        titre: 'Vente importante',
+        message: `Vente de ${formatMontant(orderMisAJour.total_amount)} FCFA sur la commande ${formatOrderNumber(orderMisAJour)}.`,
+        montant: orderMisAJour.total_amount,
+        referenceId: orderMisAJour.id,
       });
     }
 
@@ -962,6 +982,13 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
           userId: req.user.id,
           action: 'order_stock_override',
           description: `a autorisé une vente en rupture de stock pour ${resolved.product.name} sur la commande ${formatOrderNumber(order)}`,
+        });
+        await creerAlerte({
+          merchantId: req.user.merchantId,
+          type: 'rupture_stock',
+          titre: 'Vente en rupture de stock',
+          message: `${resolved.product.name} vendu en rupture de stock sur la commande ${formatOrderNumber(order)}.`,
+          referenceId: order.id,
         });
       }
     }

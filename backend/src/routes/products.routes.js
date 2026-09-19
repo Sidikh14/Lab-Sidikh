@@ -5,6 +5,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
+const { creerAlerte } = require('../services/alerts.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -313,6 +314,13 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
         userId: req.user.id,
         action: 'product_price_updated',
         description: `a changé le prix de ${nomProduit} : ${Math.round(ancienPrix).toLocaleString('fr-FR')} → ${Math.round(Number(unitPrice)).toLocaleString('fr-FR')} FCFA`,
+      });
+      await creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'prix_modifie',
+        titre: 'Prix modifié',
+        message: `Prix de ${nomProduit} changé : ${Math.round(ancienPrix).toLocaleString('fr-FR')} → ${Math.round(Number(unitPrice)).toLocaleString('fr-FR')} FCFA.`,
+        referenceId: req.params.id,
       });
     } else if (name !== undefined || sku !== undefined || quantityAlertThreshold !== undefined) {
       await logActivity({
