@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useLiveEvent } from '../offline/liveEvents';
+
+function IconTransferts() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M4 8h13" />
+      <path d="M13 4l4 4-4 4" />
+      <path d="M20 16H7" />
+      <path d="M11 12l-4 4 4 4" />
+    </svg>
+  );
+}
 
 function IconPlus() {
   return (
@@ -11,25 +23,41 @@ function IconPlus() {
   );
 }
 
-const LIBELLES_STATUT = {
-  envoye: 'Envoyé',
-  recu: 'Reçu',
+function IconFleche() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 12h13" />
+      <path d="M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+  { value: 'tous', label: 'Tous' },
+  { value: 'envoye', label: 'En transit' },
+  { value: 'recu', label: 'Réceptionnés' },
+  { value: 'annule', label: 'Annulés' },
+];
+
+const LABEL_STATUT = {
+  envoye: 'En transit',
+  recu: 'Réceptionné',
   annule: 'Annulé',
 };
 
-function BadgeStatutTransfert({ statut }) {
-  const classe = statut === 'recu' ? 'tampon tampon-sarcelle' : statut === 'annule' ? 'tampon tampon-brique' : 'tampon';
-  return <span className={classe}>{LIBELLES_STATUT[statut] || statut}</span>;
-}
+const CLASSE_STATUT = {
+  envoye: 'tampon-ambre',
+  recu: 'tampon-sarcelle',
+  annule: 'tampon-brique',
+};
 
 export function TransfersPage() {
   const { user } = useAuth();
   const estManager = user.role === 'manager';
 
-  const [transfers, setTransfers] = useState([]);
+  const [transferts, setTransferts] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
+  const [filtreStatut, setFiltreStatut] = useState('tous');
 
   const [modaleOuverte, setModaleOuverte] = useState(false);
   const [fromWarehouseId, setFromWarehouseId] = useState('');
@@ -39,14 +67,15 @@ export function TransfersPage() {
   const [lignes, setLignes] = useState([]);
   const [enregistrement, setEnregistrement] = useState(false);
 
-  const [detailOuvert, setDetailOuvert] = useState(null);
+  const [transfertDetail, setTransfertDetail] = useState(null);
   const [chargementDetail, setChargementDetail] = useState(false);
+  const [actionEnCours, setActionEnCours] = useState(false);
 
   function charger() {
     setChargement(true);
     Promise.all([api.getStockTransfers(), api.getWarehouses()])
       .then(([t, w]) => {
-        setTransfers(t);
+        setTransferts(t);
         setWarehouses(w);
       })
       .catch((err) => setErreur(err.message))
@@ -54,15 +83,21 @@ export function TransfersPage() {
   }
 
   useEffect(charger, []);
+  useLiveEvent('activity:created', () => charger());
 
-  const boutiquesActives = warehouses.filter((w) => w.is_active);
-  // Un gérant ne peut envoyer que depuis SA boutique (le backend l'impose
-  // de toute façon) : pas de sélecteur, la source est fixée.
-  const boutiquesDestination = boutiquesActives.filter((w) => w.id !== fromWarehouseId);
+  const boutiquesActives = useMemo(() => warehouses.filter((w) => w.is_active), [warehouses]);
 
-  function ouvrirModaleCreation() {
-    const source = estManager ? '' : user.warehouseId || '';
-    setFromWarehouseId(source);
+  const transfertsFiltres = useMemo(() => {
+    return transferts.filter((t) => filtreStatut === 'tous' || t.status === filtreStatut);
+  }, [transferts, filtreStatut]);
+
+  function nomBoutique(id) {
+    return warehouses.find((w) => w.id === id)?.name || '—';
+  }
+
+  function ouvrirCreation() {
+    const depart = estManager ? '' : user.warehouseId || '';
+    setFromWarehouseId(depart);
     setToWarehouseId('');
     setNotes('');
     setLignes([]);
@@ -70,13 +105,15 @@ export function TransfersPage() {
     setModaleOuverte(true);
   }
 
+  // Recharge le catalogue de la boutique source dès qu'elle change, pour
+  // proposer uniquement des produits réellement présents dans son stock.
   useEffect(() => {
-    if (!fromWarehouseId) {
+    if (!modaleOuverte || !fromWarehouseId) {
       setProduitsSource([]);
       return;
     }
     api.getProducts(fromWarehouseId).then(setProduitsSource).catch((err) => setErreur(err.message));
-  }, [fromWarehouseId]);
+  }, [modaleOuverte, fromWarehouseId]);
 
   function ajouterLigne() {
     setLignes([...lignes, { productId: '', quantity: '' }]);
@@ -98,6 +135,10 @@ export function TransfersPage() {
       setErreur('Boutique source et destination requises.');
       return;
     }
+    if (fromWarehouseId === toWarehouseId) {
+      setErreur('La boutique source et destination doivent être différentes.');
+      return;
+    }
     const items = lignes
       .filter((l) => l.productId && Number(l.quantity) > 0)
       .map((l) => ({ productId: l.productId, quantity: Number(l.quantity) }));
@@ -106,7 +147,6 @@ export function TransfersPage() {
       return;
     }
     setEnregistrement(true);
-    setErreur('');
     try {
       await api.createStockTransfer({ fromWarehouseId, toWarehouseId, items, notes: notes || undefined });
       setModaleOuverte(false);
@@ -118,53 +158,50 @@ export function TransfersPage() {
     }
   }
 
-  async function ouvrirDetail(transfer) {
+  function ouvrirDetail(transfert) {
     setChargementDetail(true);
-    setErreur('');
+    api
+      .getStockTransfer(transfert.id)
+      .then(setTransfertDetail)
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementDetail(false));
+  }
+
+  async function handleReceptionner() {
+    setActionEnCours(true);
     try {
-      const detail = await api.getStockTransfer(transfer.id);
-      setDetailOuvert(detail);
+      await api.receiveStockTransfer(transfertDetail.id);
+      setTransfertDetail(null);
+      charger();
     } catch (err) {
       setErreur(err.message);
     } finally {
-      setChargementDetail(false);
+      setActionEnCours(false);
     }
   }
 
-  async function handleReceive(transfer) {
-    try {
-      await api.receiveStockTransfer(transfer.id);
-      setDetailOuvert(null);
-      charger();
-    } catch (err) {
-      setErreur(err.message);
-    }
-  }
-
-  async function handleCancel(transfer) {
+  async function handleAnnuler() {
     if (!window.confirm('Annuler ce transfert ? Le stock sera restitué à la boutique source.')) return;
+    setActionEnCours(true);
     try {
-      await api.cancelStockTransfer(transfer.id);
-      setDetailOuvert(null);
+      await api.cancelStockTransfer(transfertDetail.id);
+      setTransfertDetail(null);
       charger();
     } catch (err) {
       setErreur(err.message);
+    } finally {
+      setActionEnCours(false);
     }
   }
 
-  // Peut réceptionner : la boutique destination est la sienne (ou manager).
-  function peutReceptionner(transfer) {
-    if (transfer.status !== 'envoye') return false;
-    return estManager || user.warehouseId === transfer.to_warehouse_id;
-  }
-
-  // Peut annuler : la boutique source est la sienne (ou manager).
-  function peutAnnuler(transfer) {
-    if (transfer.status === 'annule') return false;
-    return estManager || user.warehouseId === transfer.from_warehouse_id;
-  }
-
-  if (chargement) return <p className="etat-vide">Chargement…</p>;
+  // Mêmes règles que le backend : le gérant ne peut réceptionner que dans sa
+  // boutique, et n'annuler que les transferts partis de la sienne.
+  const peutReceptionner =
+    transfertDetail?.status === 'envoye' &&
+    (estManager || user.warehouseId === transfertDetail?.to_warehouse_id);
+  const peutAnnuler =
+    transfertDetail?.status !== 'annule' &&
+    (estManager || user.warehouseId === transfertDetail?.from_warehouse_id);
 
   return (
     <>
@@ -173,7 +210,7 @@ export function TransfersPage() {
         <button
           className="btn btn-principal"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
-          onClick={ouvrirModaleCreation}
+          onClick={ouvrirCreation}
         >
           <IconPlus />
           Nouveau transfert
@@ -182,66 +219,94 @@ export function TransfersPage() {
 
       {erreur && <div className="erreur">{erreur}</div>}
 
-      {transfers.length === 0 ? (
-        <p className="etat-vide">Aucun transfert pour l'instant.</p>
+      <div
+        className="filtre-pilules"
+        style={{
+          display: 'flex',
+          gap: 4,
+          padding: 4,
+          marginBottom: 16,
+          background: 'var(--fond-alterne, rgba(0,0,0,0.03))',
+          borderRadius: 999,
+          border: '1px solid var(--trait)',
+          width: 'fit-content',
+        }}
+      >
+        {FILTRES_STATUT.map((f) => {
+          const actif = filtreStatut === f.value;
+          return (
+            <button
+              key={f.value}
+              type="button"
+              onClick={() => setFiltreStatut(f.value)}
+              style={{
+                border: 'none',
+                cursor: 'pointer',
+                padding: '7px 16px',
+                borderRadius: 999,
+                fontSize: 13,
+                fontWeight: actif ? 600 : 500,
+                color: actif ? '#fff' : 'var(--encre-douce)',
+                background: actif ? 'var(--accent)' : 'transparent',
+                boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {f.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {chargement ? (
+        <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+      ) : transfertsFiltres.length === 0 ? (
+        <p className="etat-vide">
+          {transferts.length === 0 ? 'Aucun transfert pour le moment.' : 'Aucun transfert ne correspond à ce filtre.'}
+        </p>
       ) : (
-        <table className="tableau">
-          <thead>
-            <tr>
-              <th>De</th>
-              <th>Vers</th>
-              <th>Statut</th>
-              <th>Créé par</th>
-              <th>Date</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {transfers.map((t) => (
-              <tr key={t.id} style={{ cursor: 'pointer' }} onClick={() => ouvrirDetail(t)}>
-                <td>{t.from_warehouse_name}</td>
-                <td>{t.to_warehouse_name}</td>
-                <td><BadgeStatutTransfert statut={t.status} /></td>
-                <td>{t.created_by_name || '—'}</td>
-                <td>{new Date(t.created_at).toLocaleDateString('fr-FR')}</td>
-                <td onClick={(e) => e.stopPropagation()}>
-                  {peutReceptionner(t) && (
-                    <button className="btn" style={{ marginRight: 6 }} onClick={() => handleReceive(t)}>Réceptionner</button>
-                  )}
-                  {peutAnnuler(t) && (
-                    <button className="btn btn-brique" onClick={() => handleCancel(t)}>Annuler</button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="grille-cartes">
+          {transfertsFiltres.map((t) => (
+            <div key={t.id} className="carte-entite" style={{ cursor: 'pointer' }} onClick={() => ouvrirDetail(t)}>
+              <div className="carte-entite-entete">
+                <span className="carte-entite-icone"><IconTransferts /></span>
+                <span className={`tampon ${CLASSE_STATUT[t.status] || ''}`}>{LABEL_STATUT[t.status] || t.status}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0 8px', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 700, fontSize: 15 }}>{t.from_warehouse_name}</span>
+                <span style={{ color: 'var(--accent)', display: 'inline-flex', flexShrink: 0 }}><IconFleche /></span>
+                <span style={{ fontWeight: 700, fontSize: 15 }}>{t.to_warehouse_name}</span>
+              </div>
+              <p className="carte-entite-detail">Créé par {t.created_by_name || '—'}</p>
+              <p className="carte-entite-souslegende">{new Date(t.created_at).toLocaleDateString('fr-FR')} à {new Date(t.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
+            </div>
+          ))}
+        </div>
       )}
 
       {modaleOuverte && (
         <div className="modale-fond" onClick={() => setModaleOuverte(false)}>
-          <div className="modale" onClick={(e) => e.stopPropagation()}>
+          <div className="modale" style={{ width: 560 }} onClick={(e) => e.stopPropagation()}>
             <h2>Nouveau transfert</h2>
             <form onSubmit={handleCreate}>
-              {estManager && (
-                <div className="champ-groupe">
-                  <label className="etiquette" htmlFor="t-from">Boutique source</label>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="t-from">Boutique source</label>
+                {estManager ? (
                   <select
                     id="t-from"
                     className="champ"
                     value={fromWarehouseId}
-                    onChange={(e) => {
-                      setFromWarehouseId(e.target.value);
-                      setLignes([]);
-                    }}
+                    onChange={(e) => { setFromWarehouseId(e.target.value); setLignes([]); }}
                   >
                     <option value="">Choisir une boutique</option>
                     {boutiquesActives.map((w) => (
                       <option key={w.id} value={w.id}>{w.name}</option>
                     ))}
                   </select>
-                </div>
-              )}
+                ) : (
+                  <input className="champ" value={nomBoutique(fromWarehouseId)} disabled />
+                )}
+              </div>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="t-to">Boutique destination</label>
                 <select
@@ -249,17 +314,16 @@ export function TransfersPage() {
                   className="champ"
                   value={toWarehouseId}
                   onChange={(e) => setToWarehouseId(e.target.value)}
-                  disabled={!fromWarehouseId}
                 >
                   <option value="">Choisir une boutique</option>
-                  {boutiquesDestination.map((w) => (
+                  {boutiquesActives.filter((w) => w.id !== fromWarehouseId).map((w) => (
                     <option key={w.id} value={w.id}>{w.name}</option>
                   ))}
                 </select>
               </div>
 
               <div className="champ-groupe">
-                <label className="etiquette">Articles</label>
+                <label className="etiquette">Articles à transférer</label>
                 {lignes.map((ligne, index) => (
                   <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                     <select
@@ -270,28 +334,41 @@ export function TransfersPage() {
                     >
                       <option value="">Choisir un produit</option>
                       {produitsSource.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name} ({p.quantity_in_stock} en stock)</option>
+                        <option key={p.id} value={p.id}>{p.name} ({Math.round(Number(p.quantity_in_stock))} en stock)</option>
                       ))}
                     </select>
                     <input
                       type="number"
                       className="champ"
-                      style={{ width: 90 }}
+                      style={{ width: 100 }}
                       placeholder="Qté"
+                      min="0"
+                      step="0.01"
                       value={ligne.quantity}
                       onChange={(e) => modifierLigne(index, 'quantity', e.target.value)}
                     />
                     <button type="button" className="btn" onClick={() => retirerLigne(index)}>×</button>
                   </div>
                 ))}
-                <button type="button" className="btn" onClick={ajouterLigne} disabled={!fromWarehouseId}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={ajouterLigne}
+                  disabled={!fromWarehouseId}
+                  style={{ marginBottom: 16 }}
+                >
                   + Ajouter un article
                 </button>
               </div>
 
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="t-notes">Notes (facultatif)</label>
-                <input id="t-notes" className="champ" value={notes} onChange={(e) => setNotes(e.target.value)} />
+                <input
+                  id="t-notes"
+                  className="champ"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                />
               </div>
 
               <div className="actions-modale">
@@ -305,34 +382,47 @@ export function TransfersPage() {
         </div>
       )}
 
-      {detailOuvert && (
-        <div className="modale-fond" onClick={() => setDetailOuvert(null)}>
+      {(transfertDetail || chargementDetail) && (
+        <div className="modale-fond" onClick={() => setTransfertDetail(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Transfert {detailOuvert.from_warehouse_name} → {detailOuvert.to_warehouse_name}</h2>
-            <p style={{ marginBottom: 12 }}><BadgeStatutTransfert statut={detailOuvert.status} /></p>
-            {detailOuvert.notes && <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 12 }}>{detailOuvert.notes}</p>}
-            <table className="tableau">
-              <thead>
-                <tr><th>Produit</th><th>Quantité</th></tr>
-              </thead>
-              <tbody>
-                {(detailOuvert.items || []).map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.product_name}</td>
-                    <td>{item.quantity}{item.is_weighted ? ' kg' : ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="actions-modale">
-              <button type="button" className="btn" onClick={() => setDetailOuvert(null)}>Fermer</button>
-              {peutAnnuler(detailOuvert) && (
-                <button type="button" className="btn btn-brique" onClick={() => handleCancel(detailOuvert)}>Annuler ce transfert</button>
-              )}
-              {peutReceptionner(detailOuvert) && (
-                <button type="button" className="btn btn-principal" onClick={() => handleReceive(detailOuvert)}>Réceptionner</button>
-              )}
-            </div>
+            {chargementDetail || !transfertDetail ? (
+              <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+            ) : (
+              <>
+                <h2>{transfertDetail.from_warehouse_name} → {transfertDetail.to_warehouse_name}</h2>
+                <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 4 }}>
+                  Statut : <strong>{LABEL_STATUT[transfertDetail.status] || transfertDetail.status}</strong>
+                </p>
+                <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+                  Créé par {transfertDetail.created_by_name || '—'} le {new Date(transfertDetail.created_at).toLocaleDateString('fr-FR')}
+                  {transfertDetail.received_by_name && <> · Réceptionné par {transfertDetail.received_by_name}</>}
+                </p>
+                {transfertDetail.notes && (
+                  <p style={{ fontSize: 13, marginBottom: 16 }}>Notes : {transfertDetail.notes}</p>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 20 }}>
+                  {transfertDetail.items.map((item) => (
+                    <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--fond-alterne, #f5f5f5)', borderRadius: 6, fontSize: 13 }}>
+                      <span>{item.product_name}</span>
+                      <span>{item.is_weighted ? Number(item.quantity).toFixed(1) : Math.round(Number(item.quantity))}{item.is_weighted ? ' kg' : ''}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="actions-modale">
+                  <button type="button" className="btn" onClick={() => setTransfertDetail(null)}>Fermer</button>
+                  {peutAnnuler && (
+                    <button type="button" className="btn btn-brique" onClick={handleAnnuler} disabled={actionEnCours}>
+                      {actionEnCours ? 'Annulation…' : 'Annuler'}
+                    </button>
+                  )}
+                  {peutReceptionner && (
+                    <button type="button" className="btn btn-principal" onClick={handleReceptionner} disabled={actionEnCours}>
+                      {actionEnCours ? 'Réception…' : 'Réceptionner'}
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
