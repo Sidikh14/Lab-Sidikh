@@ -366,6 +366,8 @@ export function CaissePage() {
 
           {chargementResume ? (
             <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+          ) : !resume ? (
+            <p style={{ color: 'var(--encre-douce)' }}>Aucune donnée pour cette date.</p>
           ) : (
             <form onSubmit={handleCloturer}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
