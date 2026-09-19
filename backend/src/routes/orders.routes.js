@@ -381,7 +381,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
         });
         await creerAlerte({
           merchantId: req.user.merchantId,
-          type: 'rupture_stock',
+          type: 'rupture_imminente',
           titre: 'Vente en rupture de stock',
           message: `${resolved.product.name} vendu en rupture de stock sur la commande ${formatOrderNumber(order)}.`,
           referenceId: order.id,
@@ -985,7 +985,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res)
         });
         await creerAlerte({
           merchantId: req.user.merchantId,
-          type: 'rupture_stock',
+          type: 'rupture_imminente',
           titre: 'Vente en rupture de stock',
           message: `${resolved.product.name} vendu en rupture de stock sur la commande ${formatOrderNumber(order)}.`,
           referenceId: order.id,
