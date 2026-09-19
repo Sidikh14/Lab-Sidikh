@@ -504,6 +504,166 @@ router.post('/:id/stock-movement', async (req, res) => {
   }
 });
 
+// POST /products/purchases
+// Entrée de stock pour PLUSIEURS articles en une seule fois, chez UN même
+// fournisseur (même paiement — comptant ou à crédit — et un seul montant
+// total pour tout l'achat). Même règles qu'une entrée simple
+// (POST /:id/stock-movement) mais appliquées à toute la liste d'articles
+// dans une seule transaction : soit tout est enregistré, soit rien ne
+// l'est. Le montant total de l'achat n'est rattaché qu'au PREMIER article
+// (les autres ont total_cost = null) pour que les sommes déjà utilisées
+// ailleurs (dette fournisseur, solde de caisse) ne comptent ce montant
+// qu'une seule fois — cette appli ne suit pas de coût par article.
+router.post('/purchases', async (req, res) => {
+  const { items, supplierId, movementDate, paymentMethod, totalCost, cashMethod, warehouseId: warehouseIdInput } = req.body;
+  const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
+
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Au moins un article est requis.' });
+  }
+  for (const item of items) {
+    if (!item.productId || typeof item.quantity !== 'number' || item.quantity <= 0) {
+      return res.status(400).json({ error: 'Article invalide dans la liste.' });
+    }
+  }
+  const productIds = items.map((i) => i.productId);
+  if (new Set(productIds).size !== productIds.length) {
+    return res.status(400).json({ error: 'Un même produit apparaît plusieurs fois — regroupez-le en une seule ligne.' });
+  }
+  if (!['comptant', 'a_credit'].includes(paymentMethod)) {
+    return res.status(400).json({ error: 'Mode de paiement invalide.' });
+  }
+  if (!Number(totalCost) || Number(totalCost) <= 0) {
+    return res.status(400).json({ error: "Le montant total de l'achat est requis." });
+  }
+  if (paymentMethod === 'a_credit' && !supplierId) {
+    return res.status(400).json({ error: 'Un fournisseur est requis pour un achat à crédit.' });
+  }
+  let cashMethodFinal = null;
+  if (paymentMethod === 'comptant') {
+    if (!MOYENS_PAIEMENT.includes(cashMethod)) {
+      return res.status(400).json({ error: 'Le moyen de paiement de la caisse (espèces, Wave...) est requis pour un achat au comptant.' });
+    }
+    cashMethodFinal = cashMethod;
+  }
+  const coutFinal = Number(totalCost);
+
+  const client = await pool.connect();
+  try {
+    const warehouseId = await resolveWarehouseId(req, client, warehouseIdInput);
+
+    // Même règle que pour une entrée simple : jamais de caisse négative.
+    // Un seul contrôle pour tout l'achat (un seul montant, une seule caisse).
+    if (cashMethodFinal) {
+      const soldeActuel = await getSoldeActuel(req, warehouseId, cashMethodFinal);
+      if (soldeActuel < coutFinal) {
+        return res.status(400).json({
+          error: `Solde insuffisant sur ${LABEL_METHODE[cashMethodFinal]} (solde actuel : ${Math.round(soldeActuel).toLocaleString('fr-FR')} FCFA, achat : ${Math.round(coutFinal).toLocaleString('fr-FR')} FCFA).`,
+        });
+      }
+    }
+
+    if (supplierId) {
+      const fournisseur = await client.query(
+        `SELECT id FROM suppliers WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+        [supplierId, req.user.merchantId]
+      );
+      if (fournisseur.rows.length === 0) {
+        return res.status(404).json({ error: 'Fournisseur introuvable.' });
+      }
+    }
+
+    await client.query('BEGIN');
+
+    const alertesStock = [];
+    const mouvementsCrees = [];
+
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index];
+
+      const productResult = await client.query(
+        `SELECT p.id, p.name, p.is_weighted, p.quantity_alert_threshold, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
+         FROM products p
+         LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
+         WHERE p.id = $1 AND p.merchant_id = $2 FOR UPDATE OF p`,
+        [item.productId, req.user.merchantId, warehouseId]
+      );
+      const product = productResult.rows[0];
+
+      if (!product) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: `Produit introuvable (${item.productId}).` });
+      }
+      if (!product.is_weighted && !Number.isInteger(item.quantity)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `${product.name} n'est pas vendu au poids : la quantité doit être un nombre entier.` });
+      }
+
+      const newQuantity = Number(product.quantity_in_stock) + item.quantity;
+
+      await client.query(
+        `INSERT INTO product_stock (merchant_id, product_id, warehouse_id, quantity_in_stock)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (product_id, warehouse_id)
+         DO UPDATE SET quantity_in_stock = $4`,
+        [req.user.merchantId, product.id, warehouseId, newQuantity]
+      );
+
+      const mouvement = await client.query(
+        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, cash_method, warehouse_id)
+         VALUES ($1, $2, $3, 'entree', $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+        [
+          req.user.merchantId,
+          product.id,
+          req.user.id,
+          item.quantity,
+          'Réapprovisionnement (achat groupé)',
+          supplierId || null,
+          movementDate || null,
+          paymentMethod,
+          index === 0 ? coutFinal : null,
+          cashMethodFinal,
+          warehouseId,
+        ]
+      );
+      mouvementsCrees.push(mouvement.rows[0].id);
+
+      const seuil = product.quantity_alert_threshold;
+      const etaitDejaBas = product.quantity_in_stock <= seuil;
+      const franchitSeuil = !etaitDejaBas && newQuantity <= seuil;
+      const entreEnRupture = newQuantity === 0 && product.quantity_in_stock > 0;
+      if (franchitSeuil || entreEnRupture) {
+        alertesStock.push({ productId: product.id, productName: product.name, newQuantity });
+      }
+    }
+
+    await client.query('COMMIT');
+
+    // Fire-and-forget après le COMMIT, comme partout ailleurs : une alerte
+    // qui échoue ne doit jamais faire échouer l'achat déjà enregistré.
+    alertesStock.forEach(({ productId, productName, newQuantity }) => {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: newQuantity === 0 ? 'rupture_stock' : 'seuil_stock',
+        titre: newQuantity === 0 ? 'Rupture de stock' : "Stock sous le seuil d'alerte",
+        message: newQuantity === 0
+          ? `${productName} est en rupture de stock.`
+          : `${productName} est passé sous le seuil d'alerte (${newQuantity} restant(s)).`,
+        referenceId: productId,
+      }).catch((err) => console.error('Erreur alerte stock (achat groupé) :', err));
+    });
+
+    res.status(201).json({ warehouseId, movementIds: mouvementsCrees });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors de l'enregistrement de l'achat groupé." });
+  } finally {
+    client.release();
+  }
+});
+
 // DELETE /products/:id
 router.delete('/:id', requireRole('manager'), async (req, res) => {
   try {

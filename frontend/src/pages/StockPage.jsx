@@ -123,17 +123,28 @@ export function StockPage() {
   const [augmentationGlobale, setAugmentationGlobale] = useState('');
   const [enregistrementPrix, setEnregistrementPrix] = useState(false);
   const [modaleEntreeOuverte, setModaleEntreeOuverte] = useState(false);
-  const [entreeStock, setEntreeStock] = useState({
-    productId: '',
-    quantity: '',
+  const entreeStockVide = {
+    items: [{ productId: '', quantity: '' }],
     supplierId: '',
     movementDate: new Date().toISOString().slice(0, 10),
     paymentMethod: 'comptant',
     totalCost: '',
     cashMethod: 'especes',
-  });
+  };
+  const [entreeStock, setEntreeStock] = useState(entreeStockVide);
   const [enregistrementEntree, setEnregistrementEntree] = useState(false);
-  const produitEntreeSelectionne = products.find((p) => p.id === entreeStock.productId);
+  function ajouterLigneEntree() {
+    setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '' }] }));
+  }
+  function retirerLigneEntree(index) {
+    setEntreeStock((prev) => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
+  }
+  function modifierLigneEntree(index, champ, valeur) {
+    setEntreeStock((prev) => ({
+      ...prev,
+      items: prev.items.map((it, i) => (i === index ? { ...it, [champ]: valeur } : it)),
+    }));
+  }
   const [modaleFournisseurRapide, setModaleFournisseurRapide] = useState(false);
   const [nouveauFournisseurRapide, setNouveauFournisseurRapide] = useState({ name: '', phone: '' });
   const [produitEnEdition, setProduitEnEdition] = useState(null);
@@ -348,41 +359,41 @@ export function StockPage() {
 
   async function handleEntreeStock(e) {
     e.preventDefault();
-    if (!entreeStock.productId || !Number(entreeStock.quantity)) {
-      setErreur('Choisissez un produit et une quantité.');
+    const items = entreeStock.items.filter((it) => it.productId);
+    if (items.length === 0) {
+      setErreur('Choisissez au moins un produit.');
+      return;
+    }
+    if (items.some((it) => !Number(it.quantity) || Number(it.quantity) <= 0)) {
+      setErreur('Chaque article doit avoir une quantité valide.');
+      return;
+    }
+    const productIdsChoisis = items.map((it) => it.productId);
+    if (new Set(productIdsChoisis).size !== productIdsChoisis.length) {
+      setErreur('Un même produit apparaît plusieurs fois — regroupez-le en une seule ligne.');
       return;
     }
     if (entreeStock.paymentMethod === 'a_credit' && (!entreeStock.supplierId || !Number(entreeStock.totalCost))) {
-      setErreur('Une entrée à crédit nécessite un fournisseur et le montant total de l\'achat.');
+      setErreur('Un achat à crédit nécessite un fournisseur et le montant total de l\'achat.');
       return;
     }
     if (entreeStock.paymentMethod === 'comptant' && !Number(entreeStock.totalCost)) {
-      setErreur('Le montant total de l\'achat est requis pour une entrée au comptant (pour le suivi de caisse).');
+      setErreur('Le montant total de l\'achat est requis pour un achat au comptant (pour le suivi de caisse).');
       return;
     }
     setEnregistrementEntree(true);
     try {
-      await api.recordStockMovement(entreeStock.productId, {
-        movementType: 'entree',
-        quantity: Number(entreeStock.quantity),
+      await api.recordStockPurchase({
+        items: items.map((it) => ({ productId: it.productId, quantity: Number(it.quantity) })),
         supplierId: entreeStock.supplierId || undefined,
         movementDate: entreeStock.movementDate || undefined,
-        reason: 'Réapprovisionnement',
         paymentMethod: entreeStock.paymentMethod,
-        totalCost: entreeStock.totalCost ? Number(entreeStock.totalCost) : undefined,
+        totalCost: Number(entreeStock.totalCost),
         cashMethod: entreeStock.paymentMethod === 'comptant' ? entreeStock.cashMethod : undefined,
         warehouseId: estManager ? warehouseId : undefined,
       });
       setModaleEntreeOuverte(false);
-      setEntreeStock({
-        productId: '',
-        quantity: '',
-        supplierId: '',
-        movementDate: new Date().toISOString().slice(0, 10),
-        paymentMethod: 'comptant',
-        totalCost: '',
-        cashMethod: 'especes',
-      });
+      setEntreeStock(entreeStockVide);
       charger();
     } catch (err) {
       setErreur(err.message);
@@ -831,34 +842,54 @@ export function StockPage() {
         <div className="modale-fond" onClick={() => setModaleEntreeOuverte(false)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
             <h2>Entrée de stock</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginTop: -8, marginBottom: 16 }}>
+              Plusieurs articles chez le même fournisseur, en un seul achat.
+            </p>
             <form onSubmit={handleEntreeStock}>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="e-produit">Produit</label>
-                <select
-                  id="e-produit"
-                  className="champ"
-                  value={entreeStock.productId}
-                  onChange={(e) => setEntreeStock({ ...entreeStock, productId: e.target.value })}
-                >
-                  <option value="">Choisir un produit</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="champ-groupe">
-                <label className="etiquette" htmlFor="e-qte">
-                  Quantité achetée{produitEntreeSelectionne?.is_weighted ? ' (kg)' : ''}
-                </label>
-                <input
-                  id="e-qte"
-                  type="number"
-                  min={produitEntreeSelectionne?.is_weighted ? '0.1' : '1'}
-                  step={produitEntreeSelectionne?.is_weighted ? '0.1' : '1'}
-                  className="champ"
-                  value={entreeStock.quantity}
-                  onChange={(e) => setEntreeStock({ ...entreeStock, quantity: e.target.value })}
-                />
+                <label className="etiquette">Articles</label>
+                {entreeStock.items.map((item, index) => {
+                  const produitLigne = products.find((p) => p.id === item.productId);
+                  return (
+                    <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-start' }}>
+                      <select
+                        className="champ"
+                        style={{ flex: 2 }}
+                        value={item.productId}
+                        onChange={(e) => modifierLigneEntree(index, 'productId', e.target.value)}
+                      >
+                        <option value="">Choisir un produit</option>
+                        {products.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min={produitLigne?.is_weighted ? '0.1' : '1'}
+                        step={produitLigne?.is_weighted ? '0.1' : '1'}
+                        className="champ"
+                        style={{ flex: 1 }}
+                        placeholder={produitLigne?.is_weighted ? 'Qté (kg)' : 'Qté'}
+                        value={item.quantity}
+                        onChange={(e) => modifierLigneEntree(index, 'quantity', e.target.value)}
+                      />
+                      {entreeStock.items.length > 1 && (
+                        <button
+                          type="button"
+                          className="btn"
+                          style={{ padding: '8px 10px' }}
+                          onClick={() => retirerLigneEntree(index)}
+                          aria-label="Retirer cet article"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+                <button type="button" className="btn" onClick={ajouterLigneEntree}>
+                  + Ajouter un article
+                </button>
               </div>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="e-fournisseur">Fournisseur (facultatif)</label>
@@ -922,7 +953,7 @@ export function StockPage() {
               </div>
               {(entreeStock.paymentMethod === 'a_credit' || entreeStock.paymentMethod === 'comptant') && (
                 <div className="champ-groupe">
-                  <label className="etiquette" htmlFor="e-montant">Montant total de l'achat (FCFA)</label>
+                  <label className="etiquette" htmlFor="e-montant">Montant total de l'achat — tous articles (FCFA)</label>
                   <input
                     id="e-montant"
                     type="number"

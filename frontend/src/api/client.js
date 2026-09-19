@@ -76,6 +76,8 @@ export const api = {
     request(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   recordStockMovement: (id, data) =>
     request(`/products/${id}/stock-movement`, { method: 'POST', body: JSON.stringify(data) }),
+  recordStockPurchase: (data) =>
+    request('/products/purchases', { method: 'POST', body: JSON.stringify(data) }),
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
   addProductUnit: (productId, data) =>
     request(`/products/${productId}/units`, { method: 'POST', body: JSON.stringify(data) }),
