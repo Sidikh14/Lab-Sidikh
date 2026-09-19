@@ -89,15 +89,16 @@ const FILTRES_STATUT = [
   { value: 'desactives', label: 'Désactivés' },
 ];
 
-// Un manager peut créer des gérants et des vendeurs ; un gérant ne peut
-// créer que des vendeurs. La liste des rôles proposés dépend de qui est connecté.
+// Seul le manager peut créer des membres (gérant, vendeur, caissier) — un
+// gérant ne constitue plus son équipe lui-même. rolesProposes est donc vide
+// pour lui, ce qui masque automatiquement le bouton "Ajouter un membre"
+// plus bas (`rolesProposes.length > 0`).
 const ROLES_PROPOSES = {
   manager: [
     { value: 'gerant', label: 'Gérant' },
     { value: 'vendeur', label: 'Vendeur' },
     { value: 'caissier', label: 'Caissier' },
   ],
-  gerant: [{ value: 'vendeur', label: 'Vendeur' }],
 };
 
 const MODULES = [

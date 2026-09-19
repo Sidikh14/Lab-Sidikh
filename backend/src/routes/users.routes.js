@@ -8,13 +8,13 @@ const { logActivity } = require('../utils/activityLog');
 const router = express.Router();
 router.use(authenticate);
 
-// Qui peut créer qui : un manager peut créer des gérants et des vendeurs,
-// un gérant ne peut créer que des vendeurs. Personne ne crée de second
-// manager depuis cette route (ça reste le rôle du premier compte créé
-// à l'inscription du commerce).
+// Qui peut créer qui : seul le manager ajoute des membres à l'équipe
+// (gérants, vendeurs, caissiers). Le gérant ne crée plus personne — il
+// gère sa boutique mais ne peut pas constituer son équipe lui-même.
+// Personne ne crée de second manager depuis cette route (ça reste le rôle
+// du premier compte créé à l'inscription du commerce).
 const ROLES_AUTORISES_PAR_CREATEUR = {
   manager: ['gerant', 'vendeur', 'caissier'],
-  gerant: ['vendeur'],
 };
 
 // GET /users — liste de l'équipe du commerce (manager et gérant uniquement)
@@ -38,8 +38,8 @@ router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
   }
 });
 
-// POST /users — créer un membre de l'équipe (gérant ou vendeur selon le rôle du créateur)
-router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
+// POST /users — créer un membre de l'équipe (manager uniquement)
+router.post('/', requireRole('manager'), async (req, res) => {
   const { fullName, email, password, role, warehouseId } = req.body;
 
   if (!fullName || !email || !password || !role) {
@@ -65,11 +65,6 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
     );
     if (boutique.rows.length === 0) {
       return res.status(404).json({ error: 'Boutique introuvable.' });
-    }
-    // Un gérant, lui-même confiné à sa boutique, ne peut créer des
-    // membres que pour SA boutique.
-    if (req.user.role === 'gerant' && req.user.warehouseId !== warehouseId) {
-      return res.status(403).json({ error: "Vous ne pouvez créer des membres que pour votre propre boutique." });
     }
 
     // Plafond de comptes fixé par le propriétaire de la plateforme
