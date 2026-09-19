@@ -9,20 +9,49 @@ const router = express.Router();
 router.use(authenticate);
 router.use(requireRole('manager', 'gerant'));
 
-// GET /purchase-orders — liste des commandes fournisseurs récentes
+// Même logique que partout ailleurs : manager choisit toujours
+// explicitement la boutique, le gérant utilise la sienne (assignée via
+// req.user.warehouseId).
+async function resolveWarehouseId(req, dbClient, providedId) {
+  const runner = dbClient || pool;
+
+  if (req.user.role === 'manager') {
+    if (!providedId) {
+      throw { status: 400, message: 'La boutique est requise.' };
+    }
+    const result = await runner.query(
+      `SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+      [providedId, req.user.merchantId]
+    );
+    if (result.rows.length === 0) {
+      throw { status: 404, message: 'Boutique introuvable.' };
+    }
+    return providedId;
+  }
+
+  if (!req.user.warehouseId) {
+    throw { status: 403, message: "Vous n'êtes assigné à aucune boutique." };
+  }
+  return req.user.warehouseId;
+}
+
+// GET /purchase-orders — liste des commandes fournisseurs récentes, filtrée
+// par boutique (le gérant ne voit que les siennes, le manager choisit).
 router.get('/', async (req, res) => {
   try {
+    const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
     const result = await pool.query(
       `SELECT po.id, po.status, po.total_amount, po.created_at, s.name AS supplier_name
        FROM purchase_orders po
        JOIN suppliers s ON s.id = po.supplier_id
-       WHERE po.merchant_id = $1
+       WHERE po.merchant_id = $1 AND po.warehouse_id = $2
        ORDER BY po.created_at DESC
        LIMIT 100`,
-      [req.user.merchantId]
+      [req.user.merchantId, warehouseId]
     );
     res.json(result.rows);
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération des commandes fournisseurs.' });
   }
@@ -56,6 +85,9 @@ router.get('/:id', async (req, res) => {
   try {
     const po = await getPurchaseOrderDetail(req.user.merchantId, req.params.id);
     if (!po) return res.status(404).json({ error: 'Commande fournisseur introuvable.' });
+    if (req.user.role !== 'manager' && po.warehouse_id !== req.user.warehouseId) {
+      return res.status(403).json({ error: 'Cette commande ne concerne pas votre boutique.' });
+    }
     res.json(po);
   } catch (err) {
     console.error(err);
@@ -66,7 +98,7 @@ router.get('/:id', async (req, res) => {
 // POST /purchase-orders
 // items attendu : [{ productId, quantity, unitCost }]
 router.post('/', async (req, res) => {
-  const { supplierId, items, notes } = req.body;
+  const { supplierId, items, notes, warehouseId: warehouseIdInput } = req.body;
 
   if (!supplierId || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'Un fournisseur et au moins un article sont requis.' });
@@ -74,6 +106,8 @@ router.post('/', async (req, res) => {
 
   const client = await pool.connect();
   try {
+    const warehouseId = await resolveWarehouseId(req, client, warehouseIdInput);
+
     await client.query('BEGIN');
 
     const supplierResult = await client.query(
@@ -103,9 +137,9 @@ router.post('/', async (req, res) => {
     }
 
     const poResult = await client.query(
-      `INSERT INTO purchase_orders (merchant_id, supplier_id, created_by, status, total_amount, notes)
-       VALUES ($1, $2, $3, 'envoyee', $4, $5) RETURNING *`,
-      [req.user.merchantId, supplierId, req.user.id, totalAmount, notes || null]
+      `INSERT INTO purchase_orders (merchant_id, supplier_id, created_by, status, total_amount, notes, warehouse_id)
+       VALUES ($1, $2, $3, 'envoyee', $4, $5, $6) RETURNING *`,
+      [req.user.merchantId, supplierId, req.user.id, totalAmount, notes || null, warehouseId]
     );
     const po = poResult.rows[0];
 
@@ -137,6 +171,15 @@ router.patch('/:id/status', async (req, res) => {
     return res.status(400).json({ error: 'Statut invalide.' });
   }
   try {
+    const existant = await pool.query(
+      `SELECT warehouse_id FROM purchase_orders WHERE id = $1 AND merchant_id = $2`,
+      [req.params.id, req.user.merchantId]
+    );
+    if (existant.rows.length === 0) return res.status(404).json({ error: 'Commande introuvable.' });
+    if (req.user.role !== 'manager' && existant.rows[0].warehouse_id !== req.user.warehouseId) {
+      return res.status(403).json({ error: 'Cette commande ne concerne pas votre boutique.' });
+    }
+
     const result = await pool.query(
       `UPDATE purchase_orders SET status = $1 WHERE id = $2 AND merchant_id = $3 RETURNING *`,
       [status, req.params.id, req.user.merchantId]
@@ -154,6 +197,9 @@ router.get('/:id/pdf', async (req, res) => {
   try {
     const po = await getPurchaseOrderDetail(req.user.merchantId, req.params.id);
     if (!po) return res.status(404).json({ error: 'Commande fournisseur introuvable.' });
+    if (req.user.role !== 'manager' && po.warehouse_id !== req.user.warehouseId) {
+      return res.status(403).json({ error: 'Cette commande ne concerne pas votre boutique.' });
+    }
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="bon-de-commande-${po.id.slice(0, 8)}.pdf"`);

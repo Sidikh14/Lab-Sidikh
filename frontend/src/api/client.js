@@ -141,7 +141,7 @@ export const api = {
   deleteSupplier: (id) => request(`/suppliers/${id}`, { method: 'DELETE' }),
   downloadSupplierPurchasesPdf: (from, to) => previewFile(`/suppliers/purchases/pdf?from=${from}&to=${to}`),
 
-  getPurchaseOrders: () => request('/purchase-orders'),
+  getPurchaseOrders: (warehouseId) => request(`/purchase-orders${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   getPurchaseOrder: (id) => request(`/purchase-orders/${id}`),
   createPurchaseOrder: (data) =>
     request('/purchase-orders', { method: 'POST', body: JSON.stringify(data) }),
@@ -171,24 +171,24 @@ export const api = {
     request(`/admin/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
   deleteAdminUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
 
-  getCashSummary: (date) => request(`/cash/summary${date ? `?date=${date}` : ''}`),
-  getCashBalances: () => request('/cash/balances'),
+  getCashSummary: (date, warehouseId) => request(`/cash/summary?${date ? `date=${date}&` : ''}warehouseId=${warehouseId}`),
+  getCashBalances: (warehouseId) => request(`/cash/balances?warehouseId=${warehouseId}`),
   createCashClosing: (data) =>
     request('/cash/closings', { method: 'POST', body: JSON.stringify(data) }),
-  getCashClosings: (from, to) => request(`/cash/closings?from=${from}&to=${to}`),
+  getCashClosings: (from, to, warehouseId) => request(`/cash/closings?from=${from}&to=${to}&warehouseId=${warehouseId}`),
   createCashExpense: (data) =>
     request('/cash/expenses', { method: 'POST', body: JSON.stringify(data) }),
-  getCashExpenses: (from, to, method) =>
-    request(`/cash/expenses?from=${from}&to=${to}${method ? `&method=${method}` : ''}`),
+  getCashExpenses: (from, to, method, warehouseId) =>
+    request(`/cash/expenses?from=${from}&to=${to}&warehouseId=${warehouseId}${method ? `&method=${method}` : ''}`),
   createCashDeposit: (data) =>
     request('/cash/deposits', { method: 'POST', body: JSON.stringify(data) }),
-  getCashDeposits: (from, to, method) =>
-    request(`/cash/deposits?from=${from}&to=${to}${method ? `&method=${method}` : ''}`),
-  getCashMovements: (method, from, to, cashier) =>
-    request(`/cash/movements?method=${method}&from=${from}&to=${to}${cashier && cashier !== 'tous' ? `&cashier=${cashier}` : ''}`),
-  downloadCashMovementsPdf: (method, from, to, cashier) =>
-    previewFile(`/cash/movements/pdf?method=${method}&from=${from}&to=${to}${cashier && cashier !== 'tous' ? `&cashier=${cashier}` : ''}`),
-  getCashCashiers: () => request('/cash/cashiers'),
+  getCashDeposits: (from, to, method, warehouseId) =>
+    request(`/cash/deposits?from=${from}&to=${to}&warehouseId=${warehouseId}${method ? `&method=${method}` : ''}`),
+  getCashMovements: (method, from, to, cashier, warehouseId) =>
+    request(`/cash/movements?method=${method}&from=${from}&to=${to}&warehouseId=${warehouseId}${cashier && cashier !== 'tous' ? `&cashier=${cashier}` : ''}`),
+  downloadCashMovementsPdf: (method, from, to, cashier, warehouseId) =>
+    previewFile(`/cash/movements/pdf?method=${method}&from=${from}&to=${to}&warehouseId=${warehouseId}${cashier && cashier !== 'tous' ? `&cashier=${cashier}` : ''}`),
+  getCashCashiers: (warehouseId) => request(`/cash/cashiers?warehouseId=${warehouseId}`),
   downloadProductsPdf: (warehouseId) => previewFile(`/products/pdf${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
 
   getSalaries: (month) => request(`/salaries${month ? `?month=${month}` : ''}`),

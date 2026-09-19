@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 
 const STATUTS = ['envoyee', 'recue', 'annulee'];
 const LABEL_STATUT = { envoyee: 'Envoyée', recue: 'Reçue', annulee: 'Annulée' };
@@ -20,6 +21,9 @@ function IconBonAchat() {
 }
 
 export function PurchaseOrdersPage() {
+  const { user } = useAuth();
+  const estManager = user.role === 'manager';
+
   const [commandes, setCommandes] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -30,9 +34,35 @@ export function PurchaseOrdersPage() {
   const [notes, setNotes] = useState('');
   const [lignes, setLignes] = useState([{ productId: '', quantity: 1, unitCost: '' }]);
 
+  // Boutique active — même sélecteur/clé localStorage que les autres pages.
+  const [warehouses, setWarehouses] = useState([]);
+  const [warehouseId, setWarehouseId] = useState(() => (estManager ? localStorage.getItem('boutiqueActiveId') || '' : ''));
+  const [chargementBoutiques, setChargementBoutiques] = useState(estManager);
+  const activeWarehouseId = estManager ? warehouseId : user.warehouseId;
+
+  useEffect(() => {
+    if (!estManager) return;
+    api.getWarehouses()
+      .then((liste) => {
+        setWarehouses(liste);
+        const actives = liste.filter((w) => w.is_active);
+        setWarehouseId((avant) => {
+          if (avant && actives.some((w) => w.id === avant)) return avant;
+          return actives[0]?.id || '';
+        });
+      })
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementBoutiques(false));
+  }, [estManager]);
+
+  useEffect(() => {
+    if (estManager && warehouseId) localStorage.setItem('boutiqueActiveId', warehouseId);
+  }, [estManager, warehouseId]);
+
   function charger() {
+    if (!activeWarehouseId) return;
     setChargement(true);
-    Promise.all([api.getPurchaseOrders(), api.getSuppliers(), api.getProducts()])
+    Promise.all([api.getPurchaseOrders(activeWarehouseId), api.getSuppliers(), api.getProducts(activeWarehouseId)])
       .then(([po, s, p]) => {
         setCommandes(po);
         setSuppliers(s);
@@ -42,7 +72,7 @@ export function PurchaseOrdersPage() {
       .finally(() => setChargement(false));
   }
 
-  useEffect(charger, []);
+  useEffect(charger, [activeWarehouseId]);
 
   function ajouterLigne() {
     setLignes([...lignes, { productId: '', quantity: 1, unitCost: '' }]);
@@ -74,7 +104,7 @@ export function PurchaseOrdersPage() {
     }
 
     try {
-      await api.createPurchaseOrder({ supplierId, items, notes });
+      await api.createPurchaseOrder({ supplierId, items, notes, warehouseId: activeWarehouseId });
       setModaleOuverte(false);
       setSupplierId('');
       setNotes('');
@@ -106,13 +136,29 @@ export function PurchaseOrdersPage() {
     <>
       <div className="entete-page">
         <h1>Commandes fournisseurs</h1>
+        {estManager && warehouses.length > 0 && (
+          <select
+            className="champ"
+            style={{ minWidth: 180 }}
+            value={warehouseId}
+            onChange={(e) => setWarehouseId(e.target.value)}
+          >
+            {warehouses.filter((w) => w.is_active).map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
+        )}
       </div>
+
+      {estManager && !chargementBoutiques && warehouses.length === 0 && (
+        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de commander.</p>
+      )}
 
       {erreur && <div className="erreur">{erreur}</div>}
 
       <div className="barre-outils">
         <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{commandes.length} commande(s)</span>
-        <button className="btn btn-principal" onClick={() => setModaleOuverte(true)} disabled={suppliers.length === 0}>
+        <button className="btn btn-principal" onClick={() => setModaleOuverte(true)} disabled={suppliers.length === 0 || !activeWarehouseId}>
           Nouvelle commande
         </button>
       </div>

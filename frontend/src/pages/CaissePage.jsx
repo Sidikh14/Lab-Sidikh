@@ -42,9 +42,36 @@ export function CaissePage() {
   // l'écart à la clôture : il saisit juste son solde réel compté et valide.
   // Tout le détail (théorique, écart) reste réservé à manager/gérant.
   const estCaissier = user?.role === 'caissier';
+  const estManager = user?.role === 'manager';
 
   const [onglet, setOnglet] = useState('cloture');
   const [erreur, setErreur] = useState('');
+
+  // Boutique active — même sélecteur et même clé localStorage que les
+  // autres pages ; les rôles assignés utilisent directement la leur.
+  const [warehouses, setWarehouses] = useState([]);
+  const [warehouseId, setWarehouseId] = useState(() => (estManager ? localStorage.getItem('boutiqueActiveId') || '' : ''));
+  const [chargementBoutiques, setChargementBoutiques] = useState(estManager);
+  const activeWarehouseId = estManager ? warehouseId : user?.warehouseId;
+
+  useEffect(() => {
+    if (!estManager) return;
+    api.getWarehouses()
+      .then((liste) => {
+        setWarehouses(liste);
+        const actives = liste.filter((w) => w.is_active);
+        setWarehouseId((avant) => {
+          if (avant && actives.some((w) => w.id === avant)) return avant;
+          return actives[0]?.id || '';
+        });
+      })
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementBoutiques(false));
+  }, [estManager]);
+
+  useEffect(() => {
+    if (estManager && warehouseId) localStorage.setItem('boutiqueActiveId', warehouseId);
+  }, [estManager, warehouseId]);
 
   // --- Soldes actuels par moyen de paiement (haut de page) ---
   const [soldes, setSoldes] = useState(null);
@@ -55,12 +82,13 @@ export function CaissePage() {
       setChargementSoldes(false);
       return;
     }
+    if (!activeWarehouseId) return;
     api
-      .getCashBalances()
+      .getCashBalances(activeWarehouseId)
       .then(setSoldes)
       .catch((err) => setErreur(err.message))
       .finally(() => setChargementSoldes(false));
-  }, [estCaissier]);
+  }, [estCaissier, activeWarehouseId]);
 
   function soldeDe(method) {
     return soldes?.find((s) => s.method === method)?.balance ?? 0;
@@ -74,9 +102,10 @@ export function CaissePage() {
   const [enregistrementCloture, setEnregistrementCloture] = useState(false);
 
   function chargerResume() {
+    if (!activeWarehouseId) return;
     setChargementResume(true);
     api
-      .getCashSummary(dateCloture)
+      .getCashSummary(dateCloture, activeWarehouseId)
       .then((data) => {
         setResume(data);
         const initial = {};
@@ -89,7 +118,7 @@ export function CaissePage() {
       .finally(() => setChargementResume(false));
   }
 
-  useEffect(chargerResume, [dateCloture]);
+  useEffect(chargerResume, [dateCloture, activeWarehouseId]);
 
   async function handleCloturer(e) {
     e.preventDefault();
@@ -104,7 +133,7 @@ export function CaissePage() {
 
     setEnregistrementCloture(true);
     try {
-      await api.createCashClosing({ date: dateCloture, entries });
+      await api.createCashClosing({ date: dateCloture, entries, warehouseId: activeWarehouseId });
       chargerResume();
     } catch (err) {
       setErreur(err.message);
@@ -126,9 +155,10 @@ export function CaissePage() {
   const [periodeSorties, setPeriodeSorties] = useState({ from: dateAujourdHui(), to: dateAujourdHui() });
 
   function chargerSorties() {
+    if (!activeWarehouseId) return;
     setChargementSorties(true);
     api
-      .getCashExpenses(periodeSorties.from, periodeSorties.to)
+      .getCashExpenses(periodeSorties.from, periodeSorties.to, undefined, activeWarehouseId)
       .then(setSorties)
       .catch((err) => setErreur(err.message))
       .finally(() => setChargementSorties(false));
@@ -137,7 +167,7 @@ export function CaissePage() {
   useEffect(() => {
     if (onglet === 'sorties') chargerSorties();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onglet, periodeSorties]);
+  }, [onglet, periodeSorties, activeWarehouseId]);
 
   async function handleAjouterSortie(e) {
     e.preventDefault();
@@ -150,6 +180,7 @@ export function CaissePage() {
       await api.createCashExpense({
         ...nouvelleSortie,
         amount: Number(nouvelleSortie.amount),
+        warehouseId: activeWarehouseId,
       });
       setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui() });
       chargerSorties();
@@ -173,9 +204,10 @@ export function CaissePage() {
   const [periodeEntrees, setPeriodeEntrees] = useState({ from: dateAujourdHui(), to: dateAujourdHui() });
 
   function chargerEntrees() {
+    if (!activeWarehouseId) return;
     setChargementEntrees(true);
     api
-      .getCashDeposits(periodeEntrees.from, periodeEntrees.to)
+      .getCashDeposits(periodeEntrees.from, periodeEntrees.to, undefined, activeWarehouseId)
       .then(setEntrees)
       .catch((err) => setErreur(err.message))
       .finally(() => setChargementEntrees(false));
@@ -184,7 +216,7 @@ export function CaissePage() {
   useEffect(() => {
     if (onglet === 'entrees') chargerEntrees();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onglet, periodeEntrees]);
+  }, [onglet, periodeEntrees, activeWarehouseId]);
 
   async function handleAjouterEntree(e) {
     e.preventDefault();
@@ -197,6 +229,7 @@ export function CaissePage() {
       await api.createCashDeposit({
         ...nouvelleEntree,
         amount: Number(nouvelleEntree.amount),
+        warehouseId: activeWarehouseId,
       });
       setNouvelleEntree({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui() });
       chargerEntrees();
@@ -216,9 +249,10 @@ export function CaissePage() {
   const [caissiers, setCaissiers] = useState([]);
 
   function chargerReleve() {
+    if (!activeWarehouseId) return;
     setChargementReleve(true);
     api
-      .getCashMovements(releveMoyen, periodeReleve.from, periodeReleve.to, releveCaissier)
+      .getCashMovements(releveMoyen, periodeReleve.from, periodeReleve.to, releveCaissier, activeWarehouseId)
       .then(setMouvementsReleve)
       .catch((err) => setErreur(err.message))
       .finally(() => setChargementReleve(false));
@@ -227,20 +261,36 @@ export function CaissePage() {
   useEffect(() => {
     if (onglet === 'releves') chargerReleve();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onglet, releveCaissier]);
+  }, [onglet, releveCaissier, activeWarehouseId]);
 
   useEffect(() => {
-    if (onglet === 'releves' && caissiers.length === 0) {
-      api.getCashCashiers().then(setCaissiers).catch((err) => setErreur(err.message));
+    if (onglet === 'releves' && activeWarehouseId) {
+      api.getCashCashiers(activeWarehouseId).then(setCaissiers).catch((err) => setErreur(err.message));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onglet]);
+  }, [onglet, activeWarehouseId]);
 
   return (
     <>
       <div className="entete-page">
         <h1>Caisse</h1>
+        {estManager && warehouses.length > 0 && (
+          <select
+            className="champ"
+            style={{ minWidth: 180 }}
+            value={warehouseId}
+            onChange={(e) => setWarehouseId(e.target.value)}
+          >
+            {warehouses.filter((w) => w.is_active).map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
+        )}
       </div>
+
+      {estManager && !chargementBoutiques && warehouses.length === 0 && (
+        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de gérer la caisse.</p>
+      )}
 
       {erreur && <div className="erreur">{erreur}</div>}
 
@@ -580,7 +630,7 @@ export function CaissePage() {
             <button
               className="btn"
               style={{ alignSelf: 'flex-end' }}
-              onClick={() => api.downloadCashMovementsPdf(releveMoyen, periodeReleve.from, periodeReleve.to, releveCaissier).catch((err) => setErreur(err.message))}
+              onClick={() => api.downloadCashMovementsPdf(releveMoyen, periodeReleve.from, periodeReleve.to, releveCaissier, activeWarehouseId).catch((err) => setErreur(err.message))}
             >
               Exporter PDF
             </button>
