@@ -61,6 +61,9 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
   const [typeReduction, setTypeReduction] = useState('remise');
   const [modeReduction, setModeReduction] = useState('pourcentage');
   const [valeurReduction, setValeurReduction] = useState('');
+  const [avanceActive, setAvanceActive] = useState(false);
+  const [montantAvance, setMontantAvance] = useState('');
+  const [moyenAvance, setMoyenAvance] = useState('especes');
 
   const estManager = user?.role === 'manager';
   const estClientDePassage = !commande.client_id;
@@ -106,6 +109,16 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
       setErreur('Le montant reçu est inférieur au total à payer.');
       return;
     }
+    if (estACredit && avanceActive) {
+      if (!montantAvance || Number(montantAvance) <= 0) {
+        setErreur("Montant de l'avance invalide.");
+        return;
+      }
+      if (Number(montantAvance) > totalAPayer) {
+        setErreur("L'avance ne peut pas dépasser le total de la facture.");
+        return;
+      }
+    }
     setEnCours(true);
     setErreur('');
     try {
@@ -117,6 +130,9 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
         deliveryAddress: prevoirLivraison ? adresseLivraison.trim() : '',
         ...(estManager && reductionActive
           ? { discountType: typeReduction, discountMode: modeReduction, discountValue: Number(valeurReduction) }
+          : {}),
+        ...(estACredit && avanceActive
+          ? { advanceAmount: Number(montantAvance), advancePaymentMethod: moyenAvance }
           : {}),
       });
       if (resultat?.offline) {
@@ -389,11 +405,52 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
             <div
               style={{
                 background: 'var(--fond)', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)',
-                padding: '10px 14px', marginBottom: 12, fontSize: 13, color: 'var(--encre-douce)',
+                padding: '10px 14px', marginBottom: 12,
               }}
             >
-              Le montant total (<strong className="chiffre">{Math.round(totalAPayer).toLocaleString('fr-FR')} FCFA</strong>) sera
-              ajouté à la créance de <strong>{commande.client_name}</strong>, à régler plus tard depuis sa fiche client.
+              <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: avanceActive ? 10 : 0 }}>
+                Le montant total (<strong className="chiffre">{Math.round(totalAPayer).toLocaleString('fr-FR')} FCFA</strong>) sera
+                ajouté à la créance de <strong>{commande.client_name}</strong>, à régler plus tard depuis sa fiche client.
+              </p>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, marginTop: 10, marginBottom: avanceActive ? 10 : 0, cursor: 'pointer' }}>
+                <input type="checkbox" checked={avanceActive} onChange={(e) => setAvanceActive(e.target.checked)} />
+                Le client verse une avance maintenant
+              </label>
+              {avanceActive && (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 140px' }}>
+                    <label className="etiquette" htmlFor="e-montant-avance">Montant de l'avance (FCFA)</label>
+                    <input
+                      id="e-montant-avance"
+                      type="number"
+                      min="0"
+                      max={totalAPayer}
+                      className="champ"
+                      placeholder="Ex : 5000"
+                      value={montantAvance}
+                      onChange={(e) => setMontantAvance(e.target.value)}
+                    />
+                  </div>
+                  <div style={{ flex: '1 1 140px' }}>
+                    <label className="etiquette" htmlFor="e-moyen-avance">Moyen de paiement</label>
+                    <select
+                      id="e-moyen-avance"
+                      className="champ"
+                      value={moyenAvance}
+                      onChange={(e) => setMoyenAvance(e.target.value)}
+                    >
+                      {MOYENS_PAIEMENT.filter((m) => m.value !== 'a_credit').map((m) => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {Number(montantAvance) > 0 && (
+                    <p style={{ fontSize: 13, width: '100%', margin: 0 }}>
+                      Reste à payer après l'avance : <strong className="chiffre">{Math.round(Math.max(0, totalAPayer - Number(montantAvance))).toLocaleString('fr-FR')} FCFA</strong>
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <>

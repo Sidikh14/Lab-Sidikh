@@ -415,7 +415,10 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
 // Enregistre le moyen de paiement, le montant reçu, calcule la monnaie à
 // rendre, et fait passer la commande au statut "validée".
 router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res) => {
-  const { paymentMethod, amountReceived, needsDelivery, deliveryFee, deliveryAddress, discountType, discountMode, discountValue } = req.body;
+  const {
+    paymentMethod, amountReceived, needsDelivery, deliveryFee, deliveryAddress,
+    discountType, discountMode, discountValue, advanceAmount, advancePaymentMethod,
+  } = req.body;
 
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
@@ -443,6 +446,20 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
   }
 
   const estACredit = paymentMethod === 'a_credit';
+
+  // Avance versée directement par le client au moment de la vente à
+  // crédit (optionnelle) : réduit immédiatement la créance et impacte la
+  // caisse du moyen de paiement choisi pour l'avance (jamais 'a_credit').
+  const MOYENS_PAIEMENT_CONCRETS = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
+  const aAvance = estACredit && typeof advanceAmount === 'number' && advanceAmount > 0;
+  if (estACredit && advanceAmount !== undefined && advanceAmount !== null && advanceAmount !== 0) {
+    if (typeof advanceAmount !== 'number' || advanceAmount < 0) {
+      return res.status(400).json({ error: "Montant de l'avance invalide." });
+    }
+    if (!MOYENS_PAIEMENT_CONCRETS.includes(advancePaymentMethod)) {
+      return res.status(400).json({ error: "Moyen de paiement de l'avance invalide." });
+    }
+  }
 
   if (!estACredit && (typeof amountReceived !== 'number' || amountReceived < 0)) {
     return res.status(400).json({ error: 'Montant reçu invalide.' });
@@ -502,6 +519,10 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
 
     // Montant total réellement dû, réduction déduite et frais de livraison inclus.
     const montantDu = Number(order.total_amount) - montantReduction + fraisLivraison;
+
+    if (aAvance && advanceAmount > montantDu) {
+      return res.status(400).json({ error: "L'avance ne peut pas dépasser le montant total de la facture." });
+    }
 
     if (!estACredit && amountReceived < montantDu) {
       return res.status(400).json({ error: 'Le montant reçu est inférieur au total à payer.' });
@@ -585,6 +606,21 @@ router.patch('/:id/payment', requireRole('manager', 'caissier'), async (req, res
         userId: req.user.id,
         action: 'order_credit_sale',
         description: `a enregistré la commande ${formatOrderNumber(orderMisAJour)} à crédit (${formatMontant(orderMisAJour.total_amount)})`,
+      });
+    }
+
+    if (aAvance) {
+      await pool.query(
+        `INSERT INTO credit_payments (merchant_id, client_id, recorded_by, amount, payment_method, warehouse_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [req.user.merchantId, order.client_id, req.user.id, advanceAmount, advancePaymentMethod, order.warehouse_id]
+      );
+
+      await logActivity({
+        merchantId: req.user.merchantId,
+        userId: req.user.id,
+        action: 'order_credit_advance',
+        description: `a encaissé une avance de ${formatMontant(advanceAmount)} sur la commande ${formatOrderNumber(orderMisAJour)}`,
       });
     }
 
