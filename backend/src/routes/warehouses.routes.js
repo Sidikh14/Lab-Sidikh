@@ -35,6 +35,24 @@ router.post('/', requireRole('manager'), async (req, res) => {
   }
 
   try {
+    // Plafond fixé par le propriétaire de la plateforme (merchants.max_warehouses) :
+    // impossible à dépasser depuis cette route, seule la page d'administration
+    // du propriétaire peut l'augmenter (même principe que max_team_members).
+    const { rows: merchantRows } = await pool.query(
+      'SELECT max_warehouses FROM merchants WHERE id = $1',
+      [req.user.merchantId]
+    );
+    const { rows: countRows } = await pool.query(
+      'SELECT COUNT(*)::int AS total FROM warehouses WHERE merchant_id = $1',
+      [req.user.merchantId]
+    );
+    const plafond = merchantRows[0]?.max_warehouses ?? 3;
+    if (countRows[0].total >= plafond) {
+      return res.status(403).json({
+        error: `Limite de ${plafond} boutiques atteinte pour votre commerce. Contactez le propriétaire de la plateforme pour l'augmenter.`,
+      });
+    }
+
     const result = await pool.query(
       `INSERT INTO warehouses (merchant_id, name, address)
        VALUES ($1, $2, $3) RETURNING *`,

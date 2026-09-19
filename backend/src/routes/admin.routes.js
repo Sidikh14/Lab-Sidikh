@@ -14,11 +14,11 @@ router.use(requireRole('owner'));
 router.get('/merchants', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT m.id, m.business_name, m.sector, m.email, m.is_active, m.max_team_members, m.created_at,
-              COUNT(u.id)::int AS member_count
+      `SELECT m.id, m.business_name, m.sector, m.email, m.is_active,
+              m.max_team_members, m.max_warehouses, m.created_at,
+              (SELECT COUNT(*)::int FROM users u WHERE u.merchant_id = m.id) AS member_count,
+              (SELECT COUNT(*)::int FROM warehouses w WHERE w.merchant_id = m.id) AS warehouse_count
        FROM merchants m
-       LEFT JOIN users u ON u.merchant_id = m.id
-       GROUP BY m.id
        ORDER BY m.created_at DESC`
     );
     res.json(result.rows);
@@ -61,6 +61,27 @@ router.patch('/merchants/:id/limit', async (req, res) => {
     const result = await pool.query(
       `UPDATE merchants SET max_team_members = $1 WHERE id = $2 RETURNING id, business_name, max_team_members`,
       [maxTeamMembers, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Commerçant introuvable.' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour du plafond.' });
+  }
+});
+
+// PATCH /admin/merchants/:id/warehouse-limit — ajuster le nombre de
+// boutiques que ce commerçant est autorisé à créer (vérifié côté
+// /warehouses lors de la création d'une boutique par le manager).
+router.patch('/merchants/:id/warehouse-limit', async (req, res) => {
+  const { maxWarehouses } = req.body;
+  if (!Number.isInteger(maxWarehouses) || maxWarehouses < 1) {
+    return res.status(400).json({ error: 'maxWarehouses doit être un entier positif.' });
+  }
+  try {
+    const result = await pool.query(
+      `UPDATE merchants SET max_warehouses = $1 WHERE id = $2 RETURNING id, business_name, max_warehouses`,
+      [maxWarehouses, req.params.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Commerçant introuvable.' });
     res.json(result.rows[0]);
