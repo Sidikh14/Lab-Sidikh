@@ -118,6 +118,32 @@ export function DashboardPage() {
   const [alerteSalaires, setAlerteSalaires] = useState(null);
   const estManager = user.role === 'manager';
 
+  // Même boutique active que Stock/Ventes (mémorisée en local), pour que le
+  // manager n'ait pas à la re-choisir en changeant de page.
+  const [warehouses, setWarehouses] = useState([]);
+  const [warehouseId, setWarehouseId] = useState(() => (estManager ? localStorage.getItem('boutiqueActiveId') || '' : ''));
+  const [chargementBoutiques, setChargementBoutiques] = useState(estManager);
+
+  useEffect(() => {
+    if (!estManager) return;
+    api.getWarehouses()
+      .then((liste) => {
+        setWarehouses(liste);
+        const actives = liste.filter((w) => w.is_active);
+        setWarehouseId((avant) => {
+          if (avant && actives.some((w) => w.id === avant)) return avant;
+          return actives[0]?.id || '';
+        });
+      })
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementBoutiques(false));
+  }, [estManager]);
+
+  useEffect(() => {
+    if (estManager && warehouseId) localStorage.setItem('boutiqueActiveId', warehouseId);
+  }, [estManager, warehouseId]);
+
+
   // Notifications push : statut affiché sur le tableau de bord manager.
   const [statutNotifications, setStatutNotifications] = useState('indisponible'); // indisponible | inactif | actif | erreur
   const [activationEnCours, setActivationEnCours] = useState(false);
@@ -162,8 +188,11 @@ export function DashboardPage() {
   }
 
   function charger() {
+    // Un manager sans boutique sélectionnée ne doit pas appeler /products
+    // ni /orders (le backend renverrait 400 "La boutique est requise").
+    if (estManager && !warehouseId) return;
     setChargement(true);
-    Promise.all([api.getProducts(), api.getOrders(), api.getActivityToday()])
+    Promise.all([api.getProducts(estManager ? warehouseId : undefined), api.getOrders(estManager ? warehouseId : undefined), api.getActivityToday()])
       .then(([p, o, a]) => {
         setProducts(p);
         setOrders(o);
@@ -181,7 +210,7 @@ export function DashboardPage() {
     }
   }
 
-  useEffect(charger, []);
+  useEffect(charger, [warehouseId]);
 
   // Temps réel : une vente créée par un vendeur (widget "à encaisser"), ou
   // n'importe quelle activité journalisée ailleurs dans l'app (encaissement,
@@ -306,7 +335,23 @@ export function DashboardPage() {
     <>
       <div className="entete-page">
         <h1>Pilotage</h1>
+        {estManager && warehouses.length > 0 && (
+          <select
+            className="champ"
+            style={{ minWidth: 180 }}
+            value={warehouseId}
+            onChange={(e) => setWarehouseId(e.target.value)}
+          >
+            {warehouses.filter((w) => w.is_active).map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
+        )}
       </div>
+
+      {estManager && !chargementBoutiques && warehouses.length === 0 && (
+        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de consulter le tableau de bord.</p>
+      )}
 
       <div className="onglets">
         <button className={onglet === 'pilotage' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('pilotage')}>
