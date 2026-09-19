@@ -31,6 +31,8 @@ function IconFleche() {
     </svg>
   );
 }
+
+const FILTRES_STATUT = [
   { value: 'tous', label: 'Tous' },
   { value: 'envoye', label: 'En transit' },
   { value: 'recu', label: 'Réceptionnés' },
