@@ -10,7 +10,7 @@ import { cacheProducts, cacheClients } from '../offline/db';
 import { useLiveEvent } from '../offline/liveEvents';
 
 const PEUT_CREER = ['manager', 'gerant', 'vendeur'];
-const PEUT_ENCAISSER = ['manager', 'caissier'];
+const PEUT_ENCAISSER = ['manager', 'caissier', 'gerant'];
 const PEUT_GERER_STATUT = ['manager', 'gerant', 'caissier'];
 
 function IconPanier() {
@@ -160,6 +160,11 @@ export function OrdersPage() {
   const { user } = useAuth();
   const peutCreer = PEUT_CREER.includes(user.role);
   const peutEncaisser = PEUT_ENCAISSER.includes(user.role);
+  // Le gérant n'a le droit d'encaisser QUE les ventes qu'il a lui-même
+  // créées (contrôle miroir de celui du backend sur PATCH /:id/payment) ;
+  // manager et caissier gardent l'accès à toutes les ventes en attente.
+  const peutEncaisserCetteCommande = (o) =>
+    peutEncaisser && (user.role !== 'gerant' || o.created_by === user.id);
   const peutGererStatut = PEUT_GERER_STATUT.includes(user.role);
   const estManager = user.role === 'manager';
   const { isOnline, createOrder: creerVenteHorsLigne } = useOfflineSync(api);
@@ -842,7 +847,7 @@ export function OrdersPage() {
                     key={o.id}
                     className={
                       'ligne-cliquable' +
-                      (((o.status === 'en_attente' && peutEncaisser) || (o.status === 'renvoyee_vendeur' && peutTraiterRenvoi))
+                      (((o.status === 'en_attente' && peutEncaisserCetteCommande(o)) || (o.status === 'renvoyee_vendeur' && peutTraiterRenvoi))
                         ? ' ligne-prioritaire'
                         : '')
                     }
@@ -854,7 +859,7 @@ export function OrdersPage() {
                     <td><StatusBadge status={o.status} /></td>
                     {(peutEncaisser || peutGererStatut || peutTraiterRenvoi) && (
                       <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
-                        {peutEncaisser && o.status === 'en_attente' && (
+                        {peutEncaisserCetteCommande(o) && o.status === 'en_attente' && (
                           <button
                             className="btn btn-principal"
                             style={{ padding: '5px 10px', fontSize: 13 }}

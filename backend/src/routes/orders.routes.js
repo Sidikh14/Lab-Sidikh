@@ -89,7 +89,7 @@ router.get('/', async (req, res) => {
     const result = await pool.query(
       `SELECT o.id, o.order_seq, o.status, o.total_amount, o.subtotal_amount, o.tva_applicable,
               o.tva_amount, o.payment_method, o.amount_received, o.change_given,
-              o.created_at, o.assigned_cashier_id, o.returned_at, o.returned_reason,
+              o.created_at, o.created_by, o.assigned_cashier_id, o.returned_at, o.returned_reason,
               o.warehouse_id, w.name AS warehouse_name,
               c.full_name AS client_name,
               cr.status AS credit_request_status, cr.rejection_reason AS credit_request_reason
