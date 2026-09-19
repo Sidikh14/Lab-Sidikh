@@ -161,6 +161,7 @@ export function OrdersPage() {
   const peutCreer = PEUT_CREER.includes(user.role);
   const peutEncaisser = PEUT_ENCAISSER.includes(user.role);
   const peutGererStatut = PEUT_GERER_STATUT.includes(user.role);
+  const estManager = user.role === 'manager';
   const { isOnline, createOrder: creerVenteHorsLigne } = useOfflineSync(api);
 
   const [onglet, setOnglet] = useState(peutCreer ? 'caisse' : 'historique');
@@ -169,6 +170,32 @@ export function OrdersPage() {
   const [products, setProducts] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
+
+  // Boutique active — seul le manager doit la choisir explicitement (les
+  // autres rôles sont assignés à la leur, le backend l'applique tout seul).
+  // Même mémorisation locale que StockPage, pour rester cohérent d'une page à l'autre.
+  const [warehouses, setWarehouses] = useState([]);
+  const [warehouseId, setWarehouseId] = useState(() => (estManager ? localStorage.getItem('boutiqueActiveId') || '' : ''));
+  const [chargementBoutiques, setChargementBoutiques] = useState(estManager);
+
+  useEffect(() => {
+    if (!estManager) return;
+    api.getWarehouses()
+      .then((liste) => {
+        setWarehouses(liste);
+        const actives = liste.filter((w) => w.is_active);
+        setWarehouseId((avant) => {
+          if (avant && actives.some((w) => w.id === avant)) return avant;
+          return actives[0]?.id || '';
+        });
+      })
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementBoutiques(false));
+  }, [estManager]);
+
+  useEffect(() => {
+    if (estManager && warehouseId) localStorage.setItem('boutiqueActiveId', warehouseId);
+  }, [estManager, warehouseId]);
 
   const [rechercheCaisse, setRechercheCaisse] = useState('');
   const [panier, setPanier] = useState([]);
@@ -210,7 +237,7 @@ export function OrdersPage() {
     setExportEnCours(true);
     setErreur('');
     try {
-      await api.downloadOrdersPdf(exportDebut, exportFin);
+      await api.downloadOrdersPdf(exportDebut, exportFin, estManager ? warehouseId : undefined);
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -287,8 +314,11 @@ export function OrdersPage() {
   }
 
   function charger() {
+    // Un manager sans boutique sélectionnée ne doit pas appeler /orders ni
+    // /products (le backend renverrait 400 "La boutique est requise").
+    if (estManager && !warehouseId) return;
     setChargement(true);
-    Promise.all([api.getOrders(), api.getClients(), api.getProducts()])
+    Promise.all([api.getOrders(estManager ? warehouseId : undefined), api.getClients(), api.getProducts(estManager ? warehouseId : undefined)])
       .then(([o, c, p]) => {
         setOrders(o);
         setClients(c);
@@ -303,7 +333,7 @@ export function OrdersPage() {
       .finally(() => setChargement(false));
   }
 
-  useEffect(charger, []);
+  useEffect(charger, [warehouseId]);
 
   // Temps réel : dès qu'une vente est créée (par un vendeur) ou qu'une
   // activité est enregistrée quelque part dans l'app (encaissement, retour
@@ -486,6 +516,7 @@ export function OrdersPage() {
       clientId: clientId || null,
       items: panier.map((l) => ({ productId: l.productId, quantity: l.quantity, unitId: l.unitId || undefined })),
       tvaApplicable,
+      warehouseId: estManager ? warehouseId : undefined,
     };
     try {
       if (commandeEnEdition) {
@@ -549,7 +580,23 @@ export function OrdersPage() {
     <>
       <div className="entete-page">
         <h1>Ventes & caisse</h1>
+        {estManager && warehouses.length > 0 && (
+          <select
+            className="champ"
+            style={{ minWidth: 180 }}
+            value={warehouseId}
+            onChange={(e) => setWarehouseId(e.target.value)}
+          >
+            {warehouses.filter((w) => w.is_active).map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </select>
+        )}
       </div>
+
+      {estManager && !chargementBoutiques && warehouses.length === 0 && (
+        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant d'enregistrer des ventes.</p>
+      )}
 
       <div className="onglets">
         {peutCreer && (
@@ -713,7 +760,7 @@ export function OrdersPage() {
               type="button"
               className="btn btn-principal"
               style={{ width: '100%', justifyContent: 'center', marginTop: 12 }}
-              disabled={lignesPanier.length === 0 || venteEnCours}
+              disabled={lignesPanier.length === 0 || venteEnCours || (estManager && !warehouseId && !commandeEnEdition)}
               onClick={handlePayer}
             >
               {venteEnCours

@@ -94,7 +94,7 @@ export const api = {
     request(`/clients/${id}/whatsapp-statement`, { method: 'POST' }),
   downloadClientUnpaidInvoicesPdf: (id) => previewFile(`/clients/${id}/unpaid-invoices-pdf`),
 
-  getOrders: () => request('/orders'),
+  getOrders: (warehouseId) => request(`/orders${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   getOrder: (id) => request(`/orders/${id}`),
   createOrder: (data) =>
     request('/orders', { method: 'POST', body: JSON.stringify(data) }),
@@ -105,7 +105,8 @@ export const api = {
   recordOrderPayment: (id, data) =>
     request(`/orders/${id}/payment`, { method: 'PATCH', body: JSON.stringify(data) }),
   previewOrderReceipt: (id) => previewFile(`/orders/${id}/receipt-pdf`),
-  downloadOrdersPdf: (from, to) => previewFile(`/orders/pdf?from=${from}&to=${to}`),
+  downloadOrdersPdf: (from, to, warehouseId) =>
+    previewFile(`/orders/pdf?from=${from}&to=${to}${warehouseId ? `&warehouseId=${warehouseId}` : ''}`),
   returnOrderToSeller: (id, reason) =>
     request(`/orders/${id}/return-to-seller`, { method: 'PATCH', body: JSON.stringify({ reason }) }),
 

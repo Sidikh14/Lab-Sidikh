@@ -8,13 +8,7 @@ const router = express.Router();
 
 function signToken(user) {
   return jwt.sign(
-    {
-      sub: user.id,
-      merchantId: user.merchant_id,
-      role: user.role,
-      // Absent pour un owner ou un manager pas encore rattaché à une boutique.
-      warehouseId: user.warehouse_id || null,
-    },
+    { sub: user.id, merchantId: user.merchant_id, role: user.role, warehouseId: user.warehouse_id || null },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
   );
@@ -115,9 +109,11 @@ router.post('/login', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.merchant_id, u.full_name, u.email, u.password_hash, u.role, u.is_active,
-              u.visible_modules, u.warehouse_id, m.business_name, m.currency, m.is_active AS merchant_is_active
+              u.visible_modules, u.warehouse_id, w.name AS warehouse_name,
+              m.business_name, m.currency, m.is_active AS merchant_is_active
        FROM users u
        LEFT JOIN merchants m ON m.id = u.merchant_id
+       LEFT JOIN warehouses w ON w.id = u.warehouse_id
        WHERE u.email = $1`,
       [email]
     );
@@ -151,6 +147,7 @@ router.post('/login', async (req, res) => {
         role: user.role,
         visibleModules: user.visible_modules,
         warehouseId: user.warehouse_id,
+        warehouseName: user.warehouse_name,
       },
       merchant: user.merchant_id
         ? { id: user.merchant_id, businessName: user.business_name, currency: user.currency }
