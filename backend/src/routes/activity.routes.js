@@ -80,6 +80,11 @@ async function recupererActivite(req, dateDebut, dateFin) {
     params
   );
 
+  // journalResult n'a pas de filtre boutique (voir remarque plus haut) : on
+  // ne lui passe donc jamais le paramètre warehouseId, sinon Postgres
+  // refuse un paramètre non référencé dans la requête (cas du gérant, qui
+  // n'a que ce paramètre en 4e position, sans filtre utilisateur associé).
+  const paramsJournal = limiteBoutique ? params.slice(0, 3) : params;
   const journalResult = await pool.query(
     `SELECT al.id, 'journal' AS type, al.description, al.created_at, u.full_name AS user_name
      FROM activity_log al
@@ -87,7 +92,7 @@ async function recupererActivite(req, dateDebut, dateFin) {
      WHERE al.merchant_id = $1 AND al.created_at >= $2 AND al.created_at < $3
      ${filtreUtilisateur('al.user_id')}
      ORDER BY al.created_at DESC LIMIT 300`,
-    params
+    paramsJournal
   );
 
   return [
