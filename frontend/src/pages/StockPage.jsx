@@ -153,6 +153,7 @@ export function StockPage() {
   const [produitEnEdition, setProduitEnEdition] = useState(null);
   const [enregistrementEdition, setEnregistrementEdition] = useState(false);
   const [produitsSelectionnes, setProduitsSelectionnes] = useState(new Set());
+  const [quantitesEtiquettes, setQuantitesEtiquettes] = useState({});
   const [impressionEnAttente, setImpressionEnAttente] = useState(false);
 
   // Boutique active — seul le manager doit la choisir explicitement (les
@@ -209,6 +210,11 @@ export function StockPage() {
     });
   }
 
+  function definirQuantiteEtiquette(id, quantite) {
+    const nb = Math.max(1, Number(quantite) || 1);
+    setQuantitesEtiquettes((avant) => ({ ...avant, [id]: nb }));
+  }
+
   function toutSelectionner() {
     setProduitsSelectionnes(new Set(products.map((p) => p.id)));
   }
@@ -233,6 +239,14 @@ export function StockPage() {
       return () => clearTimeout(t);
     }
   }, [impressionEnAttente, onglet]);
+
+  const totalEtiquettesAImprimer = useMemo(() => {
+    let total = 0;
+    produitsSelectionnes.forEach((id) => {
+      total += quantitesEtiquettes[id] ?? 1;
+    });
+    return total;
+  }, [produitsSelectionnes, quantitesEtiquettes]);
 
   const produitsFiltres = useMemo(() => {
     return products.filter((p) => {
@@ -652,12 +666,12 @@ export function StockPage() {
         <>
           <div className="barre-outils no-print" style={{ flexWrap: 'wrap', gap: 12 }}>
             <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>
-              {produitsSelectionnes.size} étiquette(s) sélectionnée(s) sur {products.length}
+              {totalEtiquettesAImprimer} étiquette(s) à imprimer ({produitsSelectionnes.size} produit(s) sur {products.length})
             </span>
             <button className="btn" onClick={toutSelectionner}>Tout sélectionner</button>
             <button className="btn" onClick={toutDeselectionner}>Tout désélectionner</button>
-            <button className="btn btn-principal" onClick={() => window.print()} disabled={produitsSelectionnes.size === 0}>
-              Imprimer la sélection ({produitsSelectionnes.size})
+            <button className="btn btn-principal" onClick={() => window.print()} disabled={totalEtiquettesAImprimer === 0}>
+              Imprimer ({totalEtiquettesAImprimer})
             </button>
           </div>
 
@@ -665,13 +679,13 @@ export function StockPage() {
             className="no-print"
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
               gap: 8,
               marginBottom: 24,
             }}
           >
             {products.map((p) => (
-              <label
+              <div
                 key={p.id}
                 style={{
                   display: 'flex',
@@ -681,27 +695,41 @@ export function StockPage() {
                   padding: '8px 10px',
                   border: '1px solid var(--trait)',
                   borderRadius: 'var(--rayon-petit)',
-                  cursor: 'pointer',
                 }}
               >
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', flex: 1, minWidth: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={produitsSelectionnes.has(p.id)}
+                    onChange={() => basculerSelectionEtiquette(p.id)}
+                  />
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+                </label>
                 <input
-                  type="checkbox"
-                  checked={produitsSelectionnes.has(p.id)}
-                  onChange={() => basculerSelectionEtiquette(p.id)}
+                  type="number"
+                  min="1"
+                  className="champ"
+                  style={{ width: 56, padding: '4px 6px', textAlign: 'center', flexShrink: 0 }}
+                  value={quantitesEtiquettes[p.id] ?? 1}
+                  disabled={!produitsSelectionnes.has(p.id)}
+                  onChange={(e) => definirQuantiteEtiquette(p.id, e.target.value)}
+                  title="Nombre d'exemplaires"
                 />
-                {p.name}
-              </label>
+              </div>
             ))}
           </div>
 
           <div className="grille-etiquettes">
-            {products.filter((p) => produitsSelectionnes.has(p.id)).map((p) => (
-              <div key={p.id} className="etiquette-produit">
-                <p className="etiquette-nom">{p.name}</p>
-                <p className="etiquette-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
-                <CodeBarreEtiquette valeur={codeInterne(p)} />
-              </div>
-            ))}
+            {products.filter((p) => produitsSelectionnes.has(p.id)).flatMap((p) => {
+              const nb = quantitesEtiquettes[p.id] ?? 1;
+              return Array.from({ length: nb }, (_, i) => (
+                <div key={`${p.id}-${i}`} className="etiquette-produit">
+                  <p className="etiquette-nom">{p.name}</p>
+                  <p className="etiquette-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
+                  <CodeBarreEtiquette valeur={codeInterne(p)} />
+                </div>
+              ));
+            })}
           </div>
         </>
       )}
