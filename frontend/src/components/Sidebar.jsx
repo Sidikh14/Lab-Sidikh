@@ -142,6 +142,7 @@ const MODULES_PAR_DEFAUT = {
   gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   vendeur: ['stock', 'ventes', 'clients'],
   caissier: ['ventes', 'caisse'],
+  vendeur_caissier: ['stock', 'ventes', 'clients', 'caisse'],
 };
 
 function modulesAutorises(user) {
