@@ -4,6 +4,15 @@ function getToken() {
   return localStorage.getItem('token');
 }
 
+// Quand le token est absent/invalide/expiré, le backend répond 401. On
+// vide le token stocké et on prévient le reste de l'appli (AuthContext
+// écoute cet événement) pour forcer un retour à l'écran de connexion,
+// au lieu de laisser l'utilisateur face à une erreur JSON brute.
+function signalerSessionExpiree() {
+  localStorage.removeItem('token');
+  window.dispatchEvent(new CustomEvent('session-expired'));
+}
+
 async function request(path, options = {}) {
   const token = getToken();
   const headers = {
@@ -15,6 +24,11 @@ async function request(path, options = {}) {
   const response = await fetch(`${API_URL}${path}`, { ...options, headers });
   const isJson = response.headers.get('content-type')?.includes('application/json');
   const body = isJson ? await response.json() : null;
+
+  if (response.status === 401) {
+    signalerSessionExpiree();
+    throw new Error('Votre session a expiré. Veuillez vous reconnecter.');
+  }
 
   if (!response.ok) {
     const message = body?.error || `Erreur ${response.status}`;
@@ -32,6 +46,10 @@ async function previewFile(path) {
   const response = await fetch(`${API_URL}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
+  if (response.status === 401) {
+    signalerSessionExpiree();
+    throw new Error('Votre session a expiré. Veuillez vous reconnecter.');
+  }
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     throw new Error(body?.error || `Erreur ${response.status}`);

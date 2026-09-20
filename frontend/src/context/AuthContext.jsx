@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { api } from '../api/client';
 
 const AuthContext = createContext(null);
@@ -12,6 +12,7 @@ export function AuthProvider({ children }) {
     const stored = localStorage.getItem('merchant');
     return stored ? JSON.parse(stored) : null;
   });
+  const [sessionExpiredMessage, setSessionExpiredMessage] = useState(null);
 
   function persist(data) {
     localStorage.setItem('token', data.token);
@@ -43,8 +44,23 @@ export function AuthProvider({ children }) {
     setMerchant(null);
   }, []);
 
+  // client.js déclenche cet événement quand le backend répond 401
+  // (token absent/invalide/expiré après 8h) : on déconnecte proprement
+  // et on garde un message à afficher sur l'écran de connexion, plutôt
+  // que de laisser l'utilisateur face à une erreur brute.
+  useEffect(() => {
+    function gererSessionExpiree() {
+      logout();
+      setSessionExpiredMessage('Votre session a expiré. Veuillez vous reconnecter.');
+    }
+    window.addEventListener('session-expired', gererSessionExpiree);
+    return () => window.removeEventListener('session-expired', gererSessionExpiree);
+  }, [logout]);
+
+  const clearSessionExpiredMessage = useCallback(() => setSessionExpiredMessage(null), []);
+
   return (
-    <AuthContext.Provider value={{ user, merchant, login, register, logout }}>
+    <AuthContext.Provider value={{ user, merchant, login, register, logout, sessionExpiredMessage, clearSessionExpiredMessage }}>
       {children}
     </AuthContext.Provider>
   );
