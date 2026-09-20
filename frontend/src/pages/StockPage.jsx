@@ -130,6 +130,9 @@ export function StockPage() {
     paymentMethod: 'comptant',
     totalCost: '',
     cashMethod: 'especes',
+    avecAvance: false,
+    advanceAmount: '',
+    advanceCashMethod: 'especes',
   };
   const [entreeStock, setEntreeStock] = useState(entreeStockVide);
   const [enregistrementEntree, setEnregistrementEntree] = useState(false);
@@ -381,6 +384,16 @@ export function StockPage() {
       setErreur('Le montant total de l\'achat est requis pour un achat au comptant (pour le suivi de caisse).');
       return;
     }
+    if (entreeStock.paymentMethod === 'a_credit' && entreeStock.avecAvance) {
+      if (!Number(entreeStock.advanceAmount) || Number(entreeStock.advanceAmount) <= 0) {
+        setErreur("Le montant de l'avance est invalide.");
+        return;
+      }
+      if (Number(entreeStock.advanceAmount) > Number(entreeStock.totalCost)) {
+        setErreur("L'avance ne peut pas dépasser le montant total de l'achat.");
+        return;
+      }
+    }
     setEnregistrementEntree(true);
     try {
       await api.recordStockPurchase({
@@ -390,6 +403,8 @@ export function StockPage() {
         paymentMethod: entreeStock.paymentMethod,
         totalCost: Number(entreeStock.totalCost),
         cashMethod: entreeStock.paymentMethod === 'comptant' ? entreeStock.cashMethod : undefined,
+        advanceAmount: entreeStock.paymentMethod === 'a_credit' && entreeStock.avecAvance ? Number(entreeStock.advanceAmount) : undefined,
+        advanceCashMethod: entreeStock.paymentMethod === 'a_credit' && entreeStock.avecAvance ? entreeStock.advanceCashMethod : undefined,
         warehouseId: estManager ? warehouseId : undefined,
       });
       setModaleEntreeOuverte(false);
@@ -979,6 +994,52 @@ export function StockPage() {
                     <option value="virement">Virement</option>
                   </select>
                 </div>
+              )}
+              {entreeStock.paymentMethod === 'a_credit' && (
+                <div className="champ-groupe">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={entreeStock.avecAvance}
+                      onChange={(e) => setEntreeStock({ ...entreeStock, avecAvance: e.target.checked })}
+                    />
+                    Verser une avance maintenant
+                  </label>
+                </div>
+              )}
+              {entreeStock.paymentMethod === 'a_credit' && entreeStock.avecAvance && (
+                <>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="e-avance-montant">Montant de l'avance (FCFA)</label>
+                    <input
+                      id="e-avance-montant"
+                      type="number"
+                      className="champ"
+                      value={entreeStock.advanceAmount}
+                      onChange={(e) => setEntreeStock({ ...entreeStock, advanceAmount: e.target.value })}
+                    />
+                    {Number(entreeStock.totalCost) > 0 && Number(entreeStock.advanceAmount) > 0 && (
+                      <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
+                        Reste à devoir au fournisseur : {Math.max(0, Number(entreeStock.totalCost) - Number(entreeStock.advanceAmount)).toLocaleString('fr-FR')} FCFA
+                      </p>
+                    )}
+                  </div>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="e-avance-methode">Avance payée depuis (caisse)</label>
+                    <select
+                      id="e-avance-methode"
+                      className="champ"
+                      value={entreeStock.advanceCashMethod}
+                      onChange={(e) => setEntreeStock({ ...entreeStock, advanceCashMethod: e.target.value })}
+                    >
+                      <option value="especes">Espèces</option>
+                      <option value="wave">Wave</option>
+                      <option value="orange_money">Orange Money</option>
+                      <option value="cheque">Chèque</option>
+                      <option value="virement">Virement</option>
+                    </select>
+                  </div>
+                </>
               )}
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="e-date">Date de réception</label>
