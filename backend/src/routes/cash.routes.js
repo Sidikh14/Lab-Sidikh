@@ -214,7 +214,7 @@ router.get('/balances', requireRole('manager', 'gerant'), async (req, res) => {
 
 // GET /cash/summary?date=AAAA-MM-JJ — mouvements du jour + clôture existante,
 // pour chaque moyen de paiement.
-router.get('/summary', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+router.get('/summary', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   try {
     const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
     const date = req.query.date || new Date().toISOString().slice(0, 10);
@@ -233,7 +233,7 @@ router.get('/summary', requireRole('manager', 'gerant', 'caissier'), async (req,
     // l'écart — seulement le solde réel qu'il a compté et déjà validé (pour
     // qu'il ne puisse ni consulter ni falsifier le résultat de sa clôture).
     // Ces informations complètes restent réservées à manager/gérant.
-    const estCaissier = req.user.role === 'caissier';
+    const estCaissier = ['caissier', 'vendeur_caissier'].includes(req.user.role);
 
     res.json({
       date,
@@ -262,7 +262,7 @@ router.get('/summary', requireRole('manager', 'gerant', 'caissier'), async (req,
 });
 
 // POST /cash/closings — clôture d'un ou plusieurs moyens de paiement pour un jour donné
-router.post('/closings', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+router.post('/closings', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   const { date, entries, notes, warehouseId: warehouseIdInput } = req.body;
   if (!date || !Array.isArray(entries) || entries.length === 0) {
     return res.status(400).json({ error: 'Une date et au moins un moyen de paiement sont requis.' });
@@ -302,7 +302,7 @@ router.post('/closings', requireRole('manager', 'gerant', 'caissier'), async (re
 
     // Le caissier ne doit pas recevoir le théorique ni l'écart dans la
     // réponse (même logique que /cash/summary) : seul manager/gérant les voit.
-    const estCaissier = req.user.role === 'caissier';
+    const estCaissier = ['caissier', 'vendeur_caissier'].includes(req.user.role);
     res.status(201).json(
       estCaissier
         ? resultats.map((r) => ({ id: r.id, payment_method: r.payment_method, actual_balance: r.actual_balance, created_at: r.created_at }))
@@ -337,7 +337,7 @@ router.get('/closings', requireRole('manager', 'gerant'), async (req, res) => {
 });
 
 // POST /cash/expenses — enregistrer une sortie de caisse manuelle
-router.post('/expenses', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   const { paymentMethod, amount, reason, expenseDate, warehouseId: warehouseIdInput } = req.body;
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
@@ -383,7 +383,7 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier'), async (re
 });
 
 // GET /cash/expenses?from=&to=&method= — liste des sorties de caisse
-router.get('/expenses', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+router.get('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   const { from, to, method } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'Les dates "from" et "to" sont requises.' });
   try {
@@ -413,7 +413,7 @@ router.get('/expenses', requireRole('manager', 'gerant', 'caissier'), async (req
 // l'argent liquide remis en caisse après l'encaissement d'un chèque à la
 // banque). Symétrique de /cash/expenses, même table (cash_expenses),
 // distinguée par movement_type = 'entree'.
-router.post('/deposits', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+router.post('/deposits', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   const { paymentMethod, amount, reason, expenseDate, warehouseId: warehouseIdInput } = req.body;
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
@@ -449,7 +449,7 @@ router.post('/deposits', requireRole('manager', 'gerant', 'caissier'), async (re
 });
 
 // GET /cash/deposits?from=&to=&method= — liste des entrées de caisse manuelles
-router.get('/deposits', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+router.get('/deposits', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   const { from, to, method } = req.query;
   if (!from || !to) return res.status(400).json({ error: 'Les dates "from" et "to" sont requises.' });
   try {

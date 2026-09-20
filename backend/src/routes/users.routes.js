@@ -14,7 +14,7 @@ router.use(authenticate);
 // Personne ne crée de second manager depuis cette route (ça reste le rôle
 // du premier compte créé à l'inscription du commerce).
 const ROLES_AUTORISES_PAR_CREATEUR = {
-  manager: ['gerant', 'vendeur', 'caissier'],
+  manager: ['gerant', 'vendeur', 'caissier', 'vendeur_caissier'],
 };
 
 // GET /users — liste de l'équipe du commerce (manager et gérant uniquement)
@@ -268,7 +268,7 @@ router.patch('/:id/password', requireRole('manager'), async (req, res) => {
 // devient gérant, vendeur devient caissier). Réinitialise les permissions
 // personnalisées (visible_modules) car les modules par défaut du nouveau
 // rôle ne correspondent plus forcément à l'ancienne sélection.
-const ROLES_MODIFIABLES = ['gerant', 'vendeur', 'caissier'];
+const ROLES_MODIFIABLES = ['gerant', 'vendeur', 'caissier', 'vendeur_caissier'];
 
 router.patch('/:id/role', requireRole('manager'), async (req, res) => {
   const { role } = req.body;

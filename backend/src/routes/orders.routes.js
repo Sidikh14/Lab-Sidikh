@@ -203,7 +203,7 @@ router.get('/:id', async (req, res) => {
 // - authorizeOutOfStock sur un article : vendre un produit dont le stock
 //   disponible est insuffisant (vente en rupture autorisée). Le stock ne
 //   descend jamais sous zéro : il est simplement ramené à 0.
-router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) => {
+router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), async (req, res) => {
   const { clientId, items, notes, tvaApplicable, clientOrderId, warehouseId: warehouseIdInput } = req.body;
   // items attendu : [{ productId, quantity, unitId, customPrice, authorizeOutOfStock }, ...]
   // quantity = nombre de conditionnements vendus (ex: 2 cartons) ; unitId
@@ -417,8 +417,8 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
     });
 
     // Notification au caissier de sa boutique : seulement quand c'est un
-    // vendeur qui vient de créer la vente (pas le manager/gérant qui
-    // encaisse parfois directement lui-même sa propre vente).
+    // simple vendeur qui vient de créer la vente (pas le manager/gérant, ni
+    // un vendeur_caissier, qui peuvent encaisser eux-mêmes leur propre vente).
     if (req.user.role === 'vendeur') {
       getNomUtilisateur(req.user.id).then((nomVendeur) => {
         creerAlerte({
@@ -463,7 +463,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur'), async (req, res) =
 // vérification plus bas juste après la récupération de la commande).
 // Enregistre le moyen de paiement, le montant reçu, calcule la monnaie à
 // rendre, et fait passer la commande au statut "validée".
-router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant'), async (req, res) => {
+router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vendeur_caissier'), async (req, res) => {
   const {
     paymentMethod, amountReceived, needsDelivery, deliveryFee, deliveryAddress,
     discountType, discountMode, discountValue, advanceAmount, advancePaymentMethod,
@@ -705,7 +705,7 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant'), async
 // une trace de qui l'a renvoyée (assigned_cashier_id) pour que, une fois
 // corrigée, elle revienne directement à ce même caissier plutôt que dans
 // la file générale.
-router.patch('/:id/return-to-seller', requireRole('manager', 'caissier'), async (req, res) => {
+router.patch('/:id/return-to-seller', requireRole('manager', 'caissier', 'vendeur_caissier'), async (req, res) => {
   const { reason } = req.body;
 
   try {
@@ -751,7 +751,7 @@ router.patch('/:id/return-to-seller', requireRole('manager', 'caissier'), async 
 // PATCH /orders/:id/status — changements manuels de statut (livraison, annulation)
 // Le vendeur a un droit limité : il ne peut qu'annuler une commande qui lui
 // a été renvoyée par le caissier (statut 'renvoyee_vendeur'), rien d'autre.
-router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeur'), async (req, res) => {
+router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeur', 'vendeur_caissier'), async (req, res) => {
   const { status } = req.body;
   const validStatuses = ['en_attente', 'validee', 'livree', 'annulee'];
 
@@ -870,7 +870,7 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
 // règles que la création), on recalcule les totaux, et la commande repart
 // au statut 'en_attente' — assigned_cashier_id n'est pas touché, donc elle
 // reste rattachée au même caissier que precedemment.
-router.put('/:id', requireRole('manager', 'gerant', 'vendeur'), async (req, res) => {
+router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), async (req, res) => {
   const { clientId, items, notes, tvaApplicable } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {

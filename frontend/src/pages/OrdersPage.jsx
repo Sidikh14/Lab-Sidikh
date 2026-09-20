@@ -9,9 +9,9 @@ import { useOfflineSync } from '../offline/useOfflineSync';
 import { cacheProducts, cacheClients } from '../offline/db';
 import { useLiveEvent } from '../offline/liveEvents';
 
-const PEUT_CREER = ['manager', 'gerant', 'vendeur'];
-const PEUT_ENCAISSER = ['manager', 'caissier', 'gerant'];
-const PEUT_GERER_STATUT = ['manager', 'gerant', 'caissier'];
+const PEUT_CREER = ['manager', 'gerant', 'vendeur', 'vendeur_caissier'];
+const PEUT_ENCAISSER = ['manager', 'caissier', 'gerant', 'vendeur_caissier'];
+const PEUT_GERER_STATUT = ['manager', 'gerant', 'caissier', 'vendeur_caissier'];
 
 function IconPanier() {
   return (
@@ -250,7 +250,7 @@ export function OrdersPage() {
     }
   }
 
-  const peutTraiterRenvoi = ['manager', 'gerant', 'vendeur'].includes(user.role);
+  const peutTraiterRenvoi = ['manager', 'gerant', 'vendeur', 'vendeur_caissier'].includes(user.role);
 
   // La liste des commandes (GET /orders) ne contient pas le détail des
   // articles : on va chercher la commande complète avant d'ouvrir la

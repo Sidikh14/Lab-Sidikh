@@ -98,6 +98,7 @@ const ROLES_PROPOSES = {
     { value: 'gerant', label: 'Gérant' },
     { value: 'vendeur', label: 'Vendeur' },
     { value: 'caissier', label: 'Caissier' },
+    { value: 'vendeur_caissier', label: 'Vendeur/Caissier' },
   ],
 };
 
@@ -114,6 +115,7 @@ const MODULES_PAR_DEFAUT = {
   gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   vendeur: ['stock', 'ventes', 'clients'],
   caissier: ['ventes', 'caisse'],
+  vendeur_caissier: ['stock', 'ventes', 'clients', 'caisse'],
 };
 
 // Rôles vers lesquels un manager peut faire évoluer un membre existant
@@ -122,6 +124,7 @@ const TOUS_LES_ROLES = [
   { value: 'gerant', label: 'Gérant' },
   { value: 'vendeur', label: 'Vendeur' },
   { value: 'caissier', label: 'Caissier' },
+  { value: 'vendeur_caissier', label: 'Vendeur/Caissier' },
 ];
 
 export function TeamPage() {
