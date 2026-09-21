@@ -186,7 +186,6 @@ export function Sidebar({ ouvert = false, onFermer }) {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
           <span>
             {merchant?.businessName || 'Mon commerce'}
-            <span className="sous-titre">Amaterasu</span>
           </span>
           <button type="button" className="bouton-fermer-menu" onClick={onFermer} aria-label="Fermer le menu">
             <IconFermer />
