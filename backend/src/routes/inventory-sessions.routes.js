@@ -13,8 +13,42 @@ function formatSessionNumber(session) {
   return `INV-${annee}-${numero}`;
 }
 
-// GET /inventory-sessions — liste avec compteurs (produits, comptés, écarts)
+// Même logique que products.routes.js (resolveWarehouseId) : le manager
+// choisit sa boutique à chaque fois (aucune par défaut), le gérant est
+// toujours restreint à la sienne, quoi qu'il envoie.
+async function resolveWarehouseId(req, dbClient, providedId) {
+  const runner = dbClient || pool;
+
+  if (req.user.role === 'manager') {
+    if (!providedId) {
+      throw { status: 400, message: 'La boutique est requise.' };
+    }
+    const result = await runner.query(
+      `SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+      [providedId, req.user.merchantId]
+    );
+    if (result.rows.length === 0) {
+      throw { status: 404, message: 'Boutique introuvable.' };
+    }
+    return providedId;
+  }
+
+  if (!req.user.warehouseId) {
+    throw { status: 403, message: "Vous n'êtes assigné à aucune boutique." };
+  }
+  return req.user.warehouseId;
+}
+
+// GET /inventory-sessions — liste avec compteurs (produits, comptés, écarts, perte),
+// scopée à une boutique (manager : ?warehouseId= requis ; gérant : la sienne).
 router.get('/', async (req, res) => {
+  let warehouseId;
+  try {
+    warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message || 'Erreur.' });
+  }
+
   try {
     const result = await pool.query(
       `SELECT s.id, s.session_seq, s.status, s.created_at, s.closed_at, u.full_name AS created_by_name,
@@ -30,10 +64,10 @@ router.get('/', async (req, res) => {
        LEFT JOIN users u ON u.id = s.created_by
        LEFT JOIN inventory_session_items i ON i.session_id = s.id
        LEFT JOIN products p ON p.id = i.product_id
-       WHERE s.merchant_id = $1
+       WHERE s.merchant_id = $1 AND s.warehouse_id = $2
        GROUP BY s.id, u.full_name
        ORDER BY s.created_at DESC`,
-      [req.user.merchantId]
+      [req.user.merchantId, warehouseId]
     );
     res.json(result.rows.map((s) => ({ ...s, session_number: formatSessionNumber(s) })));
   } catch (err) {
@@ -46,13 +80,18 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const sessionResult = await pool.query(
-      `SELECT s.*, u.full_name AS created_by_name
-       FROM inventory_sessions s LEFT JOIN users u ON u.id = s.created_by
+      `SELECT s.*, u.full_name AS created_by_name, w.name AS warehouse_name
+       FROM inventory_sessions s
+       LEFT JOIN users u ON u.id = s.created_by
+       LEFT JOIN warehouses w ON w.id = s.warehouse_id
        WHERE s.id = $1 AND s.merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
     const session = sessionResult.rows[0];
     if (!session) return res.status(404).json({ error: 'Session introuvable.' });
+    if (req.user.role !== 'manager' && session.warehouse_id !== req.user.warehouseId) {
+      return res.status(403).json({ error: 'Cette session ne concerne pas votre boutique.' });
+    }
 
     const itemsResult = await pool.query(
       `SELECT i.id, i.product_id, p.name AS product_name, p.sku, p.unit_price, i.theoretical_quantity, i.counted_quantity, i.counted_at
@@ -69,22 +108,34 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST /inventory-sessions — crée une session, capture le stock théorique actuel de chaque produit actif
+// POST /inventory-sessions — crée une session pour UNE boutique, capture le
+// stock théorique actuel (product_stock, pas products — le stock est par
+// boutique depuis le multi-boutique) de chaque produit actif.
 router.post('/', async (req, res) => {
+  let warehouseId;
+  try {
+    warehouseId = await resolveWarehouseId(req, null, req.body.warehouseId);
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message || 'Erreur.' });
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     const sessionResult = await client.query(
-      `INSERT INTO inventory_sessions (merchant_id, created_by, status)
-       VALUES ($1, $2, 'en_cours') RETURNING *`,
-      [req.user.merchantId, req.user.id]
+      `INSERT INTO inventory_sessions (merchant_id, created_by, status, warehouse_id)
+       VALUES ($1, $2, 'en_cours', $3) RETURNING *`,
+      [req.user.merchantId, req.user.id, warehouseId]
     );
     const session = sessionResult.rows[0];
 
     const produitsResult = await client.query(
-      `SELECT id, quantity_in_stock FROM products WHERE merchant_id = $1 AND is_active = TRUE`,
-      [req.user.merchantId]
+      `SELECT p.id, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
+       FROM products p
+       LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $2
+       WHERE p.merchant_id = $1 AND p.is_active = TRUE`,
+      [req.user.merchantId, warehouseId]
     );
 
     for (const p of produitsResult.rows) {
@@ -144,8 +195,9 @@ router.patch('/:id/close', async (req, res) => {
   }
 });
 
-// PATCH /inventory-sessions/:id/adjust — applique les quantités comptées au stock réel
-// et enregistre un mouvement d'ajustement pour chaque écart.
+// PATCH /inventory-sessions/:id/adjust — applique les quantités comptées au
+// stock réel de la boutique de la session (product_stock) et enregistre un
+// mouvement d'ajustement pour chaque écart.
 router.patch('/:id/adjust', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -166,14 +218,16 @@ router.patch('/:id/adjust', async (req, res) => {
 
     for (const item of itemsResult.rows) {
       const delta = item.counted_quantity - item.theoretical_quantity;
-      await client.query(`UPDATE products SET quantity_in_stock = $1 WHERE id = $2`, [
-        item.counted_quantity,
-        item.product_id,
-      ]);
       await client.query(
-        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason)
-         VALUES ($1, $2, $3, 'ajustement', $4, $5)`,
-        [req.user.merchantId, item.product_id, req.user.id, Math.abs(delta), `Comptage ${formatSessionNumber(session)}`]
+        `INSERT INTO product_stock (merchant_id, product_id, warehouse_id, quantity_in_stock)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (product_id, warehouse_id) DO UPDATE SET quantity_in_stock = $4`,
+        [req.user.merchantId, item.product_id, session.warehouse_id, item.counted_quantity]
+      );
+      await client.query(
+        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
+         VALUES ($1, $2, $3, 'ajustement', $4, $5, $6)`,
+        [req.user.merchantId, item.product_id, req.user.id, Math.abs(delta), `Comptage ${formatSessionNumber(session)}`, session.warehouse_id]
       );
     }
 

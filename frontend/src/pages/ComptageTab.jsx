@@ -1,27 +1,58 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 
 const LABEL_STATUT = { en_cours: 'En cours', ajustee: 'Ajustée', cloturee: 'Clôturée' };
 const CLASSE_STATUT = { en_cours: 'tampon-laiton', ajustee: 'tampon-sarcelle', cloturee: '' };
 
 export function ComptageTab() {
+  const { user } = useAuth();
+  const estManager = user.role === 'manager';
+
   const [sessions, setSessions] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
   const [sessionOuverte, setSessionOuverte] = useState(null);
   const [creation, setCreation] = useState(false);
 
+  // Boutique active — même sélecteur/clé localStorage que les autres pages
+  // (Stock, Achats…), pour rester cohérent d'une page à l'autre.
+  const [warehouses, setWarehouses] = useState([]);
+  const [warehouseId, setWarehouseId] = useState(() => (estManager ? localStorage.getItem('boutiqueActiveId') || '' : ''));
+  const [chargementBoutiques, setChargementBoutiques] = useState(estManager);
+  const activeWarehouseId = estManager ? warehouseId : user.warehouseId;
+
+  useEffect(() => {
+    if (!estManager) return;
+    api.getWarehouses()
+      .then((liste) => {
+        setWarehouses(liste);
+        const actives = liste.filter((w) => w.is_active);
+        setWarehouseId((avant) => {
+          if (avant && actives.some((w) => w.id === avant)) return avant;
+          return actives[0]?.id || '';
+        });
+      })
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementBoutiques(false));
+  }, [estManager]);
+
+  useEffect(() => {
+    if (estManager && warehouseId) localStorage.setItem('boutiqueActiveId', warehouseId);
+  }, [estManager, warehouseId]);
+
   function charger() {
+    if (!activeWarehouseId) return;
     setChargement(true);
-    api.getInventorySessions().then(setSessions).catch((err) => setErreur(err.message)).finally(() => setChargement(false));
+    api.getInventorySessions(activeWarehouseId).then(setSessions).catch((err) => setErreur(err.message)).finally(() => setChargement(false));
   }
 
-  useEffect(charger, []);
+  useEffect(charger, [activeWarehouseId]);
 
   async function handleNouvelleSession() {
     setCreation(true);
     try {
-      const session = await api.createInventorySession();
+      const session = await api.createInventorySession(activeWarehouseId);
       charger();
       ouvrirSession(session.id);
     } catch (err) {
@@ -87,7 +118,7 @@ export function ComptageTab() {
         <div className="barre-outils">
           <button className="btn" onClick={() => setSessionOuverte(null)}>← Retour aux sessions</button>
           <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>
-            {sessionOuverte.session_number} — {totalCompte}/{sessionOuverte.items.length} comptés
+            {sessionOuverte.session_number}{sessionOuverte.warehouse_name ? ` — ${sessionOuverte.warehouse_name}` : ''} — {totalCompte}/{sessionOuverte.items.length} comptés
           </span>
         </div>
 
@@ -110,7 +141,7 @@ export function ComptageTab() {
               return (
                 <tr key={item.id}>
                   <td>{item.product_name}</td>
-                  <td className="chiffre">{item.theoretical_quantity}</td>
+                  <td className="chiffre">{Math.round(Number(item.theoretical_quantity))}</td>
                   <td>
                     <input
                       type="number"
@@ -156,12 +187,56 @@ export function ComptageTab() {
 
   return (
     <>
-      <div className="barre-outils">
+      <div className="barre-outils" style={{ flexWrap: 'wrap', gap: 12 }}>
+        {estManager && warehouses.length > 0 && (
+          <div
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '5px 10px 5px 11px',
+              borderRadius: 999,
+              border: '1px solid var(--trait)',
+              background: 'var(--accent-clair)',
+            }}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" style={{ flexShrink: 0 }}>
+              <path d="M3 9l1.5-5h15L21 9" />
+              <path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" />
+              <path d="M9 20v-6h6v6" />
+            </svg>
+            <select
+              value={warehouseId}
+              onChange={(e) => setWarehouseId(e.target.value)}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                fontSize: 13,
+                fontWeight: 600,
+                color: 'var(--accent)',
+                outline: 'none',
+                cursor: 'pointer',
+                appearance: 'none',
+                WebkitAppearance: 'none',
+                padding: 0,
+                maxWidth: 130,
+              }}
+            >
+              {warehouses.filter((w) => w.is_active).map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{sessions.length} session(s)</span>
-        <button className="btn btn-principal" onClick={handleNouvelleSession} disabled={creation}>
+        <button className="btn btn-principal" onClick={handleNouvelleSession} disabled={creation || !activeWarehouseId}>
           {creation ? 'Création…' : 'Nouvelle session'}
         </button>
       </div>
+
+      {estManager && !chargementBoutiques && warehouses.length === 0 && (
+        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de faire un comptage.</p>
+      )}
 
       {erreur && <div className="erreur">{erreur}</div>}
 

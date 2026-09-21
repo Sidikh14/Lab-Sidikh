@@ -222,9 +222,9 @@ export const api = {
   getSalaryAlert: () => request('/salaries/alert'),
   getSalaryMaxMonth: () => request('/salaries/max-month'),
 
-  getInventorySessions: () => request('/inventory-sessions'),
+  getInventorySessions: (warehouseId) => request(`/inventory-sessions${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),
-  createInventorySession: () => request('/inventory-sessions', { method: 'POST' }),
+  createInventorySession: (warehouseId) => request('/inventory-sessions', { method: 'POST', body: JSON.stringify({ warehouseId }) }),
   setInventoryItemCount: (sessionId, itemId, countedQuantity) =>
     request(`/inventory-sessions/${sessionId}/items/${itemId}`, {
       method: 'PATCH',
