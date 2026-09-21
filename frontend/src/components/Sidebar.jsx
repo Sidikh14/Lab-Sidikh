@@ -130,7 +130,6 @@ const TOUS_LES_LIENS = [
   { to: '/ventes', label: 'Ventes', icone: IconVentes, module: 'ventes' },
   { to: '/clients', label: 'Clients', icone: IconClients, module: 'clients' },
   { to: '/fournisseurs', label: 'Fournisseurs', icone: IconFournisseurs, module: 'fournisseurs' },
-  { to: '/achats', label: 'Achats', icone: IconAchats, module: 'achats' },
   { to: '/caisse', label: 'Caisse', icone: IconCaisse, module: 'caisse' },
 ];
 
@@ -164,9 +163,14 @@ export function Sidebar({ ouvert = false, onFermer }) {
   const { user, merchant, logout } = useAuth();
   const secteurConfig = getSecteurConfig(merchant?.sector);
   const autorises = modulesAutorises(user);
-  const liens = TOUS_LES_LIENS.filter((lien) => autorises.includes(lien.module));
+  // "Fournisseurs" héberge aussi l'onglet Achats depuis la fusion des pages
+  // (20/09) : le lien reste visible si le membre a l'un OU l'autre module.
+  const liens = TOUS_LES_LIENS.map((lien) =>
+    lien.to === '/stock' ? { ...lien, label: `${secteurConfig.libelleProduit}s` } : lien
+  ).filter((lien) =>
+    lien.module === 'fournisseurs' ? autorises.includes('fournisseurs') || autorises.includes('achats') : autorises.includes(lien.module)
+  );
   const voitEquipe = ['manager', 'gerant'].includes(user?.role);
-  const voitTransferts = ['manager', 'gerant'].includes(user?.role);
   const estManager = user?.role === 'manager';
 
   const initiales = (user?.fullName || '?')
@@ -219,27 +223,11 @@ export function Sidebar({ ouvert = false, onFermer }) {
             </NavLink>
           </li>
         )}
-        {estManager && (
-          <li>
-            <NavLink to="/salaires" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
-              <IconSalaires />
-              Salaires
-            </NavLink>
-          </li>
-        )}
-        {estManager && (
+        {voitEquipe && (
           <li>
             <NavLink to="/boutiques" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
               <IconBoutique />
-              {secteurConfig.libelleBoutique}s
-            </NavLink>
-          </li>
-        )}
-        {voitTransferts && (
-          <li>
-            <NavLink to="/transferts" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
-              <IconTransferts />
-              Transferts
+              {estManager ? `${secteurConfig.libelleBoutique}s` : 'Transferts'}
             </NavLink>
           </li>
         )}
