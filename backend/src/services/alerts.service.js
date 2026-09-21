@@ -13,7 +13,7 @@ webpush.setVapidDetails(
   process.env.VAPID_PRIVATE_KEY
 );
 
-async function creerAlerte({ merchantId, type, titre, message, montant = null, referenceId = null, roles = ['manager', 'gerant'] }) {
+async function creerAlerte({ merchantId, type, titre, message, montant = null, referenceId = null, roles = ['manager', 'gerant'], userIds = null }) {
   const { rows } = await pool.query(
     `INSERT INTO alerts (merchant_id, type, titre, message, montant, reference_id)
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
@@ -23,12 +23,22 @@ async function creerAlerte({ merchantId, type, titre, message, montant = null, r
 
   broadcast(merchantId, 'alert:new', alerte); // bannière SSE, réutilise l'infra existante
 
-  const { rows: destinataires } = await pool.query(
-    `SELECT id, email, alertes_push_actif, alertes_email_actif
-     FROM users
-     WHERE merchant_id = $1 AND role::text = ANY($2) AND is_active = true`,
-    [merchantId, roles]
-  );
+  // userIds cible des personnes précises (ex : le vendeur qui a créé la
+  // commande), indépendamment de leur rôle. Sans userIds, on retombe sur le
+  // ciblage par rôle habituel.
+  const { rows: destinataires } = userIds
+    ? await pool.query(
+        `SELECT id, email, alertes_push_actif, alertes_email_actif
+         FROM users
+         WHERE merchant_id = $1 AND id = ANY($2) AND is_active = true`,
+        [merchantId, userIds]
+      )
+    : await pool.query(
+        `SELECT id, email, alertes_push_actif, alertes_email_actif
+         FROM users
+         WHERE merchant_id = $1 AND role::text = ANY($2) AND is_active = true`,
+        [merchantId, roles]
+      );
 
   await Promise.all(destinataires.map(async (u) => {
     if (u.alertes_push_actif) await envoyerPush(u.id, titre, message);

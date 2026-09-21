@@ -710,7 +710,7 @@ router.patch('/:id/return-to-seller', requireRole('manager', 'caissier', 'vendeu
 
   try {
     const orderResult = await pool.query(
-      `SELECT id, status, warehouse_id FROM orders WHERE id = $1 AND merchant_id = $2`,
+      `SELECT id, status, warehouse_id, created_by FROM orders WHERE id = $1 AND merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
     const order = orderResult.rows[0];
@@ -740,6 +740,21 @@ router.patch('/:id/return-to-seller', requireRole('manager', 'caissier', 'vendeu
       action: 'order_returned_to_seller',
       description: `a retourné la commande ${formatOrderNumber(orderMisAJour)} au vendeur${reason ? ` (${reason})` : ''}`,
     });
+
+    // Notifie précisément le vendeur qui a créé la commande (pas tous les
+    // vendeurs) : c'est lui qui doit la corriger ou l'annuler.
+    if (order.created_by) {
+      getNomUtilisateur(req.user.id).then((nomExpediteur) => {
+        creerAlerte({
+          merchantId: req.user.merchantId,
+          type: 'commande_renvoyee_vendeur',
+          titre: 'Vente renvoyée pour correction',
+          message: `${nomExpediteur || 'Un caissier'} vous a renvoyé la commande ${formatOrderNumber(orderMisAJour)}${reason ? ` : ${reason}` : '.'}`,
+          referenceId: orderMisAJour.id,
+          userIds: [order.created_by],
+        });
+      }).catch((err) => console.error('Erreur alerte commande_renvoyee_vendeur :', err));
+    }
 
     res.json({ ...orderMisAJour, order_number: formatOrderNumber(orderMisAJour) });
   } catch (err) {

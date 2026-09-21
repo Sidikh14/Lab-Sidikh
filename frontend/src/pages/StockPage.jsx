@@ -126,10 +126,10 @@ function telechargerCsv(nomFichier, lignes) {
 }
 
 export function StockPage() {
-  const { user } = useAuth();
+  const { user, merchant } = useAuth();
   const peutGerer = ROLES_GESTION.includes(user.role);
   const estManager = user.role === 'manager';
-  const secteurConfig = getSecteurConfig(user.sector);
+  const secteurConfig = getSecteurConfig(merchant?.sector);
   const [searchParams] = useSearchParams();
 
   const [onglet, setOnglet] = useState('catalogue');
@@ -524,7 +524,7 @@ export function StockPage() {
   return (
     <>
       <div className="entete-page">
-        <h1>Produits</h1>
+        <h1>{secteurConfig.libelleProduit}s</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           {estManager && warehouses.length > 0 && (
             <div
@@ -574,7 +574,7 @@ export function StockPage() {
               disabled={estManager && !warehouseId}
             >
               <IconPlus />
-              Nouveau produit
+              Nouveau {secteurConfig.libelleProduit.toLowerCase()}
             </button>
           )}
         </div>
@@ -586,7 +586,7 @@ export function StockPage() {
 
       <div className="onglets">
         <button className={onglet === 'catalogue' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('catalogue')}>
-          Catalogue produits
+          Catalogue {secteurConfig.libelleProduit.toLowerCase()}s
         </button>
         {peutGerer && (
           <button className={onglet === 'comptage' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('comptage')}>
@@ -686,13 +686,15 @@ export function StockPage() {
             <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
           ) : produitsFiltres.length === 0 ? (
             <p className="etat-vide">
-              {products.length === 0 ? 'Aucun produit enregistré. Ajoutez votre premier produit pour démarrer.' : 'Aucun produit ne correspond à ces filtres.'}
+              {products.length === 0
+                ? `Aucun ${secteurConfig.libelleProduit.toLowerCase()} enregistré. Ajoutez votre premier ${secteurConfig.libelleProduit.toLowerCase()} pour démarrer.`
+                : `Aucun ${secteurConfig.libelleProduit.toLowerCase()} ne correspond à ces filtres.`}
             </p>
           ) : vueProduits === 'liste' ? (
             <table className="registre" style={{ marginBottom: 20 }}>
               <thead>
                 <tr>
-                  <th>Produit</th>
+                  <th>{secteurConfig.libelleProduit}</th>
                   <th>SKU</th>
                   <th>Prix</th>
                   <th>Stock</th>
@@ -832,7 +834,7 @@ export function StockPage() {
       {modaleOuverte && (
         <div className="modale-fond" onClick={() => setModaleOuverte(false)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Nouveau produit</h2>
+            <h2>Nouveau {secteurConfig.libelleProduit.toLowerCase()}</h2>
             <form onSubmit={handleCreate}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="p-name">Nom du produit</label>
@@ -1238,7 +1240,7 @@ export function StockPage() {
       {produitEnEdition && (
         <div className="modale-fond" onClick={() => setProduitEnEdition(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Modifier le produit</h2>
+            <h2>Modifier le {secteurConfig.libelleProduit.toLowerCase()}</h2>
             <form onSubmit={handleEnregistrerEdition}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="pe-name">Nom du produit</label>
