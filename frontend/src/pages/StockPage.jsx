@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
 import { ComptageTab } from './ComptageTab';
+import { getSecteurConfig } from '../config/sectorConfig';
 
 const ROLES_GESTION = ['manager', 'gerant'];
 const FILTRES_STATUT = [
@@ -128,6 +129,7 @@ export function StockPage() {
   const { user } = useAuth();
   const peutGerer = ROLES_GESTION.includes(user.role);
   const estManager = user.role === 'manager';
+  const secteurConfig = getSecteurConfig(user.sector);
   const [searchParams] = useSearchParams();
 
   const [onglet, setOnglet] = useState('catalogue');
@@ -138,7 +140,7 @@ export function StockPage() {
   const [recherche, setRecherche] = useState(searchParams.get('q') || '');
   const [filtreStatut, setFiltreStatut] = useState('tous');
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false });
+  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, attributes: {} });
   const [conditionnements, setConditionnements] = useState([]);
   const [modalePrixOuverte, setModalePrixOuverte] = useState(false);
   const [prixModifies, setPrixModifies] = useState({});
@@ -314,12 +316,13 @@ export function StockPage() {
         quantityAlertThreshold: Number(nouveauProduit.quantityAlertThreshold) || 5,
         isWeighted: nouveauProduit.isWeighted,
         warehouseId: estManager ? warehouseId : undefined,
+        attributes: nouveauProduit.attributes,
         units: conditionnements
           .filter((c) => c.label && Number(c.price) && Number(c.quantityPerUnit))
           .map((c) => ({ label: c.label, price: Number(c.price), quantityPerUnit: Number(c.quantityPerUnit) })),
       });
       setModaleOuverte(false);
-      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false });
+      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, attributes: {} });
       setConditionnements([]);
       charger();
     } catch (err) {
@@ -349,6 +352,7 @@ export function StockPage() {
       quantityAlertThreshold: product.quantity_alert_threshold,
       isWeighted: product.is_weighted,
       units: product.units || [],
+      attributes: product.attributes || {},
     });
     setNouveauConditionnementEdition({ label: '', price: '', quantityPerUnit: '' });
   }
@@ -392,6 +396,7 @@ export function StockPage() {
         unitPrice: Number(produitEnEdition.unitPrice),
         quantityAlertThreshold: Number(produitEnEdition.quantityAlertThreshold),
         isWeighted: produitEnEdition.isWeighted,
+        attributes: produitEnEdition.attributes,
       });
       setProduitEnEdition(null);
       charger();
@@ -891,6 +896,24 @@ export function StockPage() {
                 />
               </div>
 
+              {secteurConfig.champsProduitSup.map((champ) => (
+                <div className="champ-groupe" key={champ.key}>
+                  <label className="etiquette" htmlFor={`p-${champ.key}`}>{champ.label}</label>
+                  <input
+                    id={`p-${champ.key}`}
+                    type={champ.type}
+                    className="champ"
+                    value={nouveauProduit.attributes[champ.key] || ''}
+                    onChange={(e) =>
+                      setNouveauProduit({
+                        ...nouveauProduit,
+                        attributes: { ...nouveauProduit.attributes, [champ.key]: e.target.value },
+                      })
+                    }
+                  />
+                </div>
+              ))}
+
               <label className="etiquette" style={{ marginTop: 4 }}>
                 Vente en gros (facultatif) — cartons, packs, etc.
               </label>
@@ -1266,6 +1289,24 @@ export function StockPage() {
                   onChange={(e) => setProduitEnEdition({ ...produitEnEdition, quantityAlertThreshold: e.target.value })}
                 />
               </div>
+
+              {secteurConfig.champsProduitSup.map((champ) => (
+                <div className="champ-groupe" key={champ.key}>
+                  <label className="etiquette" htmlFor={`pe-${champ.key}`}>{champ.label}</label>
+                  <input
+                    id={`pe-${champ.key}`}
+                    type={champ.type}
+                    className="champ"
+                    value={produitEnEdition.attributes[champ.key] || ''}
+                    onChange={(e) =>
+                      setProduitEnEdition({
+                        ...produitEnEdition,
+                        attributes: { ...produitEnEdition.attributes, [champ.key]: e.target.value },
+                      })
+                    }
+                  />
+                </div>
+              ))}
 
               <div className="champ-groupe">
                 <label className="etiquette">

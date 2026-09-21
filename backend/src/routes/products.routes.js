@@ -173,7 +173,7 @@ router.get('/', async (req, res) => {
 
 // POST /products
 router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, warehouseId: warehouseIdInput } = req.body;
+  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, attributes, warehouseId: warehouseIdInput } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: 'Le nom du produit est requis.' });
@@ -186,8 +186,8 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
     await client.query('BEGIN');
 
     const result = await client.query(
-      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_alert_threshold, is_weighted)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_alert_threshold, is_weighted, attributes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -197,6 +197,7 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
         unitPrice || 0,
         quantityAlertThreshold || 5,
         Boolean(isWeighted),
+        JSON.stringify(attributes && typeof attributes === 'object' ? attributes : {}),
       ]
     );
     const product = result.rows[0];
@@ -283,7 +284,7 @@ router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), async (req
 
 // PATCH /products/:id — journalise un changement de prix, s'il y en a un
 router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, quantityAlertThreshold, isWeighted } = req.body;
+  const { name, sku, categoryId, unitPrice, quantityAlertThreshold, isWeighted, attributes } = req.body;
 
   try {
     const avant = await pool.query(
@@ -303,10 +304,15 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
          category_id = COALESCE($3, category_id),
          unit_price = COALESCE($4, unit_price),
          quantity_alert_threshold = COALESCE($5, quantity_alert_threshold),
-         is_weighted = COALESCE($6, is_weighted)
-       WHERE id = $7 AND merchant_id = $8
+         is_weighted = COALESCE($6, is_weighted),
+         attributes = COALESCE($7, attributes)
+       WHERE id = $8 AND merchant_id = $9
        RETURNING *`,
-      [name, sku, categoryId, unitPrice, quantityAlertThreshold, isWeighted, req.params.id, req.user.merchantId]
+      [
+        name, sku, categoryId, unitPrice, quantityAlertThreshold, isWeighted,
+        attributes && typeof attributes === 'object' ? JSON.stringify(attributes) : null,
+        req.params.id, req.user.merchantId,
+      ]
     );
 
     if (unitPrice !== undefined && Number(unitPrice) !== ancienPrix) {

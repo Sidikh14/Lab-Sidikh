@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { api } from '../api/client';
+import { appliquerThemeSecteur } from '../config/sectorConfig';
 
 const AuthContext = createContext(null);
 
@@ -43,6 +44,14 @@ export function AuthProvider({ children }) {
     setUser(null);
     setMerchant(null);
   }, []);
+
+  // Bascule les couleurs de l'app (--accent/--accent-clair) selon le
+  // secteur du commerçant connecté : au chargement (état initial lu depuis
+  // localStorage), à chaque connexion, et à la déconnexion (repasse au
+  // thème par défaut puisque merchant redevient null).
+  useEffect(() => {
+    appliquerThemeSecteur(merchant?.sector);
+  }, [merchant?.sector]);
 
   // client.js déclenche cet événement quand le backend répond 401
   // (token absent/invalide/expiré après 8h) : on déconnecte proprement

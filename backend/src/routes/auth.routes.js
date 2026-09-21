@@ -6,9 +6,11 @@ const { requireAdminKey } = require('../middleware/adminKey');
 
 const router = express.Router();
 
+const SECTEURS_VALIDES = ['grossiste', 'pharmacie', 'electromenager', 'textile'];
+
 function signToken(user) {
   return jwt.sign(
-    { sub: user.id, merchantId: user.merchant_id, role: user.role, warehouseId: user.warehouse_id || null },
+    { sub: user.id, merchantId: user.merchant_id, role: user.role, warehouseId: user.warehouse_id || null, sector: user.sector || null },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
   );
@@ -25,6 +27,9 @@ router.post('/register', requireAdminKey, async (req, res) => {
   if (!businessName || !fullName || !email || !password) {
     return res.status(400).json({ error: 'Champs requis manquants.' });
   }
+  if (!SECTEURS_VALIDES.includes(sector)) {
+    return res.status(400).json({ error: `Secteur d'activité invalide. Valeurs acceptées : ${SECTEURS_VALIDES.join(', ')}.` });
+  }
 
   const client = await pool.connect();
   try {
@@ -32,8 +37,8 @@ router.post('/register', requireAdminKey, async (req, res) => {
 
     const merchantResult = await client.query(
       `INSERT INTO merchants (business_name, sector, email)
-       VALUES ($1, $2, $3) RETURNING id, business_name, currency`,
-      [businessName, sector || null, email]
+       VALUES ($1, $2, $3) RETURNING id, business_name, sector, currency`,
+      [businessName, sector, email]
     );
     const merchant = merchantResult.rows[0];
 
@@ -44,7 +49,7 @@ router.post('/register', requireAdminKey, async (req, res) => {
        RETURNING id, full_name, email, role, merchant_id`,
       [merchant.id, fullName, email, passwordHash]
     );
-    const user = userResult.rows[0];
+    const user = { ...userResult.rows[0], sector: merchant.sector };
 
     await client.query('COMMIT');
 
@@ -52,7 +57,7 @@ router.post('/register', requireAdminKey, async (req, res) => {
     res.status(201).json({
       token,
       user: { id: user.id, fullName: user.full_name, email: user.email, role: user.role },
-      merchant: { id: merchant.id, businessName: merchant.business_name, currency: merchant.currency },
+      merchant: { id: merchant.id, businessName: merchant.business_name, sector: merchant.sector, currency: merchant.currency },
     });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -110,7 +115,7 @@ router.post('/login', async (req, res) => {
     const result = await pool.query(
       `SELECT u.id, u.merchant_id, u.full_name, u.email, u.password_hash, u.role, u.is_active,
               u.visible_modules, u.warehouse_id, w.name AS warehouse_name,
-              m.business_name, m.currency, m.is_active AS merchant_is_active
+              m.business_name, m.sector, m.currency, m.is_active AS merchant_is_active
        FROM users u
        LEFT JOIN merchants m ON m.id = u.merchant_id
        LEFT JOIN warehouses w ON w.id = u.warehouse_id
@@ -150,7 +155,7 @@ router.post('/login', async (req, res) => {
         warehouseName: user.warehouse_name,
       },
       merchant: user.merchant_id
-        ? { id: user.merchant_id, businessName: user.business_name, currency: user.currency }
+        ? { id: user.merchant_id, businessName: user.business_name, sector: user.sector, currency: user.currency }
         : null,
     });
   } catch (err) {

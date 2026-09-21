@@ -18,6 +18,7 @@ function authenticate(req, res, next) {
       merchantId: payload.merchantId,
       role: payload.role,
       warehouseId: payload.warehouseId || null,
+      sector: payload.sector || null,
     };
     next();
   } catch (err) {
