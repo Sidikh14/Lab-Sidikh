@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import { getSecteurConfig } from '../config/sectorConfig';
 
 function IconPlus() {
   return (
@@ -20,6 +22,11 @@ function IconModifier() {
 }
 
 export function WarehousesPage() {
+  const { merchant } = useAuth();
+  const secteurConfig = getSecteurConfig(merchant?.sector);
+  const libelle = secteurConfig.libelleBoutique;
+  const libelleMin = libelle.toLowerCase();
+
   const [warehouses, setWarehouses] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
@@ -45,7 +52,7 @@ export function WarehousesPage() {
   async function handleCreate(e) {
     e.preventDefault();
     if (!nouvelleBoutique.name.trim()) {
-      setErreur('Le nom de la boutique est requis.');
+      setErreur(`Le nom de la ${libelleMin} est requis.`);
       return;
     }
     setEnregistrement(true);
@@ -96,21 +103,21 @@ export function WarehousesPage() {
   return (
     <>
       <div className="entete-page">
-        <h1>Boutiques</h1>
+        <h1>{libelle}s</h1>
         <button
           className="btn btn-principal"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
           onClick={() => setModaleOuverte(true)}
         >
           <IconPlus />
-          Nouvelle boutique
+          Nouvelle {libelleMin}
         </button>
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
 
       {warehouses.length === 0 ? (
-        <p className="etat-vide">Aucune boutique pour l'instant.</p>
+        <p className="etat-vide">Aucune {libelleMin} pour l'instant.</p>
       ) : (
         <div className="grille-cartes">
           {warehouses.map((w) => (
@@ -138,7 +145,7 @@ export function WarehousesPage() {
       {modaleOuverte && (
         <div className="modale-fond" onClick={() => setModaleOuverte(false)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Nouvelle boutique</h2>
+            <h2>Nouvelle {libelleMin}</h2>
             <form onSubmit={handleCreate}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="b-name">Nom</label>
@@ -147,7 +154,7 @@ export function WarehousesPage() {
                   className="champ"
                   value={nouvelleBoutique.name}
                   onChange={(e) => setNouvelleBoutique({ ...nouvelleBoutique, name: e.target.value })}
-                  placeholder="Boutique Médina"
+                  placeholder={`${libelle} Médina`}
                 />
               </div>
               <div className="champ-groupe">
@@ -173,7 +180,7 @@ export function WarehousesPage() {
       {boutiqueEnEdition && (
         <div className="modale-fond" onClick={() => setBoutiqueEnEdition(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Modifier la boutique</h2>
+            <h2>Modifier la {libelleMin}</h2>
             <form onSubmit={handleEnregistrerEdition}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="be-name">Nom</label>

@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { getSecteurConfig } from '../config/sectorConfig';
 
 function IconDashboard() {
   return (
@@ -161,6 +162,7 @@ function IconFermer() {
 
 export function Sidebar({ ouvert = false, onFermer }) {
   const { user, merchant, logout } = useAuth();
+  const secteurConfig = getSecteurConfig(merchant?.sector);
   const autorises = modulesAutorises(user);
   const liens = TOUS_LES_LIENS.filter((lien) => autorises.includes(lien.module));
   const voitEquipe = ['manager', 'gerant'].includes(user?.role);
@@ -229,7 +231,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
           <li>
             <NavLink to="/boutiques" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
               <IconBoutique />
-              Boutiques
+              {secteurConfig.libelleBoutique}s
             </NavLink>
           </li>
         )}

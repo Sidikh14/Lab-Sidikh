@@ -8,12 +8,14 @@ export const SECTEURS = {
     label: 'Grossiste',
     theme: { accent: '#7c3aed', accentClair: '#ede9fe' }, // violet actuel, inchangé
     libelleProduit: 'Produit',
+    libelleBoutique: 'Boutique',
     champsProduitSup: [],
   },
   pharmacie: {
     label: 'Pharmacie',
     theme: { accent: '#059669', accentClair: '#d1fae5' }, // vert / blanc
     libelleProduit: 'Médicament',
+    libelleBoutique: 'Pharmacie',
     champsProduitSup: [
       { key: 'datePeremption', label: 'Date de péremption', type: 'date' },
       { key: 'numeroLot', label: 'Numéro de lot', type: 'text' },
@@ -23,6 +25,7 @@ export const SECTEURS = {
     label: 'Électroménager',
     theme: { accent: '#2563eb', accentClair: '#dbeafe' }, // bleu / blanc
     libelleProduit: 'Article',
+    libelleBoutique: 'Boutique',
     champsProduitSup: [
       { key: 'garantieMois', label: 'Garantie (mois)', type: 'number' },
       { key: 'numeroSerie', label: 'Numéro de série', type: 'text' },
@@ -32,6 +35,7 @@ export const SECTEURS = {
     label: 'Textile',
     theme: { accent: '#dc2626', accentClair: '#fee2e2' }, // rouge / blanc
     libelleProduit: 'Article',
+    libelleBoutique: 'Boutique',
     champsProduitSup: [
       { key: 'couleur', label: 'Couleur', type: 'text' },
       { key: 'metrage', label: 'Métrage (m)', type: 'number' },
