@@ -32,6 +32,28 @@ function IconRecherche() {
   );
 }
 
+function IconGrille() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <rect x="3" y="3" width="8" height="8" rx="1.3" />
+      <rect x="13" y="3" width="8" height="8" rx="1.3" />
+      <rect x="3" y="13" width="8" height="8" rx="1.3" />
+      <rect x="13" y="13" width="8" height="8" rx="1.3" />
+    </svg>
+  );
+}
+
+function IconListe() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <circle cx="3.5" cy="6" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="3.5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="3.5" cy="18" r="1.4" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 function IconCamera() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -203,6 +225,12 @@ export function OrdersPage() {
   }, [estManager, warehouseId]);
 
   const [rechercheCaisse, setRechercheCaisse] = useState('');
+  const [vueCaisse, setVueCaisse] = useState(() => localStorage.getItem('vueCaisse') || 'grille');
+
+  function changerVueCaisse(vue) {
+    setVueCaisse(vue);
+    localStorage.setItem('vueCaisse', vue);
+  }
   const [panier, setPanier] = useState([]);
   const [clientId, setClientId] = useState('');
   const [tvaApplicable, setTvaApplicable] = useState(false);
@@ -669,7 +697,64 @@ export function OrdersPage() {
                 <IconCamera />
                 Scanner
               </button>
+              <div style={{ display: 'flex', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', overflow: 'hidden' }}>
+                <button
+                  type="button"
+                  onClick={() => changerVueCaisse('grille')}
+                  title="Vue grille"
+                  style={{
+                    display: 'flex', alignItems: 'center', padding: '7px 10px', border: 'none', cursor: 'pointer',
+                    background: vueCaisse === 'grille' ? 'var(--accent)' : 'transparent',
+                    color: vueCaisse === 'grille' ? '#fff' : 'var(--encre-douce)',
+                  }}
+                >
+                  <IconGrille />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => changerVueCaisse('liste')}
+                  title="Vue liste (sélection rapide)"
+                  style={{
+                    display: 'flex', alignItems: 'center', padding: '7px 10px', border: 'none', cursor: 'pointer',
+                    background: vueCaisse === 'liste' ? 'var(--accent)' : 'transparent',
+                    color: vueCaisse === 'liste' ? '#fff' : 'var(--encre-douce)',
+                  }}
+                >
+                  <IconListe />
+                </button>
+              </div>
             </div>
+            {vueCaisse === 'liste' ? (
+              <div className="liste-caisse">
+                {produitsCaisse.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="ligne-caisse"
+                    disabled={p.quantity_in_stock <= 0}
+                    onClick={() => demarrerAjout(p)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, width: '100%',
+                      padding: '8px 12px', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)',
+                      marginBottom: 6, background: 'var(--surface)', cursor: p.quantity_in_stock <= 0 ? 'not-allowed' : 'pointer',
+                      opacity: p.quantity_in_stock <= 0 ? 0.5 : 1, textAlign: 'left',
+                    }}
+                  >
+                    <span style={{ flex: 1, fontSize: 14 }}>{p.name}</span>
+                    <span className="chiffre" style={{ fontSize: 13, color: 'var(--encre-douce)' }}>
+                      {p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''}
+                    </span>
+                    {p.quantity_in_stock <= 0 ? (
+                      <span className="tampon tampon-brique">Rupture</span>
+                    ) : (
+                      <span className="chiffre" style={{ fontSize: 14, fontWeight: 600, minWidth: 70, textAlign: 'right' }}>
+                        {Math.round(p.unit_price).toLocaleString('fr-FR')}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ) : (
             <div className="grille-caisse">
               {produitsCaisse.map((p) => (
                 <button
@@ -692,6 +777,7 @@ export function OrdersPage() {
                 </button>
               ))}
             </div>
+            )}
           </div>
 
           <div className="caisse-ticket">

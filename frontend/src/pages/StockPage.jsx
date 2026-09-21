@@ -42,6 +42,28 @@ function IconPlus() {
   );
 }
 
+function IconGrille() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <rect x="3" y="3" width="8" height="8" rx="1.3" />
+      <rect x="13" y="3" width="8" height="8" rx="1.3" />
+      <rect x="3" y="13" width="8" height="8" rx="1.3" />
+      <rect x="13" y="13" width="8" height="8" rx="1.3" />
+    </svg>
+  );
+}
+
+function IconListe() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <circle cx="3.5" cy="6" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="3.5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="3.5" cy="18" r="1.4" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 function IconModifier() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -153,6 +175,7 @@ export function StockPage() {
   const [produitEnEdition, setProduitEnEdition] = useState(null);
   const [enregistrementEdition, setEnregistrementEdition] = useState(false);
   const [produitsSelectionnes, setProduitsSelectionnes] = useState(new Set());
+  const [vueProduits, setVueProduits] = useState(() => localStorage.getItem('vueProduits') || 'grille');
   const [quantitesEtiquettes, setQuantitesEtiquettes] = useState({});
   const [impressionEnAttente, setImpressionEnAttente] = useState(false);
 
@@ -200,6 +223,11 @@ export function StockPage() {
   }
 
   useEffect(charger, [warehouseId]);
+
+  function changerVueProduits(vue) {
+    setVueProduits(vue);
+    localStorage.setItem('vueProduits', vue);
+  }
 
   function basculerSelectionEtiquette(id) {
     setProduitsSelectionnes((avant) => {
@@ -621,6 +649,32 @@ export function StockPage() {
             <button className="btn" onClick={() => api.downloadProductsPdf(estManager ? warehouseId : undefined).catch((err) => setErreur(err.message))}>Exporter PDF</button>
             {peutGerer && <button className="btn" onClick={() => setModaleEntreeOuverte(true)}>Entrée de stock</button>}
             {peutGerer && <button className="btn" onClick={ouvrirRevisionPrix}>Réviser les prix</button>}
+            <div style={{ display: 'flex', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', overflow: 'hidden' }}>
+              <button
+                type="button"
+                onClick={() => changerVueProduits('grille')}
+                title="Vue grille"
+                style={{
+                  display: 'flex', alignItems: 'center', padding: '7px 10px', border: 'none', cursor: 'pointer',
+                  background: vueProduits === 'grille' ? 'var(--accent)' : 'transparent',
+                  color: vueProduits === 'grille' ? '#fff' : 'var(--encre-douce)',
+                }}
+              >
+                <IconGrille />
+              </button>
+              <button
+                type="button"
+                onClick={() => changerVueProduits('liste')}
+                title="Vue liste (sélection rapide)"
+                style={{
+                  display: 'flex', alignItems: 'center', padding: '7px 10px', border: 'none', cursor: 'pointer',
+                  background: vueProduits === 'liste' ? 'var(--accent)' : 'transparent',
+                  color: vueProduits === 'liste' ? '#fff' : 'var(--encre-douce)',
+                }}
+              >
+                <IconListe />
+              </button>
+            </div>
           </div>
 
           {chargement ? (
@@ -629,6 +683,42 @@ export function StockPage() {
             <p className="etat-vide">
               {products.length === 0 ? 'Aucun produit enregistré. Ajoutez votre premier produit pour démarrer.' : 'Aucun produit ne correspond à ces filtres.'}
             </p>
+          ) : vueProduits === 'liste' ? (
+            <table className="registre" style={{ marginBottom: 20 }}>
+              <thead>
+                <tr>
+                  <th>Produit</th>
+                  <th>SKU</th>
+                  <th>Prix</th>
+                  <th>Stock</th>
+                  <th>Statut</th>
+                  {peutGerer && <th></th>}
+                </tr>
+              </thead>
+              <tbody>
+                {produitsFiltres.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.name}</td>
+                    <td className="chiffre">{codeInterne(p)}</td>
+                    <td className="chiffre">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA{p.is_weighted ? '/kg' : ''}</td>
+                    <td className="chiffre">{p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''}</td>
+                    <td><StatusBadge status={p.status} /></td>
+                    {peutGerer && (
+                      <td>
+                        <button
+                          className="btn"
+                          style={{ fontSize: 13, padding: '4px 10px', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                          onClick={() => ouvrirEdition(p)}
+                        >
+                          <IconModifier />
+                          Modifier
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           ) : (
             <div className="grille-produits">
               {produitsFiltres.map((p) => (
