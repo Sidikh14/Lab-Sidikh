@@ -20,10 +20,16 @@ router.get('/', async (req, res) => {
       `SELECT s.id, s.session_seq, s.status, s.created_at, s.closed_at, u.full_name AS created_by_name,
               COUNT(i.id) AS total_produits,
               COUNT(i.counted_quantity) AS total_comptes,
-              COUNT(*) FILTER (WHERE i.counted_quantity IS NOT NULL AND i.counted_quantity != i.theoretical_quantity) AS total_ecarts
+              COUNT(*) FILTER (WHERE i.counted_quantity IS NOT NULL AND i.counted_quantity != i.theoretical_quantity) AS total_ecarts,
+              COALESCE(SUM(
+                CASE WHEN i.counted_quantity IS NOT NULL AND i.counted_quantity < i.theoretical_quantity
+                     THEN (i.theoretical_quantity - i.counted_quantity) * p.unit_price
+                     ELSE 0 END
+              ), 0) AS total_perte
        FROM inventory_sessions s
        LEFT JOIN users u ON u.id = s.created_by
        LEFT JOIN inventory_session_items i ON i.session_id = s.id
+       LEFT JOIN products p ON p.id = i.product_id
        WHERE s.merchant_id = $1
        GROUP BY s.id, u.full_name
        ORDER BY s.created_at DESC`,

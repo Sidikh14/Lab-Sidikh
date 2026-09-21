@@ -176,9 +176,9 @@ export function ComptageTab() {
               <th>Numéro</th>
               <th>Date</th>
               <th>Responsable</th>
-              <th>Produits</th>
               <th>Comptage</th>
               <th>Écarts</th>
+              <th>Montant perdu</th>
               <th>Statut</th>
             </tr>
           </thead>
@@ -188,10 +188,12 @@ export function ComptageTab() {
                 <td className="chiffre">{s.session_number}</td>
                 <td>{new Date(s.created_at).toLocaleDateString('fr-FR')}</td>
                 <td>{s.created_by_name || '—'}</td>
-                <td className="chiffre">{s.total_produits}</td>
                 <td className="chiffre">{s.total_comptes} / {s.total_produits}</td>
                 <td className="chiffre" style={{ color: Number(s.total_ecarts) > 0 ? 'var(--danger)' : 'inherit' }}>
                   {Number(s.total_ecarts) > 0 ? `${s.total_ecarts} écart(s)` : 'Aucun'}
+                </td>
+                <td className="chiffre" style={{ color: Number(s.total_perte) > 0 ? 'var(--danger)' : 'var(--encre-douce)' }}>
+                  {Number(s.total_perte) > 0 ? `-${Math.round(Number(s.total_perte)).toLocaleString('fr-FR')} FCFA` : '—'}
                 </td>
                 <td><span className={`tampon ${CLASSE_STATUT[s.status]}`}>{LABEL_STATUT[s.status]}</span></td>
               </tr>
