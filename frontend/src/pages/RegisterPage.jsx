@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { SECTEURS } from '../config/sectorConfig';
 
 export function RegisterPage() {
   const { register } = useAuth();
@@ -20,6 +21,10 @@ export function RegisterPage() {
 
     if (!form.businessName || !form.fullName || !form.email || !form.password) {
       setErreur('Tous les champs marqués sont requis.');
+      return;
+    }
+    if (!form.sector) {
+      setErreur('Choisissez un secteur.');
       return;
     }
     if (!adminKey) {
@@ -70,13 +75,17 @@ export function RegisterPage() {
           </div>
           <div className="champ-groupe">
             <label className="etiquette" htmlFor="sector">Secteur</label>
-            <input
+            <select
               id="sector"
               className="champ"
               value={form.sector}
               onChange={(e) => update('sector', e.target.value)}
-              placeholder="Alimentation, textile…"
-            />
+            >
+              <option value="">Choisir un secteur</option>
+              {Object.entries(SECTEURS).map(([valeur, config]) => (
+                <option key={valeur} value={valeur}>{config.label}</option>
+              ))}
+            </select>
           </div>
           <div className="champ-groupe">
             <label className="etiquette" htmlFor="fullName">Nom du manager</label>
