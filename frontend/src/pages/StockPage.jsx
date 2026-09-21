@@ -148,11 +148,12 @@ export function StockPage() {
   const [enregistrementPrix, setEnregistrementPrix] = useState(false);
   const [modaleEntreeOuverte, setModaleEntreeOuverte] = useState(false);
   const entreeStockVide = {
-    items: [{ productId: '', quantity: '' }],
+    items: [{ productId: '', quantity: '', montant: '' }],
     supplierId: '',
     movementDate: new Date().toISOString().slice(0, 10),
     paymentMethod: 'comptant',
     totalCost: '',
+    invoiceNumber: '',
     cashMethod: 'especes',
     avecAvance: false,
     advanceAmount: '',
@@ -161,7 +162,7 @@ export function StockPage() {
   const [entreeStock, setEntreeStock] = useState(entreeStockVide);
   const [enregistrementEntree, setEnregistrementEntree] = useState(false);
   function ajouterLigneEntree() {
-    setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '' }] }));
+    setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '', montant: '' }] }));
   }
   function retirerLigneEntree(index) {
     setEntreeStock((prev) => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
@@ -423,11 +424,20 @@ export function StockPage() {
       setErreur('Un même produit apparaît plusieurs fois — regroupez-le en une seule ligne.');
       return;
     }
-    if (entreeStock.paymentMethod === 'a_credit' && (!entreeStock.supplierId || !Number(entreeStock.totalCost))) {
+    // Avec plusieurs articles, le montant total n'est plus saisi à la main :
+    // il se calcule à partir du montant renseigné sur chaque ligne.
+    if (items.length > 1 && items.some((it) => !Number(it.montant) || Number(it.montant) <= 0)) {
+      setErreur('Chaque article doit avoir un montant valide pour que le total se calcule.');
+      return;
+    }
+    const totalAchatCalcule = items.length > 1
+      ? items.reduce((somme, it) => somme + Number(it.montant), 0)
+      : Number(entreeStock.totalCost);
+    if (entreeStock.paymentMethod === 'a_credit' && (!entreeStock.supplierId || !totalAchatCalcule)) {
       setErreur('Un achat à crédit nécessite un fournisseur et le montant total de l\'achat.');
       return;
     }
-    if (entreeStock.paymentMethod === 'comptant' && !Number(entreeStock.totalCost)) {
+    if (entreeStock.paymentMethod === 'comptant' && !totalAchatCalcule) {
       setErreur('Le montant total de l\'achat est requis pour un achat au comptant (pour le suivi de caisse).');
       return;
     }
@@ -436,7 +446,7 @@ export function StockPage() {
         setErreur("Le montant de l'avance est invalide.");
         return;
       }
-      if (Number(entreeStock.advanceAmount) > Number(entreeStock.totalCost)) {
+      if (Number(entreeStock.advanceAmount) > totalAchatCalcule) {
         setErreur("L'avance ne peut pas dépasser le montant total de l'achat.");
         return;
       }
@@ -448,7 +458,8 @@ export function StockPage() {
         supplierId: entreeStock.supplierId || undefined,
         movementDate: entreeStock.movementDate || undefined,
         paymentMethod: entreeStock.paymentMethod,
-        totalCost: Number(entreeStock.totalCost),
+        totalCost: totalAchatCalcule,
+        invoiceNumber: entreeStock.invoiceNumber.trim() || undefined,
         cashMethod: entreeStock.paymentMethod === 'comptant' ? entreeStock.cashMethod : undefined,
         advanceAmount: entreeStock.paymentMethod === 'a_credit' && entreeStock.avecAvance ? Number(entreeStock.advanceAmount) : undefined,
         advanceCashMethod: entreeStock.paymentMethod === 'a_credit' && entreeStock.avecAvance ? entreeStock.advanceCashMethod : undefined,
@@ -1032,6 +1043,16 @@ export function StockPage() {
                         onChange={(e) => modifierLigneEntree(index, 'quantity', e.target.value)}
                       />
                       {entreeStock.items.length > 1 && (
+                        <input
+                          type="number"
+                          className="champ"
+                          style={{ flex: 1 }}
+                          placeholder="Montant (FCFA)"
+                          value={item.montant}
+                          onChange={(e) => modifierLigneEntree(index, 'montant', e.target.value)}
+                        />
+                      )}
+                      {entreeStock.items.length > 1 && (
                         <button
                           type="button"
                           className="btn"
@@ -1111,14 +1132,28 @@ export function StockPage() {
               </div>
               {(entreeStock.paymentMethod === 'a_credit' || entreeStock.paymentMethod === 'comptant') && (
                 <div className="champ-groupe">
-                  <label className="etiquette" htmlFor="e-montant">Montant total de l'achat — tous articles (FCFA)</label>
-                  <input
-                    id="e-montant"
-                    type="number"
-                    className="champ"
-                    value={entreeStock.totalCost}
-                    onChange={(e) => setEntreeStock({ ...entreeStock, totalCost: e.target.value })}
-                  />
+                  <label className="etiquette" htmlFor="e-montant">
+                    {entreeStock.items.length > 1
+                      ? "Montant total de l'achat — calculé depuis les articles (FCFA)"
+                      : "Montant total de l'achat (FCFA)"}
+                  </label>
+                  {entreeStock.items.length > 1 ? (
+                    <input
+                      id="e-montant"
+                      className="champ"
+                      value={entreeStock.items.reduce((s, it) => s + (Number(it.montant) || 0), 0).toLocaleString('fr-FR')}
+                      disabled
+                      readOnly
+                    />
+                  ) : (
+                    <input
+                      id="e-montant"
+                      type="number"
+                      className="champ"
+                      value={entreeStock.totalCost}
+                      onChange={(e) => setEntreeStock({ ...entreeStock, totalCost: e.target.value })}
+                    />
+                  )}
                 </div>
               )}
               {entreeStock.paymentMethod === 'comptant' && (
@@ -1184,6 +1219,16 @@ export function StockPage() {
                   </div>
                 </>
               )}
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="e-facture">N° de facture fournisseur (facultatif)</label>
+                <input
+                  id="e-facture"
+                  className="champ"
+                  value={entreeStock.invoiceNumber}
+                  onChange={(e) => setEntreeStock({ ...entreeStock, invoiceNumber: e.target.value })}
+                  placeholder="Ex : FAC-2026-0148"
+                />
+              </div>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="e-date">Date de réception</label>
                 <input

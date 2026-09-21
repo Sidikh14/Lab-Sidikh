@@ -575,7 +575,7 @@ router.post('/:id/stock-movement', async (req, res) => {
 // qu'une seule fois — cette appli ne suit pas de coût par article.
 router.post('/purchases', async (req, res) => {
   const {
-    items, supplierId, movementDate, paymentMethod, totalCost, cashMethod,
+    items, supplierId, movementDate, paymentMethod, totalCost, invoiceNumber, cashMethod,
     advanceAmount, advanceCashMethod,
     warehouseId: warehouseIdInput,
   } = req.body;
@@ -700,8 +700,8 @@ router.post('/purchases', async (req, res) => {
       );
 
       const mouvement = await client.query(
-        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, cash_method, warehouse_id)
-         VALUES ($1, $2, $3, 'entree', $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id`,
+        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, invoice_number, cash_method, warehouse_id)
+         VALUES ($1, $2, $3, 'entree', $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
         [
           req.user.merchantId,
           product.id,
@@ -712,6 +712,7 @@ router.post('/purchases', async (req, res) => {
           movementDate || null,
           paymentMethod,
           index === 0 ? coutFinal : null,
+          index === 0 ? (invoiceNumber || null) : null,
           cashMethodFinal,
           warehouseId,
         ]
