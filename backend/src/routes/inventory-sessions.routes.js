@@ -49,7 +49,7 @@ router.get('/:id', async (req, res) => {
     if (!session) return res.status(404).json({ error: 'Session introuvable.' });
 
     const itemsResult = await pool.query(
-      `SELECT i.id, i.product_id, p.name AS product_name, p.sku, i.theoretical_quantity, i.counted_quantity, i.counted_at
+      `SELECT i.id, i.product_id, p.name AS product_name, p.sku, p.unit_price, i.theoretical_quantity, i.counted_quantity, i.counted_at
        FROM inventory_session_items i JOIN products p ON p.id = i.product_id
        WHERE i.session_id = $1
        ORDER BY p.name`,

@@ -42,7 +42,7 @@ export function ComptageTab() {
 
   async function handleSaisieComptage(itemId, valeur) {
     const quantite = Number(valeur);
-    if (!Number.isInteger(quantite) || quantite < 0) return;
+    if (Number.isNaN(quantite) || quantite < 0) return;
     try {
       await api.setInventoryItemCount(sessionOuverte.id, itemId, quantite);
       setSessionOuverte((prev) => ({
@@ -77,6 +77,11 @@ export function ComptageTab() {
 
   if (sessionOuverte) {
     const totalCompte = sessionOuverte.items.filter((i) => i.counted_quantity !== null).length;
+    const totalPerte = sessionOuverte.items.reduce((somme, item) => {
+      if (item.counted_quantity === null) return somme;
+      const ecart = item.counted_quantity - item.theoretical_quantity;
+      return ecart < 0 ? somme + Math.abs(ecart) * Number(item.unit_price || 0) : somme;
+    }, 0);
     return (
       <>
         <div className="barre-outils">
@@ -95,11 +100,13 @@ export function ComptageTab() {
               <th>Stock théorique</th>
               <th>Quantité comptée</th>
               <th>Écart</th>
+              <th>Montant</th>
             </tr>
           </thead>
           <tbody>
             {sessionOuverte.items.map((item) => {
               const ecart = item.counted_quantity !== null ? item.counted_quantity - item.theoretical_quantity : null;
+              const montant = ecart !== null ? ecart * Number(item.unit_price || 0) : null;
               return (
                 <tr key={item.id}>
                   <td>{item.product_name}</td>
@@ -108,6 +115,7 @@ export function ComptageTab() {
                     <input
                       type="number"
                       min="0"
+                      step="0.001"
                       className="champ"
                       style={{ width: 90, padding: '6px 10px' }}
                       defaultValue={item.counted_quantity ?? ''}
@@ -117,10 +125,23 @@ export function ComptageTab() {
                   <td className="chiffre" style={{ color: ecart ? 'var(--danger)' : 'var(--encre-douce)' }}>
                     {ecart === null ? '—' : ecart > 0 ? `+${ecart}` : ecart}
                   </td>
+                  <td className="chiffre" style={{ color: montant < 0 ? 'var(--danger)' : 'var(--encre-douce)' }}>
+                    {montant === null ? '—' : `${montant > 0 ? '+' : ''}${Math.round(montant).toLocaleString('fr-FR')} FCFA`}
+                  </td>
                 </tr>
               );
             })}
           </tbody>
+          {totalPerte > 0 && (
+            <tfoot>
+              <tr>
+                <td colSpan={4} style={{ textAlign: 'right', fontWeight: 600 }}>Perte totale (manquants)</td>
+                <td className="chiffre" style={{ color: 'var(--danger)', fontWeight: 600 }}>
+                  -{Math.round(totalPerte).toLocaleString('fr-FR')} FCFA
+                </td>
+              </tr>
+            </tfoot>
+          )}
         </table>
 
         {sessionOuverte.status === 'en_cours' && (
