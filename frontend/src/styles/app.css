@@ -639,7 +639,7 @@
 .nav-lien.actif {
   color: #ffffff;
   border-left-color: var(--accent);
-  background: rgba(91, 79, 233, 0.18);
+  background: var(--accent-transparent, rgba(91, 79, 233, 0.18));
 }
 
 .pied-sidebar {

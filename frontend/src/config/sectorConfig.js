@@ -6,14 +6,24 @@
 export const SECTEURS = {
   grossiste: {
     label: 'Grossiste',
-    theme: { accent: '#7c3aed', accentClair: '#ede9fe' }, // violet actuel, inchangé
+    // Pas de surcharge : on ne connaît pas les valeurs exactes définies
+    // dans le CSS d'origine (--accent/--accent-clair/--accent-fonce), donc
+    // plutôt que de deviner et risquer un léger décalage de couleur, le
+    // secteur grossiste n'écrit aucune variable — l'app garde le thème
+    // CSS par défaut, pixel pour pixel.
+    theme: null,
     libelleProduit: 'Produit',
     libelleBoutique: 'Boutique',
     champsProduitSup: [],
   },
   pharmacie: {
     label: 'Pharmacie',
-    theme: { accent: '#059669', accentClair: '#d1fae5' }, // vert / blanc
+    theme: {
+      accent: '#059669',
+      accentClair: '#d1fae5',
+      accentFonce: '#047857',
+      accentTransparent: 'rgba(5, 150, 105, 0.18)', // même usage que le fond de lien actif en sidebar
+    },
     libelleProduit: 'Médicament',
     libelleBoutique: 'Pharmacie',
     champsProduitSup: [
@@ -23,7 +33,12 @@ export const SECTEURS = {
   },
   electromenager: {
     label: 'Électroménager',
-    theme: { accent: '#2563eb', accentClair: '#dbeafe' }, // bleu / blanc
+    theme: {
+      accent: '#2563eb',
+      accentClair: '#dbeafe',
+      accentFonce: '#1d4ed8',
+      accentTransparent: 'rgba(37, 99, 235, 0.18)',
+    },
     libelleProduit: 'Article',
     libelleBoutique: 'Boutique',
     champsProduitSup: [
@@ -33,7 +48,12 @@ export const SECTEURS = {
   },
   textile: {
     label: 'Textile',
-    theme: { accent: '#dc2626', accentClair: '#fee2e2' }, // rouge / blanc
+    theme: {
+      accent: '#dc2626',
+      accentClair: '#fee2e2',
+      accentFonce: '#b91c1c',
+      accentTransparent: 'rgba(220, 38, 38, 0.18)',
+    },
     libelleProduit: 'Article',
     libelleBoutique: 'Boutique',
     champsProduitSup: [
@@ -47,16 +67,30 @@ export function getSecteurConfig(sector) {
   return SECTEURS[sector] || SECTEURS.grossiste;
 }
 
-// À appeler une fois dans AuthContext.jsx (au chargement + à chaque login),
-// avec le secteur de l'utilisateur connecté. Ne touche que les 2 variables
-// CSS déjà utilisées partout dans l'app (--accent / --accent-clair) — donc
-// aucune autre feuille de style à dupliquer par secteur. Met aussi à jour
-// le meta "theme-color" (couleur de la barre système en PWA).
+const VARIABLES_THEME = ['--accent', '--accent-clair', '--accent-fonce', '--accent-transparent'];
+const THEME_COLOR_ORIGINE = '#7c3aed'; // valeur d'origine du <meta name="theme-color"> dans index.html
+
+// À appeler une fois dans AuthContext.jsx (au chargement + à chaque login/
+// déconnexion), avec le secteur du commerçant connecté.
+// - Secteur avec thème défini (pharmacie/electromenager/textile) : surcharge
+//   --accent/--accent-clair/--accent-fonce/--accent-transparent, plus le
+//   meta "theme-color" (couleur de la barre système en PWA).
+// - Secteur sans thème (grossiste, ou déconnecté) : retire toute surcharge
+//   précédente pour retomber exactement sur les valeurs définies dans le CSS.
 export function appliquerThemeSecteur(sector) {
   const config = getSecteurConfig(sector);
   const root = document.documentElement;
+  const metaTheme = document.querySelector('meta[name="theme-color"]');
+
+  if (!config.theme) {
+    VARIABLES_THEME.forEach((v) => root.style.removeProperty(v));
+    if (metaTheme) metaTheme.setAttribute('content', THEME_COLOR_ORIGINE);
+    return;
+  }
+
   root.style.setProperty('--accent', config.theme.accent);
   root.style.setProperty('--accent-clair', config.theme.accentClair);
-  const metaTheme = document.querySelector('meta[name="theme-color"]');
+  root.style.setProperty('--accent-fonce', config.theme.accentFonce);
+  root.style.setProperty('--accent-transparent', config.theme.accentTransparent);
   if (metaTheme) metaTheme.setAttribute('content', config.theme.accent);
 }
