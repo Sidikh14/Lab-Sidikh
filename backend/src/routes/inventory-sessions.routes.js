@@ -103,7 +103,7 @@ router.post('/', async (req, res) => {
 // PATCH /inventory-sessions/:id/items/:itemId — saisir la quantité comptée pour un produit
 router.patch('/:id/items/:itemId', async (req, res) => {
   const { countedQuantity } = req.body;
-  if (!Number.isInteger(countedQuantity) || countedQuantity < 0) {
+  if (typeof countedQuantity !== 'number' || Number.isNaN(countedQuantity) || countedQuantity < 0) {
     return res.status(400).json({ error: 'Quantité comptée invalide.' });
   }
   try {
