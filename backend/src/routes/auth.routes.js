@@ -11,8 +11,7 @@ const SECTEURS_VALIDES = ['grossiste', 'pharmacie', 'electromenager', 'textile']
 function signToken(user) {
   return jwt.sign(
     { sub: user.id, merchantId: user.merchant_id, role: user.role, warehouseId: user.warehouse_id || null, sector: user.sector || null },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
+    process.env.JWT_SECRET
   );
 }
 
