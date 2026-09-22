@@ -361,7 +361,7 @@ export function StockPage() {
       name: product.name,
       sku: product.sku || '',
       unitPrice: product.unit_price,
-      quantityAlertThreshold: product.quantity_alert_threshold,
+      quantityAlertThreshold: estPharmacie ? String(Math.round(Number(product.quantity_alert_threshold))) : product.quantity_alert_threshold,
       isWeighted: product.is_weighted,
       categoryId: product.category_id || '',
       tvaApplicable: product.tva_applicable !== false,
