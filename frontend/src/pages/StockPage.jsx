@@ -288,12 +288,15 @@ export function StockPage() {
   }, [produitsSelectionnes, quantitesEtiquettes]);
 
   const produitsFiltres = useMemo(() => {
-    return products.filter((p) => {
-      const correspondRecherche = p.name.toLowerCase().includes(recherche.toLowerCase()) ||
-        (p.sku || '').toLowerCase().includes(recherche.toLowerCase());
-      const correspondStatut = filtreStatut === 'tous' || p.status === filtreStatut;
-      return correspondRecherche && correspondStatut;
-    });
+    return products
+      .filter((p) => {
+        const correspondRecherche = p.name.toLowerCase().includes(recherche.toLowerCase()) ||
+          (p.sku || '').toLowerCase().includes(recherche.toLowerCase());
+        const correspondStatut = filtreStatut === 'tous' || p.status === filtreStatut;
+        return correspondRecherche && correspondStatut;
+      })
+      // Produits activés (stock déjà entré au moins une fois) en premier, "À activer" en dernier.
+      .sort((a, b) => (a.status === 'a_activer') - (b.status === 'a_activer'));
   }, [products, recherche, filtreStatut]);
 
   function ajouterConditionnement() {

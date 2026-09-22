@@ -390,10 +390,13 @@ export function OrdersPage() {
 
   const produitsCaisse = useMemo(() => {
     const recherche = rechercheCaisse.trim().toLowerCase();
-    if (!recherche) return products;
-    return products.filter(
-      (p) => p.name.toLowerCase().includes(recherche) || codeInterne(p).toLowerCase().includes(recherche)
-    );
+    const filtres = recherche
+      ? products.filter(
+          (p) => p.name.toLowerCase().includes(recherche) || codeInterne(p).toLowerCase().includes(recherche)
+        )
+      : products;
+    // Produits activés (stock déjà entré au moins une fois) en premier, "À activer" en dernier.
+    return [...filtres].sort((a, b) => (a.status === 'a_activer') - (b.status === 'a_activer'));
   }, [products, rechercheCaisse]);
 
   function demarrerAjout(produit) {
