@@ -135,6 +135,7 @@ export function StockPage() {
   const estManager = user.role === 'manager';
   const secteurConfig = getSecteurConfig(merchant?.sector);
   const estPharmacie = merchant?.sector === 'pharmacie';
+  const estElectromenager = merchant?.sector === 'electromenager';
   const [categories, setCategories] = useState([]);
   const [searchParams] = useSearchParams();
 
@@ -826,7 +827,7 @@ export function StockPage() {
                   <tr key={p.id}>
                     <td>
                       {p.name}
-                      {p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
+                      {estPharmacie && p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
                       {p.requires_prescription && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6, fontSize: 11 }}>Ordonnance</span>}
                     </td>
                     <td className="chiffre">{codeInterne(p)}</td>
@@ -859,7 +860,7 @@ export function StockPage() {
                   </div>
                   <p className="carte-produit-nom">
                     {p.name}
-                    {p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
+                    {estPharmacie && p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
                     {p.requires_prescription && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6, fontSize: 11 }}>Ordonnance</span>}
                   </p>
                   <p className="carte-produit-sku">{codeInterne(p)}</p>
@@ -970,7 +971,7 @@ export function StockPage() {
                   className="champ"
                   value={nouveauProduit.name}
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, name: e.target.value })}
-                  placeholder={estPharmacie ? 'Paracétamol 500mg' : 'Riz brisé 25kg'}
+                  placeholder={estPharmacie ? 'Paracétamol 500mg' : estElectromenager ? 'Réfrigérateur 350L' : 'Riz brisé 25kg'}
                 />
               </div>
               <div className="champ-groupe">
@@ -980,10 +981,10 @@ export function StockPage() {
                   className="champ"
                   value={nouveauProduit.sku}
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, sku: e.target.value })}
-                  placeholder={estPharmacie ? 'PARA-500 (généré automatiquement sinon)' : 'RIZ-25 (généré automatiquement sinon)'}
+                  placeholder={estPharmacie ? 'PARA-500 (généré automatiquement sinon)' : estElectromenager ? 'REF-350 (généré automatiquement sinon)' : 'RIZ-25 (généré automatiquement sinon)'}
                 />
               </div>
-              {!estPharmacie && (
+              {!estPharmacie && !estElectromenager && (
                 <div className="champ-groupe">
                   <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                     <input
@@ -1052,27 +1053,29 @@ export function StockPage() {
                 />
               </div>
 
-              <div className="champ-groupe">
-                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={nouveauProduit.isVital}
-                    onChange={(e) => {
-                      const coche = e.target.checked;
-                      setNouveauProduit((prev) => ({
-                        ...prev,
-                        isVital: coche,
-                        // Suggestion de seuil plus élevé, uniquement si le champ
-                        // n'a pas déjà été personnalisé — reste modifiable ensuite.
-                        quantityAlertThreshold: coche && (prev.quantityAlertThreshold === '' || prev.quantityAlertThreshold === '5')
-                          ? String(SEUIL_ALERTE_VITAL_SUGGERE)
-                          : prev.quantityAlertThreshold,
-                      }));
-                    }}
-                  />
-                  Produit vital (première nécessité / urgence) — suggère un seuil d'alerte plus élevé
-                </label>
-              </div>
+              {estPharmacie && (
+                <div className="champ-groupe">
+                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={nouveauProduit.isVital}
+                      onChange={(e) => {
+                        const coche = e.target.checked;
+                        setNouveauProduit((prev) => ({
+                          ...prev,
+                          isVital: coche,
+                          // Suggestion de seuil plus élevé, uniquement si le champ
+                          // n'a pas déjà été personnalisé — reste modifiable ensuite.
+                          quantityAlertThreshold: coche && (prev.quantityAlertThreshold === '' || prev.quantityAlertThreshold === '5')
+                            ? String(SEUIL_ALERTE_VITAL_SUGGERE)
+                            : prev.quantityAlertThreshold,
+                        }));
+                      }}
+                    />
+                    Produit vital (première nécessité / urgence) — suggère un seuil d'alerte plus élevé
+                  </label>
+                </div>
+              )}
 
               {estPharmacie && (
                 <>
@@ -1490,7 +1493,7 @@ export function StockPage() {
                   className="champ"
                   value={nouveauFournisseurRapide.name}
                   onChange={(e) => setNouveauFournisseurRapide({ ...nouveauFournisseurRapide, name: e.target.value })}
-                  placeholder="Grossiste Baol"
+                  placeholder={estElectromenager ? 'Distributeur Electro Plus' : 'Grossiste Baol'}
                 />
               </div>
               <div className="champ-groupe">
@@ -1533,7 +1536,7 @@ export function StockPage() {
                   onChange={(e) => setProduitEnEdition({ ...produitEnEdition, sku: e.target.value })}
                 />
               </div>
-              {!estPharmacie && (
+              {!estPharmacie && !estElectromenager && (
                 <div className="champ-groupe">
                   <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                     <input
@@ -1568,25 +1571,27 @@ export function StockPage() {
                 />
               </div>
 
-              <div className="champ-groupe">
-                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={produitEnEdition.isVital}
-                    onChange={(e) => {
-                      const coche = e.target.checked;
-                      setProduitEnEdition((prev) => ({
-                        ...prev,
-                        isVital: coche,
-                        quantityAlertThreshold: coche && (prev.quantityAlertThreshold === '' || Number(prev.quantityAlertThreshold) < SEUIL_ALERTE_VITAL_SUGGERE)
-                          ? String(SEUIL_ALERTE_VITAL_SUGGERE)
-                          : prev.quantityAlertThreshold,
-                      }));
-                    }}
-                  />
-                  Produit vital (première nécessité / urgence) — suggère un seuil d'alerte plus élevé
-                </label>
-              </div>
+              {estPharmacie && (
+                <div className="champ-groupe">
+                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={produitEnEdition.isVital}
+                      onChange={(e) => {
+                        const coche = e.target.checked;
+                        setProduitEnEdition((prev) => ({
+                          ...prev,
+                          isVital: coche,
+                          quantityAlertThreshold: coche && (prev.quantityAlertThreshold === '' || Number(prev.quantityAlertThreshold) < SEUIL_ALERTE_VITAL_SUGGERE)
+                            ? String(SEUIL_ALERTE_VITAL_SUGGERE)
+                            : prev.quantityAlertThreshold,
+                        }));
+                      }}
+                    />
+                    Produit vital (première nécessité / urgence) — suggère un seuil d'alerte plus élevé
+                  </label>
+                </div>
+              )}
 
               {estPharmacie && (
                 <>
@@ -1748,7 +1753,7 @@ export function StockPage() {
 
               <div className="champ-groupe">
                 <label className="etiquette">
-                  Conditionnements (ex : sac 25kg à prix fixe)
+                  Conditionnements (ex : {estElectromenager ? 'pack de 2 unités à prix fixe' : 'sac 25kg à prix fixe'})
                 </label>
                 {produitEnEdition.units.length > 0 && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
@@ -1766,7 +1771,7 @@ export function StockPage() {
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input
                     className="champ"
-                    placeholder="Libellé (ex : Sac 25kg)"
+                    placeholder={estElectromenager ? 'Libellé (ex : Pack de 2)' : 'Libellé (ex : Sac 25kg)'}
                     value={nouveauConditionnementEdition.label}
                     onChange={(e) => setNouveauConditionnementEdition({ ...nouveauConditionnementEdition, label: e.target.value })}
                   />
