@@ -2,6 +2,7 @@ const STYLES = {
   en_stock: { classe: 'tampon-sarcelle', texte: 'En stock' },
   faible: { classe: 'tampon-laiton', texte: 'Faible' },
   rupture: { classe: 'tampon-brique', texte: 'Rupture' },
+  a_activer: { classe: 'tampon-laiton', texte: 'À activer' },
   en_attente: { classe: 'tampon-laiton', texte: 'En attente' },
   renvoyee_vendeur: { classe: 'tampon-brique', texte: 'Renvoyée au vendeur' },
   validee: { classe: 'tampon-sarcelle', texte: 'Validée' },
