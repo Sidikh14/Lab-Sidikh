@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const { requireAdminKey } = require('../middleware/adminKey');
+const { CATEGORIES_PHARMACIE, PRODUITS_PHARMACIE } = require('../data/pharmacieCatalogue');
 
 const router = express.Router();
 
@@ -40,6 +41,29 @@ router.post('/register', requireAdminKey, async (req, res) => {
       [businessName, sector, email]
     );
     const merchant = merchantResult.rows[0];
+
+    // Pour tout nouveau commerce du secteur pharmacie, on pré-remplit un
+    // catalogue de départ (catégories + médicaments/parapharmacie courants)
+    // pour accélérer l'installation — l'utilisateur ajuste ensuite les
+    // quantités réelles via l'entrée de stock habituelle (quantité à 0
+    // pour tous à la création).
+    if (sector === 'pharmacie') {
+      const categorieIdParNom = {};
+      for (const nomCategorie of CATEGORIES_PHARMACIE) {
+        const catResult = await client.query(
+          `INSERT INTO categories (merchant_id, name) VALUES ($1, $2) RETURNING id`,
+          [merchant.id, nomCategorie]
+        );
+        categorieIdParNom[nomCategorie] = catResult.rows[0].id;
+      }
+      for (const produit of PRODUITS_PHARMACIE) {
+        await client.query(
+          `INSERT INTO products (merchant_id, category_id, name, unit_price, tva_applicable, quantity_alert_threshold, is_weighted, attributes)
+           VALUES ($1, $2, $3, $4, $5, $6, FALSE, '{}')`,
+          [merchant.id, categorieIdParNom[produit.categorie] || null, produit.name, produit.unitPrice, produit.tvaApplicable, 5]
+        );
+      }
+    }
 
     const passwordHash = await bcrypt.hash(password, 10);
     const userResult = await client.query(

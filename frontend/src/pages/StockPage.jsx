@@ -867,7 +867,7 @@ export function StockPage() {
                   className="champ"
                   value={nouveauProduit.name}
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, name: e.target.value })}
-                  placeholder="Riz brisé 25kg"
+                  placeholder={estPharmacie ? 'Paracétamol 500mg' : 'Riz brisé 25kg'}
                 />
               </div>
               <div className="champ-groupe">
@@ -877,7 +877,7 @@ export function StockPage() {
                   className="champ"
                   value={nouveauProduit.sku}
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, sku: e.target.value })}
-                  placeholder="RIZ-25 (généré automatiquement sinon)"
+                  placeholder={estPharmacie ? 'PARA-500 (généré automatiquement sinon)' : 'RIZ-25 (généré automatiquement sinon)'}
                 />
               </div>
               <div className="champ-groupe">
