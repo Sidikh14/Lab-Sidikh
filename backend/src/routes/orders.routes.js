@@ -205,7 +205,7 @@ router.get('/:id', async (req, res) => {
 //   disponible est insuffisant (vente en rupture autorisée). Le stock ne
 //   descend jamais sous zéro : il est simplement ramené à 0.
 router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), async (req, res) => {
-  const { clientId, items, notes, tvaApplicable, clientOrderId, warehouseId: warehouseIdInput } = req.body;
+  const { clientId, items, notes, tvaApplicable, clientOrderId, warehouseId: warehouseIdInput, prescriptionId } = req.body;
   // items attendu : [{ productId, quantity, unitId, customPrice, authorizeOutOfStock }, ...]
   // quantity = nombre de conditionnements vendus (ex: 2 cartons) ; unitId
   // facultatif = référence vers product_units (sinon vente au détail).
@@ -249,7 +249,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
       }
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.unit_price, p.is_weighted, p.quantity_alert_threshold,
+        `SELECT p.id, p.name, p.unit_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -316,14 +316,31 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
       });
     }
 
+    // Pharmacie : si au moins un article vendu nécessite une ordonnance,
+    // une ordonnance doit être liée à la commande — sinon on bloque la
+    // vente (voir prescriptions.routes.js pour la création de l'ordonnance).
+    const ordonnanceRequise = resolvedItems.some((r) => r.product.requires_prescription);
+    if (ordonnanceRequise && !prescriptionId) {
+      throw { status: 400, message: 'Une ordonnance est requise pour au moins un article de cette vente.' };
+    }
+    if (prescriptionId) {
+      const prescriptionResult = await client.query(
+        `SELECT id FROM prescriptions WHERE id = $1 AND merchant_id = $2`,
+        [prescriptionId, req.user.merchantId]
+      );
+      if (prescriptionResult.rows.length === 0) {
+        throw { status: 404, message: 'Ordonnance introuvable.' };
+      }
+    }
+
     // Arrondi en FCFA entiers (pas de centimes) : on arrondit le montant de
     // TVA lui-même, pas un ratio intermédiaire, pour éviter les décimales.
     const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
 
     const orderResult = await client.query(
-      `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes, stock_override, client_order_id, warehouse_id)
-       VALUES ($1, $2, $3, 'en_attente', $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes, stock_override, client_order_id, warehouse_id, prescription_id)
+       VALUES ($1, $2, $3, 'en_attente', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -338,6 +355,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
         stockOverrideUtilise,
         clientOrderId || null,
         warehouseId,
+        prescriptionId || null,
       ]
     );
     const order = orderResult.rows[0];
@@ -903,7 +921,7 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
 // au statut 'en_attente' — assigned_cashier_id n'est pas touché, donc elle
 // reste rattachée au même caissier que precedemment.
 router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), async (req, res) => {
-  const { clientId, items, notes, tvaApplicable } = req.body;
+  const { clientId, items, notes, tvaApplicable, prescriptionId } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'La commande doit contenir au moins un article.' });
@@ -961,7 +979,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       }
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.unit_price, p.is_weighted, p.quantity_alert_threshold,
+        `SELECT p.id, p.name, p.unit_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -1026,6 +1044,20 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
         packagingQuantity: packagingLabel ? item.quantity : null,
         rupture,
       });
+    }
+
+    const ordonnanceRequise = resolvedItems.some((r) => r.product.requires_prescription);
+    if (ordonnanceRequise && !prescriptionId) {
+      throw { status: 400, message: 'Une ordonnance est requise pour au moins un article de cette vente.' };
+    }
+    if (prescriptionId) {
+      const prescriptionResult = await client.query(
+        `SELECT id FROM prescriptions WHERE id = $1 AND merchant_id = $2`,
+        [prescriptionId, req.user.merchantId]
+      );
+      if (prescriptionResult.rows.length === 0) {
+        throw { status: 404, message: 'Ordonnance introuvable.' };
+      }
     }
 
     const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
@@ -1105,10 +1137,11 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
          total_amount = $6,
          status = 'en_attente',
          returned_reason = NULL,
-         stock_override = stock_override OR $8
+         stock_override = stock_override OR $8,
+         prescription_id = COALESCE($9, prescription_id)
        WHERE id = $7
        RETURNING *`,
-      [clientId || null, notes || null, Boolean(tvaApplicable), tvaAmount, subtotalAmount, totalAmount, order.id, stockOverrideUtilise]
+      [clientId || null, notes || null, Boolean(tvaApplicable), tvaAmount, subtotalAmount, totalAmount, order.id, stockOverrideUtilise, prescriptionId || null]
     );
     const orderMisAJour = updateResult.rows[0];
 
