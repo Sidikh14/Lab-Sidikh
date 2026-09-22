@@ -238,6 +238,10 @@ export function OrdersPage() {
   const [panier, setPanier] = useState([]);
   const [clientId, setClientId] = useState('');
   const [tvaApplicable, setTvaApplicable] = useState(false);
+  const [prescriptionId, setPrescriptionId] = useState('');
+  const [ordonnanceModaleOuverte, setOrdonnanceModaleOuverte] = useState(false);
+  const [nouvelleOrdonnance, setNouvelleOrdonnance] = useState({ patientName: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerName: '', insurerMemberNumber: '', coverageRate: '' });
+  const [creationOrdonnanceEnCours, setCreationOrdonnanceEnCours] = useState(false);
   const [venteEnCours, setVenteEnCours] = useState(false);
   const [confirmationVente, setConfirmationVente] = useState(null);
   const [choixConditionnement, setChoixConditionnement] = useState(null);
@@ -580,8 +584,43 @@ export function OrdersPage() {
     return { sousTotal, tva, total: sousTotal + tva };
   }, [lignesPanier, tvaApplicable]);
 
+  const necessiteOrdonnance = estPharmacie && lignesPanier.some((l) => l.produit.requires_prescription);
+
+  useEffect(() => {
+    if (!necessiteOrdonnance) setPrescriptionId('');
+  }, [necessiteOrdonnance]);
+
+  async function creerOrdonnance(e) {
+    e.preventDefault();
+    if (!nouvelleOrdonnance.patientName || !nouvelleOrdonnance.prescriptionDate) {
+      setErreur('Le nom du patient et la date de prescription sont requis.');
+      return;
+    }
+    setCreationOrdonnanceEnCours(true);
+    setErreur('');
+    try {
+      const ordonnance = await api.createPrescription({
+        ...nouvelleOrdonnance,
+        coverageRate: nouvelleOrdonnance.coverageRate ? Number(nouvelleOrdonnance.coverageRate) : undefined,
+        warehouseId: estManager ? warehouseId : undefined,
+      });
+      setPrescriptionId(ordonnance.id);
+      setOrdonnanceModaleOuverte(false);
+      setNouvelleOrdonnance({ patientName: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerName: '', insurerMemberNumber: '', coverageRate: '' });
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setCreationOrdonnanceEnCours(false);
+    }
+  }
+
   async function handlePayer() {
     if (lignesPanier.length === 0) return;
+    if (necessiteOrdonnance && !prescriptionId) {
+      setErreur('Une ordonnance est requise pour au moins un article de ce panier.');
+      setOrdonnanceModaleOuverte(true);
+      return;
+    }
     setVenteEnCours(true);
     setErreur('');
     const payload = {
@@ -589,6 +628,7 @@ export function OrdersPage() {
       items: panier.map((l) => ({ productId: l.productId, quantity: l.quantity, unitId: l.unitId || undefined })),
       tvaApplicable,
       warehouseId: estManager ? warehouseId : undefined,
+      prescriptionId: prescriptionId || undefined,
     };
     try {
       if (commandeEnEdition) {
@@ -596,6 +636,7 @@ export function OrdersPage() {
         setPanier([]);
         setClientId('');
         setTvaApplicable(false);
+        setPrescriptionId('');
         setCommandeEnEdition(null);
         setOnglet('historique');
         charger();
@@ -609,6 +650,7 @@ export function OrdersPage() {
         setPanier([]);
         setClientId('');
         setTvaApplicable(false);
+        setPrescriptionId('');
         if (!commande.offline) charger();
         if (commande.offline) {
           setConfirmationVente(commande);
@@ -861,6 +903,7 @@ export function OrdersPage() {
                       <p className="ticket-ligne-nom">
                         {l.produit.name}
                         {l.option.label !== 'Détail' && <span style={{ color: 'var(--accent)' }}> · {l.option.label}</span>}
+                        {l.produit.requires_prescription && <span className="tampon tampon-brique" style={{ marginLeft: 6 }}>Ordonnance</span>}
                       </p>
                       <p className="ticket-ligne-prix">
                         {Math.round(l.option.price).toLocaleString('fr-FR')} FCFA{l.produit.is_weighted ? '/kg' : ''}
@@ -912,6 +955,17 @@ export function OrdersPage() {
                 <span className="chiffre">{Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA</span>
               </div>
             </div>
+
+            {necessiteOrdonnance && (
+              <div className="case-a-cocher" style={{ margin: '12px 0', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 13 }}>
+                  {prescriptionId ? '✓ Ordonnance liée à cette vente' : 'Ordonnance requise pour ce panier'}
+                </span>
+                <button type="button" className="btn" onClick={() => setOrdonnanceModaleOuverte(true)}>
+                  {prescriptionId ? 'Changer' : 'Lier une ordonnance'}
+                </button>
+              </div>
+            )}
 
             <button
               type="button"
@@ -1108,6 +1162,85 @@ export function OrdersPage() {
               <div className="actions-modale">
                 <button type="button" className="btn" onClick={() => setSaisiePoids(null)}>Annuler</button>
                 <button type="submit" className="btn btn-principal">Ajouter</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {ordonnanceModaleOuverte && (
+        <div className="modale-fond" onClick={() => setOrdonnanceModaleOuverte(false)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Lier une ordonnance</h2>
+            <form onSubmit={creerOrdonnance}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ord-patient">Nom du patient *</label>
+                <input
+                  id="ord-patient"
+                  className="champ"
+                  value={nouvelleOrdonnance.patientName}
+                  onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, patientName: e.target.value }))}
+                  autoFocus
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ord-medecin">Médecin prescripteur</label>
+                <input
+                  id="ord-medecin"
+                  className="champ"
+                  value={nouvelleOrdonnance.doctorName}
+                  onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, doctorName: e.target.value }))}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ord-date">Date de prescription *</label>
+                <input
+                  id="ord-date"
+                  type="date"
+                  max={new Date().toISOString().slice(0, 10)}
+                  className="champ"
+                  value={nouvelleOrdonnance.prescriptionDate}
+                  onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, prescriptionDate: e.target.value }))}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ord-mutuelle">Mutuelle / assurance</label>
+                <input
+                  id="ord-mutuelle"
+                  className="champ"
+                  placeholder="Facultatif"
+                  value={nouvelleOrdonnance.insurerName}
+                  onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, insurerName: e.target.value }))}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ord-numadherent">N° d'adhérent</label>
+                <input
+                  id="ord-numadherent"
+                  className="champ"
+                  placeholder="Facultatif"
+                  value={nouvelleOrdonnance.insurerMemberNumber}
+                  onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, insurerMemberNumber: e.target.value }))}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ord-taux">Taux de prise en charge (%)</label>
+                <input
+                  id="ord-taux"
+                  type="number"
+                  min="0"
+                  max="100"
+                  className="champ"
+                  placeholder="Facultatif"
+                  value={nouvelleOrdonnance.coverageRate}
+                  onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, coverageRate: e.target.value }))}
+                />
+              </div>
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={() => setOrdonnanceModaleOuverte(false)}>Annuler</button>
+                <button type="submit" className="btn btn-principal" disabled={creationOrdonnanceEnCours}>
+                  {creationOrdonnanceEnCours ? 'Enregistrement…' : 'Lier cette ordonnance'}
+                </button>
               </div>
             </form>
           </div>

@@ -131,6 +131,10 @@ export const api = {
     request(`/clients/${id}/whatsapp-statement`, { method: 'POST' }),
   downloadClientUnpaidInvoicesPdf: (id) => previewFile(`/clients/${id}/unpaid-invoices-pdf`),
 
+  getPrescriptions: (warehouseId) => request(`/prescriptions${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
+  createPrescription: (data) =>
+    request('/prescriptions', { method: 'POST', body: JSON.stringify(data) }),
+
   getOrders: (warehouseId) => request(`/orders${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   getOrder: (id) => request(`/orders/${id}`),
   createOrder: (data) =>

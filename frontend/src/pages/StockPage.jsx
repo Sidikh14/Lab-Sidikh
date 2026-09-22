@@ -146,7 +146,7 @@ export function StockPage() {
   const [recherche, setRecherche] = useState(searchParams.get('q') || '');
   const [filtreStatut, setFiltreStatut] = useState('tous');
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, attributes: {}, lotNumber: '', expiryDate: '' });
+  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, attributes: {}, lotNumber: '', expiryDate: '' });
   const [conditionnements, setConditionnements] = useState([]);
   const [modalePrixOuverte, setModalePrixOuverte] = useState(false);
   const [prixModifies, setPrixModifies] = useState({});
@@ -355,6 +355,7 @@ export function StockPage() {
         quantityAlertThreshold: Number(nouveauProduit.quantityAlertThreshold) || 5,
         isWeighted: nouveauProduit.isWeighted,
         isVital: nouveauProduit.isVital,
+        requiresPrescription: estPharmacie ? nouveauProduit.requiresPrescription : undefined,
         warehouseId: estManager ? warehouseId : undefined,
         categoryId: estPharmacie ? (nouveauProduit.categoryId || undefined) : undefined,
         tvaApplicable: estPharmacie ? nouveauProduit.tvaApplicable : undefined,
@@ -366,7 +367,7 @@ export function StockPage() {
           .map((c) => ({ label: c.label, price: Number(c.price), quantityPerUnit: Number(c.quantityPerUnit) })),
       });
       setModaleOuverte(false);
-      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, attributes: {}, lotNumber: '', expiryDate: '' });
+      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, attributes: {}, lotNumber: '', expiryDate: '' });
       setConditionnements([]);
       charger();
     } catch (err) {
@@ -446,6 +447,7 @@ export function StockPage() {
       categoryId: product.category_id || '',
       tvaApplicable: product.tva_applicable !== false,
       isVital: Boolean(product.is_vital),
+      requiresPrescription: Boolean(product.requires_prescription),
       units: product.units || [],
       attributes: product.attributes || {},
     });
@@ -495,6 +497,7 @@ export function StockPage() {
         quantityAlertThreshold: Number(produitEnEdition.quantityAlertThreshold),
         isWeighted: produitEnEdition.isWeighted,
         isVital: produitEnEdition.isVital,
+        requiresPrescription: estPharmacie ? produitEnEdition.requiresPrescription : undefined,
         categoryId: estPharmacie ? (produitEnEdition.categoryId || null) : undefined,
         tvaApplicable: estPharmacie ? produitEnEdition.tvaApplicable : undefined,
         attributes: produitEnEdition.attributes,
@@ -824,6 +827,7 @@ export function StockPage() {
                     <td>
                       {p.name}
                       {p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
+                      {p.requires_prescription && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6, fontSize: 11 }}>Ordonnance</span>}
                     </td>
                     <td className="chiffre">{codeInterne(p)}</td>
                     <td className="chiffre">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA{p.is_weighted ? '/kg' : ''}</td>
@@ -856,6 +860,7 @@ export function StockPage() {
                   <p className="carte-produit-nom">
                     {p.name}
                     {p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
+                    {p.requires_prescription && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6, fontSize: 11 }}>Ordonnance</span>}
                   </p>
                   <p className="carte-produit-sku">{codeInterne(p)}</p>
                   <p className="carte-produit-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA{p.is_weighted ? '/kg' : ''}</p>
@@ -1069,6 +1074,17 @@ export function StockPage() {
 
               {estPharmacie && (
                 <>
+                  <div className="champ-groupe">
+                    <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={nouveauProduit.requiresPrescription}
+                        onChange={(e) => setNouveauProduit({ ...nouveauProduit, requiresPrescription: e.target.checked })}
+                      />
+                      Ordonnance obligatoire pour la vente
+                    </label>
+                  </div>
+
                   <div className="champ-groupe">
                     <label className="etiquette" htmlFor="p-categorie">Catégorie</label>
                     <select
@@ -1570,6 +1586,17 @@ export function StockPage() {
 
               {estPharmacie && (
                 <>
+                  <div className="champ-groupe">
+                    <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={produitEnEdition.requiresPrescription}
+                        onChange={(e) => setProduitEnEdition({ ...produitEnEdition, requiresPrescription: e.target.checked })}
+                      />
+                      Ordonnance obligatoire pour la vente
+                    </label>
+                  </div>
+
                   <div className="champ-groupe">
                     <label className="etiquette" htmlFor="pe-categorie">Catégorie</label>
                     <select
