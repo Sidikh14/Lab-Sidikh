@@ -1,0 +1,385 @@
+diff --git a/backend/migrations/030_pharmacie_activation_lots.sql b/backend/migrations/030_pharmacie_activation_lots.sql
+new file mode 100644
+index 0000000..4a355c1
+--- /dev/null
++++ b/backend/migrations/030_pharmacie_activation_lots.sql
+@@ -0,0 +1,57 @@
++-- =========================================================
++-- Migration 030 — Secteur pharmacie : activation produits + lots/péremption
++-- =========================================================
++-- Contexte :
++--  1) Un produit fraîchement créé (ou le catalogue de départ pharmacie
++--     inséré à l'inscription) démarre à quantity_in_stock = 0, ce qui le
++--     fait apparaître IMMÉDIATEMENT en "Rupture" dans la liste, le PDF et
++--     les alertes — avant même d'avoir reçu du stock. On ajoute un flag
++--     is_activated : un produit non activé n'est jamais affiché en
++--     rupture, il est "à activer" (l'activation se fait automatiquement
++--     dès qu'une entrée de stock lui est faite).
++--     Défaut TRUE pour ne rien changer aux secteurs autres que pharmacie
++--     (grossiste/électroménager/textile continuent comme avant).
++--  2) Gestion des lots avec date de péremption pour la pharmacie :
++--     product_lots, un lot = une entrée de stock avec sa propre date de
++--     péremption. Le décrément à la vente doit se faire en FEFO (premier
++--     périmé, premier sorti), jamais en piochant un lot déjà périmé.
++--     Additif : ne remplace pas product_stock (qui reste la source de
++--     vérité du total par boutique), sert uniquement au suivi par lot et
++--     au calcul FEFO côté pharmacie.
++-- =========================================================
++
++ALTER TABLE products ADD COLUMN is_activated BOOLEAN NOT NULL DEFAULT TRUE;
++
++CREATE TABLE product_lots (
++    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
++    merchant_id     UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
++    product_id      UUID NOT NULL REFERENCES products(id) ON DELETE CASCADE,
++    warehouse_id    UUID NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
++    lot_number      VARCHAR(80),
++    expiry_date     DATE NOT NULL,
++    quantity        NUMERIC(12,3) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
++    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
++    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
++);
++
++-- Index FEFO : pour un produit+boutique donné, trouver vite le lot dont la
++-- péremption est la plus proche parmi ceux qui ont encore du stock.
++CREATE INDEX idx_product_lots_fefo ON product_lots(product_id, warehouse_id, expiry_date)
++    WHERE quantity > 0;
++CREATE INDEX idx_product_lots_merchant ON product_lots(merchant_id);
++
++CREATE TRIGGER trg_product_lots_updated_at BEFORE UPDATE ON product_lots
++    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
++
++-- Catalogue de départ pharmacie déjà inséré (à l'inscription) avec un
++-- stock à 0 : on le bascule en "non activé" pour ne pas polluer les
++-- commerces pharmacie existants avec des faux "Rupture".
++UPDATE products p
++SET is_activated = FALSE
++FROM merchants m
++WHERE p.merchant_id = m.id
++  AND m.sector = 'pharmacie'
++  AND NOT EXISTS (
++    SELECT 1 FROM product_stock ps
++    WHERE ps.product_id = p.id AND ps.quantity_in_stock > 0
++  );
+diff --git a/backend/src/routes/auth.routes.js b/backend/src/routes/auth.routes.js
+index 6a32b66..8fdcc10 100644
+--- a/backend/src/routes/auth.routes.js
++++ b/backend/src/routes/auth.routes.js
+@@ -46,7 +46,9 @@ router.post('/register', requireAdminKey, async (req, res) => {
+     // catalogue de départ (catégories + médicaments/parapharmacie courants)
+     // pour accélérer l'installation — l'utilisateur ajuste ensuite les
+     // quantités réelles via l'entrée de stock habituelle (quantité à 0
+-    // pour tous à la création).
++    // pour tous à la création). is_activated = FALSE : ces produits ne
++    // s'affichent pas en rupture tant qu'aucune entrée de stock ne leur a
++    // été faite (activation automatique dès la première entrée).
+     if (sector === 'pharmacie') {
+       const categorieIdParNom = {};
+       for (const nomCategorie of CATEGORIES_PHARMACIE) {
+@@ -58,8 +60,8 @@ router.post('/register', requireAdminKey, async (req, res) => {
+       }
+       for (const produit of PRODUITS_PHARMACIE) {
+         await client.query(
+-          `INSERT INTO products (merchant_id, category_id, name, unit_price, tva_applicable, quantity_alert_threshold, is_weighted, attributes)
+-           VALUES ($1, $2, $3, $4, $5, $6, FALSE, '{}')`,
++          `INSERT INTO products (merchant_id, category_id, name, unit_price, tva_applicable, quantity_alert_threshold, is_weighted, attributes, is_activated)
++           VALUES ($1, $2, $3, $4, $5, $6, FALSE, '{}', FALSE)`,
+           [merchant.id, categorieIdParNom[produit.categorie] || null, produit.name, produit.unitPrice, produit.tvaApplicable, 5]
+         );
+       }
+diff --git a/backend/src/routes/orders.routes.js b/backend/src/routes/orders.routes.js
+index 6c45912..8975c2c 100644
+--- a/backend/src/routes/orders.routes.js
++++ b/backend/src/routes/orders.routes.js
+@@ -7,6 +7,7 @@ const { logActivity } = require('../utils/activityLog');
+ const { broadcast } = require('../utils/eventsBus');
+ const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerPiedDePage, traitSeparateur, enregistrerPolices } = require('../utils/pdfHelpers');
+ const { creerAlerte, getSeuilVenteElevee, getNomUtilisateur } = require('../services/alerts.service');
++const { consumeFEFO } = require('../utils/lots');
+ 
+ const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
+ const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement', 'a_credit'];
+@@ -359,6 +360,22 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
+         [req.user.merchantId, resolved.product.id, warehouseId, newQuantity]
+       );
+ 
++      // Pharmacie + FEFO : si des lots existent pour ce produit, consomme
++      // en priorité le lot dont la péremption est la plus proche, et
++      // bloque la vente si le stock non périmé est insuffisant — un
++      // produit périmé ne doit jamais pouvoir être vendu, même en override.
++      if (req.user.sector === 'pharmacie') {
++        const fefo = await consumeFEFO(client, {
++          merchantId: req.user.merchantId,
++          productId: resolved.product.id,
++          warehouseId,
++          quantity: resolved.baseQuantity,
++        });
++        if (fefo.tracked && !fefo.ok) {
++          throw { status: 400, message: `${resolved.product.name} : stock non périmé insuffisant (lots restants périmés ou épuisés).` };
++        }
++      }
++
+       await client.query(
+         `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
+          VALUES ($1, $2, $3, 'sortie', $4, $5, $6)`,
+@@ -1032,6 +1049,18 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
+         [req.user.merchantId, resolved.product.id, warehouseId, newQuantity]
+       );
+ 
++      if (req.user.sector === 'pharmacie') {
++        const fefo = await consumeFEFO(client, {
++          merchantId: req.user.merchantId,
++          productId: resolved.product.id,
++          warehouseId,
++          quantity: resolved.baseQuantity,
++        });
++        if (fefo.tracked && !fefo.ok) {
++          throw { status: 400, message: `${resolved.product.name} : stock non périmé insuffisant (lots restants périmés ou épuisés).` };
++        }
++      }
++
+       await client.query(
+         `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
+          VALUES ($1, $2, $3, 'sortie', $4, $5, $6)`,
+diff --git a/backend/src/routes/products.routes.js b/backend/src/routes/products.routes.js
+index dc11c4e..02fda31 100644
+--- a/backend/src/routes/products.routes.js
++++ b/backend/src/routes/products.routes.js
+@@ -7,6 +7,7 @@ const { logActivity } = require('../utils/activityLog');
+ const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
+ const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
+ const { getSoldeActuel, LABEL_METHODE } = require('../utils/cashBalance');
++const { addLot } = require('../utils/lots');
+ 
+ const router = express.Router();
+ router.use(authenticate);
+@@ -61,6 +62,7 @@ router.get('/pdf', async (req, res) => {
+          p.name, p.sku, ps.quantity_in_stock,
+          p.unit_price, p.quantity_alert_threshold,
+          CASE
++           WHEN NOT p.is_activated THEN 'À activer'
+            WHEN ps.quantity_in_stock = 0 THEN 'Rupture'
+            WHEN ps.quantity_in_stock <= p.quantity_alert_threshold THEN 'Faible'
+            ELSE 'En stock'
+@@ -139,7 +141,9 @@ router.get('/', async (req, res) => {
+          p.id, p.name, p.sku, p.unit_price,
+          COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock,
+          p.quantity_alert_threshold, p.is_weighted, p.tva_applicable, c.name AS category, p.category_id,
++         p.is_activated,
+          CASE
++           WHEN NOT p.is_activated THEN 'a_activer'
+            WHEN COALESCE(ps.quantity_in_stock, 0) = 0 THEN 'rupture'
+            WHEN ps.quantity_in_stock <= p.quantity_alert_threshold THEN 'faible'
+            ELSE 'en_stock'
+@@ -148,7 +152,7 @@ router.get('/', async (req, res) => {
+        LEFT JOIN categories c ON c.id = p.category_id
+        LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $2
+        WHERE p.merchant_id = $1 AND p.is_active = TRUE
+-       ORDER BY p.name`,
++       ORDER BY p.is_activated ASC, p.name`,
+       [req.user.merchantId, warehouseId]
+     );
+ 
+@@ -173,7 +177,7 @@ router.get('/', async (req, res) => {
+ 
+ // POST /products
+ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
+-  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, attributes, warehouseId: warehouseIdInput } = req.body;
++  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, attributes, warehouseId: warehouseIdInput, lotNumber, expiryDate } = req.body;
+ 
+   if (!name) {
+     return res.status(400).json({ error: 'Le nom du produit est requis.' });
+@@ -185,9 +189,17 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
+ 
+     await client.query('BEGIN');
+ 
++    // Secteur pharmacie : un produit créé sans stock initial n'est pas
++    // "activé" tant qu'aucune entrée de stock ne lui a été faite, pour ne
++    // pas l'afficher en rupture avant même d'avoir reçu de la marchandise.
++    // Les autres secteurs ne sont pas concernés (is_activated reste TRUE).
++    const isActivated = req.user.sector === 'pharmacie'
++      ? Number(quantityInStock) > 0
++      : true;
++
+     const result = await client.query(
+-      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_alert_threshold, is_weighted, tva_applicable, attributes)
+-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
++      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_alert_threshold, is_weighted, tva_applicable, attributes, is_activated)
++       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *`,
+       [
+         req.user.merchantId,
+@@ -199,6 +211,7 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
+         Boolean(isWeighted),
+         tvaApplicable === undefined ? true : Boolean(tvaApplicable),
+         JSON.stringify(attributes && typeof attributes === 'object' ? attributes : {}),
++        isActivated,
+       ]
+     );
+     const product = result.rows[0];
+@@ -211,6 +224,19 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
+       [req.user.merchantId, product.id, warehouseId, quantityInStock || 0]
+     );
+ 
++    // Pharmacie : si un stock initial et une date de péremption sont
++    // fournis dès la création, on crée directement le premier lot.
++    if (req.user.sector === 'pharmacie' && Number(quantityInStock) > 0) {
++      await addLot(client, {
++        merchantId: req.user.merchantId,
++        productId: product.id,
++        warehouseId,
++        lotNumber,
++        expiryDate,
++        quantity: quantityInStock,
++      });
++    }
++
+     const conditionnements = [];
+     if (Array.isArray(units)) {
+       for (const u of units) {
+@@ -364,6 +390,7 @@ router.post('/:id/stock-movement', async (req, res) => {
+     paymentMethod, totalCost, cashMethod,
+     advanceAmount, advanceCashMethod,
+     warehouseId: warehouseIdInput,
++    lotNumber, expiryDate,
+   } = req.body;
+   const validTypes = ['entree', 'sortie', 'ajustement'];
+   const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
+@@ -492,6 +519,21 @@ router.post('/:id/stock-movement', async (req, res) => {
+       [req.user.merchantId, product.id, warehouseId, newQuantity]
+     );
+ 
++    // Pharmacie : une entrée de stock "active" le produit (ne sera plus
++    // affiché en rupture par défaut) et, si une péremption est fournie,
++    // crée le lot correspondant pour le suivi FEFO.
++    if (movementType === 'entree' && req.user.sector === 'pharmacie') {
++      await client.query(`UPDATE products SET is_activated = TRUE WHERE id = $1`, [product.id]);
++      await addLot(client, {
++        merchantId: req.user.merchantId,
++        productId: product.id,
++        warehouseId,
++        lotNumber,
++        expiryDate,
++        quantity,
++      });
++    }
++
+     await client.query(
+       `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, cash_method, warehouse_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+@@ -702,6 +744,20 @@ router.post('/purchases', async (req, res) => {
+         [req.user.merchantId, product.id, warehouseId, newQuantity]
+       );
+ 
++      // Pharmacie : activation auto + lot (péremption) par article, comme
++      // pour l'entrée simple.
++      if (req.user.sector === 'pharmacie') {
++        await client.query(`UPDATE products SET is_activated = TRUE WHERE id = $1`, [product.id]);
++        await addLot(client, {
++          merchantId: req.user.merchantId,
++          productId: product.id,
++          warehouseId,
++          lotNumber: item.lotNumber,
++          expiryDate: item.expiryDate,
++          quantity: item.quantity,
++        });
++      }
++
+       const mouvement = await client.query(
+         `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, invoice_number, cash_method, warehouse_id)
+          VALUES ($1, $2, $3, 'entree', $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+@@ -804,4 +860,26 @@ router.delete('/:id', requireRole('manager'), async (req, res) => {
+   }
+ });
+ 
++// GET /products/:id/lots — lots (péremption) d'un produit pour la boutique
++// courante, triés FEFO (péremption la plus proche en premier). Pharmacie
++// uniquement en pratique (vide pour les autres secteurs, sans erreur).
++router.get('/:id/lots', async (req, res) => {
++  try {
++    const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
++    const result = await pool.query(
++      `SELECT id, lot_number, expiry_date, quantity,
++              (expiry_date < CURRENT_DATE) AS is_expired
++       FROM product_lots
++       WHERE product_id = $1 AND merchant_id = $2 AND warehouse_id = $3 AND quantity > 0
++       ORDER BY expiry_date ASC`,
++      [req.params.id, req.user.merchantId, warehouseId]
++    );
++    res.json(result.rows);
++  } catch (err) {
++    if (err.status) return res.status(err.status).json({ error: err.message });
++    console.error(err);
++    res.status(500).json({ error: 'Erreur lors de la récupération des lots.' });
++  }
++});
++
+ module.exports = router;
+diff --git a/backend/src/utils/lots.js b/backend/src/utils/lots.js
+new file mode 100644
+index 0000000..571e9fc
+--- /dev/null
++++ b/backend/src/utils/lots.js
+@@ -0,0 +1,62 @@
++// Gestion des lots (pharmacie) : entrée de lot + décrément FEFO
++// (First Expired, First Out) à la vente. Additif par rapport à
++// product_stock, qui reste la source de vérité du total en stock — ce
++// module ne fait que répartir/consommer ce total à l'intérieur des lots
++// quand des lots existent pour le produit.
++
++// Ajoute un lot lors d'une entrée de stock. À appeler uniquement pour les
++// commerçants du secteur pharmacie et uniquement si l'appelant a fourni
++// une date de péremption (sinon on ne force rien — champ facultatif tant
++// que l'utilisateur ne l'a pas renseigné côté frontend).
++async function addLot(client, { merchantId, productId, warehouseId, lotNumber, expiryDate, quantity }) {
++  if (!expiryDate || !Number(quantity) || Number(quantity) <= 0) return null;
++  const result = await client.query(
++    `INSERT INTO product_lots (merchant_id, product_id, warehouse_id, lot_number, expiry_date, quantity)
++     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
++    [merchantId, productId, warehouseId, lotNumber || null, expiryDate, Number(quantity)]
++  );
++  return result.rows[0];
++}
++
++// Consomme `quantity` unités en FEFO parmi les lots NON périmés du produit
++// dans cette boutique. Si le produit n'a aucun lot enregistré (stock
++// géré à l'ancienne, sans suivi de péremption), retourne
++// { tracked: false } et n'empêche pas la vente — comportement inchangé.
++// Si des lots existent mais que le total NON périmé est insuffisant,
++// retourne { tracked: true, ok: false } : à l'appelant de bloquer la
++// vente plutôt que de vendre un produit périmé.
++async function consumeFEFO(client, { merchantId, productId, warehouseId, quantity }) {
++  const lotsResult = await client.query(
++    `SELECT id, quantity, expiry_date FROM product_lots
++     WHERE merchant_id = $1 AND product_id = $2 AND warehouse_id = $3 AND quantity > 0
++     ORDER BY expiry_date ASC
++     FOR UPDATE`,
++    [merchantId, productId, warehouseId]
++  );
++
++  if (lotsResult.rows.length === 0) {
++    return { tracked: false, ok: true };
++  }
++
++  const aujourdHui = new Date().toISOString().slice(0, 10);
++  const lotsValides = lotsResult.rows.filter((l) => l.expiry_date.toISOString().slice(0, 10) >= aujourdHui);
++  const totalValide = lotsValides.reduce((s, l) => s + Number(l.quantity), 0);
++
++  if (totalValide < Number(quantity)) {
++    return { tracked: true, ok: false, disponibleNonPerime: totalValide };
++  }
++
++  let reste = Number(quantity);
++  const consommes = [];
++  for (const lot of lotsValides) {
++    if (reste <= 0) break;
++    const pris = Math.min(reste, Number(lot.quantity));
++    await client.query(`UPDATE product_lots SET quantity = quantity - $1 WHERE id = $2`, [pris, lot.id]);
++    consommes.push({ lotId: lot.id, quantity: pris, expiryDate: lot.expiry_date });
++    reste -= pris;
++  }
++
++  return { tracked: true, ok: true, consommes };
++}
++
++module.exports = { addLot, consumeFEFO };

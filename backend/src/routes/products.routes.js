@@ -7,6 +7,7 @@ const { logActivity } = require('../utils/activityLog');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
 const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 const { getSoldeActuel, LABEL_METHODE } = require('../utils/cashBalance');
+const { addLot } = require('../utils/lots');
 
 const router = express.Router();
 router.use(authenticate);
@@ -61,6 +62,7 @@ router.get('/pdf', async (req, res) => {
          p.name, p.sku, ps.quantity_in_stock,
          p.unit_price, p.quantity_alert_threshold,
          CASE
+           WHEN NOT p.is_activated THEN 'À activer'
            WHEN ps.quantity_in_stock = 0 THEN 'Rupture'
            WHEN ps.quantity_in_stock <= p.quantity_alert_threshold THEN 'Faible'
            ELSE 'En stock'
@@ -139,7 +141,9 @@ router.get('/', async (req, res) => {
          p.id, p.name, p.sku, p.unit_price,
          COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock,
          p.quantity_alert_threshold, p.is_weighted, p.tva_applicable, c.name AS category, p.category_id,
+         p.is_activated,
          CASE
+           WHEN NOT p.is_activated THEN 'a_activer'
            WHEN COALESCE(ps.quantity_in_stock, 0) = 0 THEN 'rupture'
            WHEN ps.quantity_in_stock <= p.quantity_alert_threshold THEN 'faible'
            ELSE 'en_stock'
@@ -148,7 +152,7 @@ router.get('/', async (req, res) => {
        LEFT JOIN categories c ON c.id = p.category_id
        LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $2
        WHERE p.merchant_id = $1 AND p.is_active = TRUE
-       ORDER BY p.name`,
+       ORDER BY p.is_activated ASC, p.name`,
       [req.user.merchantId, warehouseId]
     );
 
@@ -173,7 +177,7 @@ router.get('/', async (req, res) => {
 
 // POST /products
 router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, attributes, warehouseId: warehouseIdInput } = req.body;
+  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, attributes, warehouseId: warehouseIdInput, lotNumber, expiryDate } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: 'Le nom du produit est requis.' });
@@ -185,9 +189,17 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
 
     await client.query('BEGIN');
 
+    // Secteur pharmacie : un produit créé sans stock initial n'est pas
+    // "activé" tant qu'aucune entrée de stock ne lui a été faite, pour ne
+    // pas l'afficher en rupture avant même d'avoir reçu de la marchandise.
+    // Les autres secteurs ne sont pas concernés (is_activated reste TRUE).
+    const isActivated = req.user.sector === 'pharmacie'
+      ? Number(quantityInStock) > 0
+      : true;
+
     const result = await client.query(
-      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_alert_threshold, is_weighted, tva_applicable, attributes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_alert_threshold, is_weighted, tva_applicable, attributes, is_activated)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -199,6 +211,7 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
         Boolean(isWeighted),
         tvaApplicable === undefined ? true : Boolean(tvaApplicable),
         JSON.stringify(attributes && typeof attributes === 'object' ? attributes : {}),
+        isActivated,
       ]
     );
     const product = result.rows[0];
@@ -210,6 +223,19 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
        VALUES ($1, $2, $3, $4)`,
       [req.user.merchantId, product.id, warehouseId, quantityInStock || 0]
     );
+
+    // Pharmacie : si un stock initial et une date de péremption sont
+    // fournis dès la création, on crée directement le premier lot.
+    if (req.user.sector === 'pharmacie' && Number(quantityInStock) > 0) {
+      await addLot(client, {
+        merchantId: req.user.merchantId,
+        productId: product.id,
+        warehouseId,
+        lotNumber,
+        expiryDate,
+        quantity: quantityInStock,
+      });
+    }
 
     const conditionnements = [];
     if (Array.isArray(units)) {
@@ -364,6 +390,7 @@ router.post('/:id/stock-movement', async (req, res) => {
     paymentMethod, totalCost, cashMethod,
     advanceAmount, advanceCashMethod,
     warehouseId: warehouseIdInput,
+    lotNumber, expiryDate,
   } = req.body;
   const validTypes = ['entree', 'sortie', 'ajustement'];
   const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
@@ -491,6 +518,21 @@ router.post('/:id/stock-movement', async (req, res) => {
        DO UPDATE SET quantity_in_stock = $4`,
       [req.user.merchantId, product.id, warehouseId, newQuantity]
     );
+
+    // Pharmacie : une entrée de stock "active" le produit (ne sera plus
+    // affiché en rupture par défaut) et, si une péremption est fournie,
+    // crée le lot correspondant pour le suivi FEFO.
+    if (movementType === 'entree' && req.user.sector === 'pharmacie') {
+      await client.query(`UPDATE products SET is_activated = TRUE WHERE id = $1`, [product.id]);
+      await addLot(client, {
+        merchantId: req.user.merchantId,
+        productId: product.id,
+        warehouseId,
+        lotNumber,
+        expiryDate,
+        quantity,
+      });
+    }
 
     await client.query(
       `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, cash_method, warehouse_id)
@@ -702,6 +744,20 @@ router.post('/purchases', async (req, res) => {
         [req.user.merchantId, product.id, warehouseId, newQuantity]
       );
 
+      // Pharmacie : activation auto + lot (péremption) par article, comme
+      // pour l'entrée simple.
+      if (req.user.sector === 'pharmacie') {
+        await client.query(`UPDATE products SET is_activated = TRUE WHERE id = $1`, [product.id]);
+        await addLot(client, {
+          merchantId: req.user.merchantId,
+          productId: product.id,
+          warehouseId,
+          lotNumber: item.lotNumber,
+          expiryDate: item.expiryDate,
+          quantity: item.quantity,
+        });
+      }
+
       const mouvement = await client.query(
         `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, invoice_number, cash_method, warehouse_id)
          VALUES ($1, $2, $3, 'entree', $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
@@ -801,6 +857,28 @@ router.delete('/:id', requireRole('manager'), async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la suppression du produit.' });
+  }
+});
+
+// GET /products/:id/lots — lots (péremption) d'un produit pour la boutique
+// courante, triés FEFO (péremption la plus proche en premier). Pharmacie
+// uniquement en pratique (vide pour les autres secteurs, sans erreur).
+router.get('/:id/lots', async (req, res) => {
+  try {
+    const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
+    const result = await pool.query(
+      `SELECT id, lot_number, expiry_date, quantity,
+              (expiry_date < CURRENT_DATE) AS is_expired
+       FROM product_lots
+       WHERE product_id = $1 AND merchant_id = $2 AND warehouse_id = $3 AND quantity > 0
+       ORDER BY expiry_date ASC`,
+      [req.params.id, req.user.merchantId, warehouseId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des lots.' });
   }
 });
 

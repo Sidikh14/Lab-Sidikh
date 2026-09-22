@@ -7,6 +7,7 @@ const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerPiedDePage, traitSeparateur, enregistrerPolices } = require('../utils/pdfHelpers');
 const { creerAlerte, getSeuilVenteElevee, getNomUtilisateur } = require('../services/alerts.service');
+const { consumeFEFO } = require('../utils/lots');
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement', 'a_credit'];
@@ -358,6 +359,22 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
          DO UPDATE SET quantity_in_stock = $4`,
         [req.user.merchantId, resolved.product.id, warehouseId, newQuantity]
       );
+
+      // Pharmacie + FEFO : si des lots existent pour ce produit, consomme
+      // en priorité le lot dont la péremption est la plus proche, et
+      // bloque la vente si le stock non périmé est insuffisant — un
+      // produit périmé ne doit jamais pouvoir être vendu, même en override.
+      if (req.user.sector === 'pharmacie') {
+        const fefo = await consumeFEFO(client, {
+          merchantId: req.user.merchantId,
+          productId: resolved.product.id,
+          warehouseId,
+          quantity: resolved.baseQuantity,
+        });
+        if (fefo.tracked && !fefo.ok) {
+          throw { status: 400, message: `${resolved.product.name} : stock non périmé insuffisant (lots restants périmés ou épuisés).` };
+        }
+      }
 
       await client.query(
         `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
@@ -1031,6 +1048,18 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
          DO UPDATE SET quantity_in_stock = $4`,
         [req.user.merchantId, resolved.product.id, warehouseId, newQuantity]
       );
+
+      if (req.user.sector === 'pharmacie') {
+        const fefo = await consumeFEFO(client, {
+          merchantId: req.user.merchantId,
+          productId: resolved.product.id,
+          warehouseId,
+          quantity: resolved.baseQuantity,
+        });
+        if (fefo.tracked && !fefo.ok) {
+          throw { status: 400, message: `${resolved.product.name} : stock non périmé insuffisant (lots restants périmés ou épuisés).` };
+        }
+      }
 
       await client.query(
         `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)

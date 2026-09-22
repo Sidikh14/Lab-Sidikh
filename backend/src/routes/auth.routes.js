@@ -46,7 +46,9 @@ router.post('/register', requireAdminKey, async (req, res) => {
     // catalogue de départ (catégories + médicaments/parapharmacie courants)
     // pour accélérer l'installation — l'utilisateur ajuste ensuite les
     // quantités réelles via l'entrée de stock habituelle (quantité à 0
-    // pour tous à la création).
+    // pour tous à la création). is_activated = FALSE : ces produits ne
+    // s'affichent pas en rupture tant qu'aucune entrée de stock ne leur a
+    // été faite (activation automatique dès la première entrée).
     if (sector === 'pharmacie') {
       const categorieIdParNom = {};
       for (const nomCategorie of CATEGORIES_PHARMACIE) {
@@ -58,8 +60,8 @@ router.post('/register', requireAdminKey, async (req, res) => {
       }
       for (const produit of PRODUITS_PHARMACIE) {
         await client.query(
-          `INSERT INTO products (merchant_id, category_id, name, unit_price, tva_applicable, quantity_alert_threshold, is_weighted, attributes)
-           VALUES ($1, $2, $3, $4, $5, $6, FALSE, '{}')`,
+          `INSERT INTO products (merchant_id, category_id, name, unit_price, tva_applicable, quantity_alert_threshold, is_weighted, attributes, is_activated)
+           VALUES ($1, $2, $3, $4, $5, $6, FALSE, '{}', FALSE)`,
           [merchant.id, categorieIdParNom[produit.categorie] || null, produit.name, produit.unitPrice, produit.tvaApplicable, 5]
         );
       }
