@@ -242,6 +242,7 @@ export function OrdersPage() {
   const [confirmationVente, setConfirmationVente] = useState(null);
   const [choixConditionnement, setChoixConditionnement] = useState(null);
   const [saisiePoids, setSaisiePoids] = useState(null);
+  const [produitRuptureConsulte, setProduitRuptureConsulte] = useState(null);
   const [valeurPoids, setValeurPoids] = useState('');
   const [scannerCameraOuvert, setScannerCameraOuvert] = useState(false);
   const rechercheCaisseRef = useRef(null);
@@ -398,13 +399,15 @@ export function OrdersPage() {
 
   const produitsCaisse = useMemo(() => {
     const recherche = rechercheCaisse.trim().toLowerCase();
+    // Un produit "à activer" (jamais reçu en stock) ne doit pas apparaître
+    // à la caisse — seuls les produits activés sont vendables.
+    const activesUniquement = products.filter((p) => p.status !== 'a_activer');
     const filtres = recherche
-      ? products.filter(
+      ? activesUniquement.filter(
           (p) => p.name.toLowerCase().includes(recherche) || codeInterne(p).toLowerCase().includes(recherche)
         )
-      : products;
-    // Produits activés (stock déjà entré au moins une fois) en premier, "À activer" en dernier.
-    return [...filtres].sort((a, b) => (a.status === 'a_activer') - (b.status === 'a_activer'));
+      : activesUniquement;
+    return filtres;
   }, [products, rechercheCaisse]);
 
   // Pour chaque produit lié par une équivalence (princeps <-> générique),
@@ -767,23 +770,15 @@ export function OrdersPage() {
                     key={p.id}
                     type="button"
                     className="ligne-caisse"
-                    disabled={p.quantity_in_stock <= 0}
-                    onClick={() => demarrerAjout(p)}
+                    onClick={() => (p.quantity_in_stock <= 0 ? setProduitRuptureConsulte(p) : demarrerAjout(p))}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 10, width: '100%',
                       padding: '8px 12px', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)',
-                      marginBottom: 6, background: 'var(--surface)', cursor: p.quantity_in_stock <= 0 ? 'not-allowed' : 'pointer',
-                      opacity: p.quantity_in_stock <= 0 ? 0.5 : 1, textAlign: 'left',
+                      marginBottom: 6, background: 'var(--surface)', cursor: 'pointer',
+                      opacity: p.quantity_in_stock <= 0 ? 0.6 : 1, textAlign: 'left',
                     }}
                   >
-                    <span style={{ flex: 1, fontSize: 14 }}>
-                      {p.name}
-                      {p.quantity_in_stock <= 0 && alternativesParProduit[p.id]?.length > 0 && (
-                        <span style={{ display: 'block', fontSize: 11, color: 'var(--accent)', opacity: 1 }}>
-                          Équivalent dispo : {alternativesParProduit[p.id].map((a) => a.name).join(', ')}
-                        </span>
-                      )}
-                    </span>
+                    <span style={{ flex: 1, fontSize: 14 }}>{p.name}</span>
                     <span className="chiffre" style={{ fontSize: 13, color: 'var(--encre-douce)' }}>
                       {p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''}
                     </span>
@@ -804,21 +799,14 @@ export function OrdersPage() {
                   key={p.id}
                   type="button"
                   className="carte-caisse"
-                  disabled={p.quantity_in_stock <= 0}
-                  onClick={() => demarrerAjout(p)}
+                  style={{ opacity: p.quantity_in_stock <= 0 ? 0.6 : 1 }}
+                  onClick={() => (p.quantity_in_stock <= 0 ? setProduitRuptureConsulte(p) : demarrerAjout(p))}
                 >
                   <span className="carte-produit-icone"><IconPanier /></span>
                   <span className="carte-caisse-nom">{p.name}</span>
                   <span className="carte-caisse-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')}</span>
                   {p.quantity_in_stock <= 0 ? (
-                    <>
-                      <span className="tampon tampon-brique" style={{ marginTop: 4 }}>Rupture</span>
-                      {alternativesParProduit[p.id]?.length > 0 && (
-                        <span style={{ fontSize: 11, color: 'var(--accent)', marginTop: 4, textAlign: 'center' }}>
-                          Équivalent dispo : {alternativesParProduit[p.id].map((a) => a.name).join(', ')}
-                        </span>
-                      )}
-                    </>
+                    <span className="tampon tampon-brique" style={{ marginTop: 4 }}>Rupture</span>
                   ) : (
                     <span className="carte-caisse-stock">
                       {p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''} en stock{p.units?.length > 0 ? ' · gros dispo' : ''}
@@ -1122,6 +1110,48 @@ export function OrdersPage() {
                 <button type="submit" className="btn btn-principal">Ajouter</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {produitRuptureConsulte && (
+        <div className="modale-fond" onClick={() => setProduitRuptureConsulte(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>{produitRuptureConsulte.name}</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+              <span className="tampon tampon-brique">Rupture</span>
+            </p>
+            {alternativesParProduit[produitRuptureConsulte.id]?.length > 0 ? (
+              <>
+                <p style={{ fontSize: 13, marginBottom: 10 }}>Équivalents disponibles en stock :</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {alternativesParProduit[produitRuptureConsulte.id].map((alt) => (
+                    <button
+                      key={alt.id}
+                      type="button"
+                      className="btn"
+                      style={{ justifyContent: 'space-between', padding: '12px 16px' }}
+                      onClick={() => {
+                        setProduitRuptureConsulte(null);
+                        demarrerAjout(alt);
+                      }}
+                    >
+                      <span>{alt.name}</span>
+                      <span className="chiffre">
+                        {alt.is_weighted ? Number(alt.quantity_in_stock).toFixed(1) : Math.round(Number(alt.quantity_in_stock))}{alt.is_weighted ? ' kg' : ''} en stock
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p style={{ fontSize: 13, color: 'var(--encre-douce)' }}>
+                Aucun équivalent disponible pour ce produit pour l'instant.
+              </p>
+            )}
+            <div className="actions-modale">
+              <button type="button" className="btn" onClick={() => setProduitRuptureConsulte(null)}>Fermer</button>
+            </div>
           </div>
         </div>
       )}
