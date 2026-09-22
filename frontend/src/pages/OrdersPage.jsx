@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { getSecteurConfig } from '../config/sectorConfig';
 import { StatusBadge } from '../components/StatusBadge';
 import { ModaleEncaissement } from '../components/ModaleEncaissement';
 import { useOfflineSync } from '../offline/useOfflineSync';
@@ -179,7 +180,8 @@ function codeInterne(produit) {
 }
 
 export function OrdersPage() {
-  const { user } = useAuth();
+  const { user, merchant } = useAuth();
+  const secteurConfig = getSecteurConfig(merchant?.sector);
   const peutCreer = PEUT_CREER.includes(user.role);
   const peutEncaisser = PEUT_ENCAISSER.includes(user.role);
   // Le gérant n'a le droit d'encaisser QUE les ventes qu'il a lui-même
@@ -656,7 +658,7 @@ export function OrdersPage() {
       </div>
 
       {estManager && !chargementBoutiques && warehouses.length === 0 && (
-        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant d'enregistrer des ventes.</p>
+        <p className="etat-vide">Aucune {secteurConfig.libelleBoutique.toLowerCase()} n'a encore été créée. Créez-en une avant d'enregistrer des ventes.</p>
       )}
 
       <div className="onglets">

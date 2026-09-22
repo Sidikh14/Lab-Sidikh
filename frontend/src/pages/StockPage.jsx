@@ -605,7 +605,7 @@ export function StockPage() {
       </div>
 
       {estManager && !chargementBoutiques && warehouses.length === 0 && (
-        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de gérer le stock.</p>
+        <p className="etat-vide">Aucune {secteurConfig.libelleBoutique.toLowerCase()} n'a encore été créée. Créez-en une avant de gérer le stock.</p>
       )}
 
       <div className="onglets">

@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useLiveEvent } from '../offline/liveEvents';
+import { getSecteurConfig } from '../config/sectorConfig';
 
 function IconPlus() {
   return (
@@ -67,7 +68,8 @@ const CLASSE_STATUT_TRANSFERT = {
 // fusion ne doit pas lui retirer cet accès. Le gérant n'a donc que l'onglet
 // Transferts (pas de bascule visible) ; seul le manager voit les deux.
 export function WarehousesPage() {
-  const { user } = useAuth();
+  const { user, merchant } = useAuth();
+  const secteurConfig = getSecteurConfig(merchant?.sector);
   const estManager = user.role === 'manager';
   const [searchParams] = useSearchParams();
   const [onglet, setOnglet] = useState(() => {
@@ -79,7 +81,7 @@ export function WarehousesPage() {
     return (
       <>
         <div className="entete-page">
-          <h1>Transferts entre boutiques</h1>
+          <h1>Transferts entre {secteurConfig.libelleBoutique.toLowerCase()}s</h1>
         </div>
         <TransfertsTab />
       </>
@@ -89,12 +91,12 @@ export function WarehousesPage() {
   return (
     <>
       <div className="entete-page">
-        <h1>Boutiques</h1>
+        <h1>{secteurConfig.libelleBoutique}s</h1>
       </div>
 
       <div className="onglets" style={{ marginBottom: 20 }}>
         <button className={onglet === 'boutiques' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('boutiques')}>
-          Boutiques
+          {secteurConfig.libelleBoutique}s
         </button>
         <button className={onglet === 'transferts' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('transferts')}>
           Transferts
@@ -107,6 +109,8 @@ export function WarehousesPage() {
 }
 
 function BoutiquesTab() {
+  const { merchant } = useAuth();
+  const secteurConfig = getSecteurConfig(merchant?.sector);
   const [warehouses, setWarehouses] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
@@ -132,7 +136,7 @@ function BoutiquesTab() {
   async function handleCreate(e) {
     e.preventDefault();
     if (!nouvelleBoutique.name.trim()) {
-      setErreur('Le nom de la boutique est requis.');
+      setErreur(`Le nom de la ${secteurConfig.libelleBoutique.toLowerCase()} est requis.`);
       return;
     }
     setEnregistrement(true);
@@ -189,14 +193,14 @@ function BoutiquesTab() {
           onClick={() => setModaleOuverte(true)}
         >
           <IconPlus />
-          Nouvelle boutique
+          Nouvelle {secteurConfig.libelleBoutique.toLowerCase()}
         </button>
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
 
       {warehouses.length === 0 ? (
-        <p className="etat-vide">Aucune boutique pour l'instant.</p>
+        <p className="etat-vide">Aucune {secteurConfig.libelleBoutique.toLowerCase()} pour l'instant.</p>
       ) : (
         <div className="grille-cartes">
           {warehouses.map((w) => (
@@ -224,7 +228,7 @@ function BoutiquesTab() {
       {modaleOuverte && (
         <div className="modale-fond" onClick={() => setModaleOuverte(false)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Nouvelle boutique</h2>
+            <h2>Nouvelle {secteurConfig.libelleBoutique.toLowerCase()}</h2>
             <form onSubmit={handleCreate}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="b-name">Nom</label>
@@ -233,7 +237,7 @@ function BoutiquesTab() {
                   className="champ"
                   value={nouvelleBoutique.name}
                   onChange={(e) => setNouvelleBoutique({ ...nouvelleBoutique, name: e.target.value })}
-                  placeholder="Boutique Médina"
+                  placeholder={`${secteurConfig.libelleBoutique} Médina`}
                 />
               </div>
               <div className="champ-groupe">
@@ -259,7 +263,7 @@ function BoutiquesTab() {
       {boutiqueEnEdition && (
         <div className="modale-fond" onClick={() => setBoutiqueEnEdition(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Modifier la boutique</h2>
+            <h2>Modifier la {secteurConfig.libelleBoutique.toLowerCase()}</h2>
             <form onSubmit={handleEnregistrerEdition}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="be-name">Nom</label>
@@ -294,7 +298,8 @@ function BoutiquesTab() {
 }
 
 function TransfertsTab() {
-  const { user } = useAuth();
+  const { user, merchant } = useAuth();
+  const secteurConfig = getSecteurConfig(merchant?.sector);
   const estManager = user.role === 'manager';
 
   const [transferts, setTransferts] = useState([]);
@@ -374,11 +379,11 @@ function TransfertsTab() {
   async function handleCreate(e) {
     e.preventDefault();
     if (!fromWarehouseId || !toWarehouseId) {
-      setErreur('Boutique source et destination requises.');
+      setErreur(`${secteurConfig.libelleBoutique} source et destination requises.`);
       return;
     }
     if (fromWarehouseId === toWarehouseId) {
-      setErreur('La boutique source et destination doivent être différentes.');
+      setErreur(`La ${secteurConfig.libelleBoutique.toLowerCase()} source et destination doivent être différentes.`);
       return;
     }
     const items = lignes
@@ -423,7 +428,7 @@ function TransfertsTab() {
   }
 
   async function handleAnnuler() {
-    if (!window.confirm('Annuler ce transfert ? Le stock sera restitué à la boutique source.')) return;
+    if (!window.confirm(`Annuler ce transfert ? Le stock sera restitué à la ${secteurConfig.libelleBoutique.toLowerCase()} source.`)) return;
     setActionEnCours(true);
     try {
       await api.cancelStockTransfer(transfertDetail.id);
@@ -529,7 +534,7 @@ function TransfertsTab() {
             <h2>Nouveau transfert</h2>
             <form onSubmit={handleCreate}>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="t-from">Boutique source</label>
+                <label className="etiquette" htmlFor="t-from">{secteurConfig.libelleBoutique} source</label>
                 {estManager ? (
                   <select
                     id="t-from"
@@ -537,7 +542,7 @@ function TransfertsTab() {
                     value={fromWarehouseId}
                     onChange={(e) => { setFromWarehouseId(e.target.value); setLignes([]); }}
                   >
-                    <option value="">Choisir une boutique</option>
+                    <option value="">Choisir une {secteurConfig.libelleBoutique.toLowerCase()}</option>
                     {boutiquesActives.map((w) => (
                       <option key={w.id} value={w.id}>{w.name}</option>
                     ))}
@@ -547,14 +552,14 @@ function TransfertsTab() {
                 )}
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="t-to">Boutique destination</label>
+                <label className="etiquette" htmlFor="t-to">{secteurConfig.libelleBoutique} destination</label>
                 <select
                   id="t-to"
                   className="champ"
                   value={toWarehouseId}
                   onChange={(e) => setToWarehouseId(e.target.value)}
                 >
-                  <option value="">Choisir une boutique</option>
+                  <option value="">Choisir une {secteurConfig.libelleBoutique.toLowerCase()}</option>
                   {boutiquesActives.filter((w) => w.id !== fromWarehouseId).map((w) => (
                     <option key={w.id} value={w.id}>{w.name}</option>
                   ))}

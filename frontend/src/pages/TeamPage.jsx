@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { getSecteurConfig } from '../config/sectorConfig';
 import { useLiveEvent } from '../offline/liveEvents';
 
 function IconEquipe() {
@@ -171,7 +172,8 @@ export function TeamPage() {
 }
 
 function EquipeTab() {
-  const { user } = useAuth();
+  const { user, merchant } = useAuth();
+  const secteurConfig = getSecteurConfig(merchant?.sector);
   const rolesProposes = ROLES_PROPOSES[user.role] || [];
   const estManager = user.role === 'manager';
 
@@ -233,7 +235,7 @@ function EquipeTab() {
     }
     const warehouseId = estManager ? nouveauMembre.warehouseId : user.warehouseId;
     if (!warehouseId) {
-      setErreur('La boutique est requise.');
+      setErreur(`La ${secteurConfig.libelleBoutique.toLowerCase()} est requise.`);
       return;
     }
     try {
@@ -367,7 +369,7 @@ function EquipeTab() {
   async function handleChangerBoutique(e) {
     e.preventDefault();
     if (!nouvelleBoutique) {
-      setErreur('La boutique est requise.');
+      setErreur(`La ${secteurConfig.libelleBoutique.toLowerCase()} est requise.`);
       return;
     }
     setEnregistrementBoutique(true);
@@ -492,10 +494,10 @@ function EquipeTab() {
                     className="btn"
                     style={{ padding: '7px 10px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
                     onClick={() => ouvrirChangerBoutique(m)}
-                    title="Changer de boutique"
+                    title={`Changer de ${secteurConfig.libelleBoutique.toLowerCase()}`}
                   >
                     <IconBoutique />
-                    Boutique
+                    {secteurConfig.libelleBoutique}
                   </button>
                   <button
                     className="btn"
@@ -581,14 +583,14 @@ function EquipeTab() {
               </div>
               {estManager && (
                 <div className="champ-groupe">
-                  <label className="etiquette" htmlFor="m-boutique">Boutique</label>
+                  <label className="etiquette" htmlFor="m-boutique">{secteurConfig.libelleBoutique}</label>
                   <select
                     id="m-boutique"
                     className="champ"
                     value={nouveauMembre.warehouseId}
                     onChange={(e) => setNouveauMembre({ ...nouveauMembre, warehouseId: e.target.value })}
                   >
-                    <option value="">Choisir une boutique</option>
+                    <option value="">Choisir une {secteurConfig.libelleBoutique.toLowerCase()}</option>
                     {warehouses.map((w) => (
                       <option key={w.id} value={w.id}>{w.name}</option>
                     ))}
@@ -710,20 +712,20 @@ function EquipeTab() {
       {membreBoutique && (
         <div className="modale-fond" onClick={() => setMembreBoutique(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Changer la boutique de {membreBoutique.full_name}</h2>
+            <h2>Changer la {secteurConfig.libelleBoutique.toLowerCase()} de {membreBoutique.full_name}</h2>
             <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-              Boutique actuelle : <strong>{membreBoutique.warehouse_name || 'aucune'}</strong>.
+              {secteurConfig.libelleBoutique} actuelle : <strong>{membreBoutique.warehouse_name || 'aucune'}</strong>.
             </p>
             <form onSubmit={handleChangerBoutique}>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="m-nouvelle-boutique">Nouvelle boutique</label>
+                <label className="etiquette" htmlFor="m-nouvelle-boutique">Nouvelle {secteurConfig.libelleBoutique.toLowerCase()}</label>
                 <select
                   id="m-nouvelle-boutique"
                   className="champ"
                   value={nouvelleBoutique}
                   onChange={(e) => setNouvelleBoutique(e.target.value)}
                 >
-                  <option value="">Choisir une boutique</option>
+                  <option value="">Choisir une {secteurConfig.libelleBoutique.toLowerCase()}</option>
                   {warehouses.map((w) => (
                     <option key={w.id} value={w.id}>{w.name}</option>
                   ))}
