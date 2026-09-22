@@ -97,8 +97,6 @@ export const api = {
   recordStockPurchase: (data) =>
     request('/products/purchases', { method: 'POST', body: JSON.stringify(data) }),
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
-  getProductLots: (id, warehouseId) =>
-    request(`/products/${id}/lots${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   addProductUnit: (productId, data) =>
     request(`/products/${productId}/units`, { method: 'POST', body: JSON.stringify(data) }),
   deleteProductUnit: (productId, unitId) =>

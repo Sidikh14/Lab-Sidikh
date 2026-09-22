@@ -13,7 +13,6 @@ const FILTRES_STATUT = [
   { value: 'en_stock', label: 'En stock' },
   { value: 'faible', label: 'Faible' },
   { value: 'rupture', label: 'Rupture' },
-  { value: 'a_activer', label: 'À activer' },
 ];
 
 function IconBoite() {
@@ -151,7 +150,7 @@ export function StockPage() {
   const [enregistrementPrix, setEnregistrementPrix] = useState(false);
   const [modaleEntreeOuverte, setModaleEntreeOuverte] = useState(false);
   const entreeStockVide = {
-    items: [{ productId: '', quantity: '', montant: '', lotNumber: '', expiryDate: '' }],
+    items: [{ productId: '', quantity: '', montant: '' }],
     supplierId: '',
     movementDate: new Date().toISOString().slice(0, 10),
     paymentMethod: 'comptant',
@@ -165,7 +164,7 @@ export function StockPage() {
   const [entreeStock, setEntreeStock] = useState(entreeStockVide);
   const [enregistrementEntree, setEnregistrementEntree] = useState(false);
   function ajouterLigneEntree() {
-    setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '', montant: '', lotNumber: '', expiryDate: '' }] }));
+    setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '', montant: '' }] }));
   }
   function retirerLigneEntree(index) {
     setEntreeStock((prev) => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
@@ -353,7 +352,6 @@ export function StockPage() {
   }
 
   const [nouveauConditionnementEdition, setNouveauConditionnementEdition] = useState({ label: '', price: '', quantityPerUnit: '' });
-  const [lotsProduitEdition, setLotsProduitEdition] = useState(null);
 
   function ouvrirEdition(product) {
     setProduitEnEdition({
@@ -369,12 +367,6 @@ export function StockPage() {
       attributes: product.attributes || {},
     });
     setNouveauConditionnementEdition({ label: '', price: '', quantityPerUnit: '' });
-    if (estPharmacie) {
-      setLotsProduitEdition(null);
-      api.getProductLots(product.id, estManager ? warehouseId : undefined)
-        .then(setLotsProduitEdition)
-        .catch(() => setLotsProduitEdition([]));
-    }
   }
 
   async function handleAjouterConditionnementEdition() {
@@ -475,12 +467,7 @@ export function StockPage() {
     setEnregistrementEntree(true);
     try {
       await api.recordStockPurchase({
-        items: items.map((it) => ({
-          productId: it.productId,
-          quantity: Number(it.quantity),
-          lotNumber: estPharmacie ? (it.lotNumber || undefined) : undefined,
-          expiryDate: estPharmacie ? (it.expiryDate || undefined) : undefined,
-        })),
+        items: items.map((it) => ({ productId: it.productId, quantity: Number(it.quantity) })),
         supplierId: entreeStock.supplierId || undefined,
         movementDate: entreeStock.movementDate || undefined,
         paymentMethod: entreeStock.paymentMethod,
@@ -1075,71 +1062,48 @@ export function StockPage() {
                 {entreeStock.items.map((item, index) => {
                   const produitLigne = products.find((p) => p.id === item.productId);
                   return (
-                    <div key={index} style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                        <select
-                          className="champ"
-                          style={{ flex: 2 }}
-                          value={item.productId}
-                          onChange={(e) => modifierLigneEntree(index, 'productId', e.target.value)}
-                        >
-                          <option value="">Choisir un produit</option>
-                          {products.map((p) => (
-                            <option key={p.id} value={p.id}>{p.name}</option>
-                          ))}
-                        </select>
+                    <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'flex-start' }}>
+                      <select
+                        className="champ"
+                        style={{ flex: 2 }}
+                        value={item.productId}
+                        onChange={(e) => modifierLigneEntree(index, 'productId', e.target.value)}
+                      >
+                        <option value="">Choisir un produit</option>
+                        {products.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min={produitLigne?.is_weighted ? '0.1' : '1'}
+                        step={produitLigne?.is_weighted ? '0.1' : '1'}
+                        className="champ"
+                        style={{ flex: 1 }}
+                        placeholder={produitLigne?.is_weighted ? 'Qté (kg)' : 'Qté'}
+                        value={item.quantity}
+                        onChange={(e) => modifierLigneEntree(index, 'quantity', e.target.value)}
+                      />
+                      {entreeStock.items.length > 1 && (
                         <input
                           type="number"
-                          min={produitLigne?.is_weighted ? '0.1' : '1'}
-                          step={produitLigne?.is_weighted ? '0.1' : '1'}
                           className="champ"
                           style={{ flex: 1 }}
-                          placeholder={produitLigne?.is_weighted ? 'Qté (kg)' : 'Qté'}
-                          value={item.quantity}
-                          onChange={(e) => modifierLigneEntree(index, 'quantity', e.target.value)}
+                          placeholder="Montant (FCFA)"
+                          value={item.montant}
+                          onChange={(e) => modifierLigneEntree(index, 'montant', e.target.value)}
                         />
-                        {entreeStock.items.length > 1 && (
-                          <input
-                            type="number"
-                            className="champ"
-                            style={{ flex: 1 }}
-                            placeholder="Montant (FCFA)"
-                            value={item.montant}
-                            onChange={(e) => modifierLigneEntree(index, 'montant', e.target.value)}
-                          />
-                        )}
-                        {entreeStock.items.length > 1 && (
-                          <button
-                            type="button"
-                            className="btn"
-                            style={{ padding: '8px 10px' }}
-                            onClick={() => retirerLigneEntree(index)}
-                            aria-label="Retirer cet article"
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </div>
-                      {estPharmacie && item.productId && (
-                        <div style={{ display: 'flex', gap: 8, paddingLeft: 4 }}>
-                          <input
-                            type="date"
-                            className="champ"
-                            style={{ flex: 1 }}
-                            title="Date de péremption de ce lot"
-                            value={item.expiryDate}
-                            min={new Date().toISOString().slice(0, 10)}
-                            onChange={(e) => modifierLigneEntree(index, 'expiryDate', e.target.value)}
-                          />
-                          <input
-                            type="text"
-                            className="champ"
-                            style={{ flex: 1 }}
-                            placeholder="N° de lot (facultatif)"
-                            value={item.lotNumber}
-                            onChange={(e) => modifierLigneEntree(index, 'lotNumber', e.target.value)}
-                          />
-                        </div>
+                      )}
+                      {entreeStock.items.length > 1 && (
+                        <button
+                          type="button"
+                          className="btn"
+                          style={{ padding: '8px 10px' }}
+                          onClick={() => retirerLigneEntree(index)}
+                          aria-label="Retirer cet article"
+                        >
+                          ✕
+                        </button>
                       )}
                     </div>
                   );
@@ -1461,36 +1425,6 @@ export function StockPage() {
                   />
                 </div>
               ))}
-
-              {estPharmacie && (
-                <div className="champ-groupe">
-                  <label className="etiquette">Lots en stock (péremption)</label>
-                  {lotsProduitEdition === null && (
-                    <p style={{ fontSize: 13, color: 'var(--encre-douce)' }}>Chargement…</p>
-                  )}
-                  {lotsProduitEdition && lotsProduitEdition.length === 0 && (
-                    <p style={{ fontSize: 13, color: 'var(--encre-douce)' }}>
-                      Aucun lot enregistré pour cette boutique (stock non suivi par lot, ou pas encore de péremption renseignée).
-                    </p>
-                  )}
-                  {lotsProduitEdition && lotsProduitEdition.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {lotsProduitEdition.map((lot) => (
-                        <div
-                          key={lot.id}
-                          style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 8px', borderRadius: 6, background: lot.is_expired ? '#fee2e2' : 'var(--fond-alterne, #f5f5f5)' }}
-                        >
-                          <span>{lot.lot_number || 'Sans n° de lot'} — {lot.quantity} unité(s)</span>
-                          <span style={{ fontWeight: 600, color: lot.is_expired ? '#b91c1c' : 'inherit' }}>
-                            {lot.is_expired ? 'Périmé le ' : 'Péremption : '}
-                            {new Date(lot.expiry_date).toLocaleDateString('fr-FR')}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
 
               <div className="champ-groupe">
                 <label className="etiquette">
