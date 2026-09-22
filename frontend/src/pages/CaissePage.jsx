@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useLiveEvent } from '../offline/liveEvents';
 
 const MOYENS_PAIEMENT = [
   { value: 'especes', label: 'Espèces' },
@@ -73,6 +74,14 @@ export function CaissePage() {
     if (estManager && warehouseId) localStorage.setItem('boutiqueActiveId', warehouseId);
   }, [estManager, warehouseId]);
 
+  // --- Rafraîchissement temps réel ---
+  // Toute vente encaissée, sortie/entrée de caisse ou clôture ailleurs (même
+  // par un autre membre de l'équipe) déclenche activity:created en SSE.
+  // On rafraîchit l'onglet actif plutôt que de laisser des chiffres périmés
+  // à l'écran, comme le font déjà le Dashboard et Ventes & caisse.
+  const [refreshKey, setRefreshKey] = useState(0);
+  useLiveEvent('activity:created', () => setRefreshKey((k) => k + 1));
+
   // --- Soldes actuels par moyen de paiement (haut de page) ---
   const [soldes, setSoldes] = useState(null);
   const [chargementSoldes, setChargementSoldes] = useState(true);
@@ -88,7 +97,7 @@ export function CaissePage() {
       .then(setSoldes)
       .catch((err) => setErreur(err.message))
       .finally(() => setChargementSoldes(false));
-  }, [estCaissier, activeWarehouseId]);
+  }, [estCaissier, activeWarehouseId, refreshKey]);
 
   function soldeDe(method) {
     return soldes?.find((s) => s.method === method)?.balance ?? 0;
@@ -118,7 +127,7 @@ export function CaissePage() {
       .finally(() => setChargementResume(false));
   }
 
-  useEffect(chargerResume, [dateCloture, activeWarehouseId]);
+  useEffect(chargerResume, [dateCloture, activeWarehouseId, refreshKey]);
 
   async function handleCloturer(e) {
     e.preventDefault();
@@ -167,7 +176,7 @@ export function CaissePage() {
   useEffect(() => {
     if (onglet === 'sorties') chargerSorties();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onglet, periodeSorties, activeWarehouseId]);
+  }, [onglet, periodeSorties, activeWarehouseId, refreshKey]);
 
   async function handleAjouterSortie(e) {
     e.preventDefault();
@@ -216,7 +225,7 @@ export function CaissePage() {
   useEffect(() => {
     if (onglet === 'entrees') chargerEntrees();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onglet, periodeEntrees, activeWarehouseId]);
+  }, [onglet, periodeEntrees, activeWarehouseId, refreshKey]);
 
   async function handleAjouterEntree(e) {
     e.preventDefault();
@@ -261,7 +270,7 @@ export function CaissePage() {
   useEffect(() => {
     if (onglet === 'releves') chargerReleve();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onglet, releveCaissier, activeWarehouseId]);
+  }, [onglet, releveCaissier, activeWarehouseId, refreshKey]);
 
   useEffect(() => {
     if (onglet === 'releves' && activeWarehouseId) {

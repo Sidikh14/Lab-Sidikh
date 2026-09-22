@@ -16,6 +16,18 @@ export function AuthProvider({ children }) {
   const [sessionExpiredMessage, setSessionExpiredMessage] = useState(null);
 
   function persist(data) {
+    // boutiqueActiveId (mémorisée par StockPage/WarehousesPage/etc.) n'est
+    // pas scopée par commerçant. Si on se connecte sur un commerçant
+    // différent de celui déjà en mémoire, cet ID appartient forcément à
+    // l'ancien commerçant (ex. grossiste) et n'existe pas chez le nouveau
+    // (ex. électroménager) → backend répond "boutique introuvable". On
+    // l'efface dans ce cas pour forcer une resélection propre.
+    const merchantPrecedentId = merchant?.id
+      ?? JSON.parse(localStorage.getItem('merchant') || 'null')?.id
+      ?? null;
+    if (data.merchant && merchantPrecedentId && merchantPrecedentId !== data.merchant.id) {
+      localStorage.removeItem('boutiqueActiveId');
+    }
     localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
     setUser(data.user);
@@ -41,6 +53,7 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     localStorage.removeItem('merchant');
+    localStorage.removeItem('boutiqueActiveId');
     setUser(null);
     setMerchant(null);
   }, []);
