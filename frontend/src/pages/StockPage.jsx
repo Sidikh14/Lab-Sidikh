@@ -918,10 +918,10 @@ export function StockPage() {
                 <input
                   id="p-qty"
                   type="number"
-                  step={nouveauProduit.isWeighted ? '0.1' : '1'}
+                  step={estPharmacie ? '1' : (nouveauProduit.isWeighted ? '0.1' : '1')}
                   className="champ"
                   value={nouveauProduit.quantityInStock}
-                  onChange={(e) => setNouveauProduit({ ...nouveauProduit, quantityInStock: e.target.value })}
+                  onChange={(e) => setNouveauProduit({ ...nouveauProduit, quantityInStock: estPharmacie ? e.target.value.replace(/[.,].*$/, '') : e.target.value })}
                 />
               </div>
               <div className="champ-groupe">
@@ -929,9 +929,10 @@ export function StockPage() {
                 <input
                   id="p-alert"
                   type="number"
+                  step={estPharmacie ? '1' : undefined}
                   className="champ"
                   value={nouveauProduit.quantityAlertThreshold}
-                  onChange={(e) => setNouveauProduit({ ...nouveauProduit, quantityAlertThreshold: e.target.value })}
+                  onChange={(e) => setNouveauProduit({ ...nouveauProduit, quantityAlertThreshold: estPharmacie ? e.target.value.replace(/[.,].*$/, '') : e.target.value })}
                 />
               </div>
 
@@ -1090,13 +1091,13 @@ export function StockPage() {
                         </select>
                         <input
                           type="number"
-                          min={produitLigne?.is_weighted ? '0.1' : '1'}
-                          step={produitLigne?.is_weighted ? '0.1' : '1'}
+                          min={estPharmacie ? '1' : (produitLigne?.is_weighted ? '0.1' : '1')}
+                          step={estPharmacie ? '1' : (produitLigne?.is_weighted ? '0.1' : '1')}
                           className="champ"
                           style={{ flex: 1 }}
                           placeholder={produitLigne?.is_weighted ? 'Qté (kg)' : 'Qté'}
                           value={item.quantity}
-                          onChange={(e) => modifierLigneEntree(index, 'quantity', e.target.value)}
+                          onChange={(e) => modifierLigneEntree(index, 'quantity', estPharmacie ? e.target.value.replace(/[.,].*$/, '') : e.target.value)}
                         />
                         {entreeStock.items.length > 1 && (
                           <input
@@ -1409,9 +1410,10 @@ export function StockPage() {
                 <input
                   id="pe-alert"
                   type="number"
+                  step={estPharmacie ? '1' : undefined}
                   className="champ"
                   value={produitEnEdition.quantityAlertThreshold}
-                  onChange={(e) => setProduitEnEdition({ ...produitEnEdition, quantityAlertThreshold: e.target.value })}
+                  onChange={(e) => setProduitEnEdition({ ...produitEnEdition, quantityAlertThreshold: estPharmacie ? e.target.value.replace(/[.,].*$/, '') : e.target.value })}
                 />
               </div>
 
