@@ -37,10 +37,10 @@ export const SECTEURS = {
   electromenager: {
     label: 'Électroménager',
     theme: {
-      accent: '#2563eb',
-      accentClair: '#dbeafe',
-      accentFonce: '#1d4ed8',
-      accentTransparent: 'rgba(37, 99, 235, 0.18)',
+      accent: '#D9A404',
+      accentClair: '#FDF3C7',
+      accentFonce: '#8A6A02',
+      accentTransparent: 'rgba(217, 164, 4, 0.18)',
     },
     libelleProduit: 'Article',
     libelleBoutique: 'Boutique',

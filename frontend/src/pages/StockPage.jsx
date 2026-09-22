@@ -353,7 +353,7 @@ export function StockPage() {
         unitPrice: Number(nouveauProduit.unitPrice) || 0,
         quantityInStock: Number(nouveauProduit.quantityInStock) || 0,
         quantityAlertThreshold: Number(nouveauProduit.quantityAlertThreshold) || 5,
-        isWeighted: nouveauProduit.isWeighted,
+        isWeighted: estPharmacie ? false : nouveauProduit.isWeighted,
         isVital: nouveauProduit.isVital,
         requiresPrescription: estPharmacie ? nouveauProduit.requiresPrescription : undefined,
         warehouseId: estManager ? warehouseId : undefined,
@@ -443,7 +443,7 @@ export function StockPage() {
       sku: product.sku || '',
       unitPrice: product.unit_price,
       quantityAlertThreshold: estPharmacie ? String(Math.round(Number(product.quantity_alert_threshold))) : product.quantity_alert_threshold,
-      isWeighted: product.is_weighted,
+      isWeighted: estPharmacie ? false : product.is_weighted,
       categoryId: product.category_id || '',
       tvaApplicable: product.tva_applicable !== false,
       isVital: Boolean(product.is_vital),
@@ -495,7 +495,7 @@ export function StockPage() {
         sku: produitEnEdition.sku || undefined,
         unitPrice: Number(produitEnEdition.unitPrice),
         quantityAlertThreshold: Number(produitEnEdition.quantityAlertThreshold),
-        isWeighted: produitEnEdition.isWeighted,
+        isWeighted: estPharmacie ? false : produitEnEdition.isWeighted,
         isVital: produitEnEdition.isVital,
         requiresPrescription: estPharmacie ? produitEnEdition.requiresPrescription : undefined,
         categoryId: estPharmacie ? (produitEnEdition.categoryId || null) : undefined,
@@ -983,16 +983,18 @@ export function StockPage() {
                   placeholder={estPharmacie ? 'PARA-500 (généré automatiquement sinon)' : 'RIZ-25 (généré automatiquement sinon)'}
                 />
               </div>
-              <div className="champ-groupe">
-                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={nouveauProduit.isWeighted}
-                    onChange={(e) => setNouveauProduit({ ...nouveauProduit, isWeighted: e.target.checked })}
-                  />
-                  Vendu au poids (prix au kg)
-                </label>
-              </div>
+              {!estPharmacie && (
+                <div className="champ-groupe">
+                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={nouveauProduit.isWeighted}
+                      onChange={(e) => setNouveauProduit({ ...nouveauProduit, isWeighted: e.target.checked })}
+                    />
+                    Vendu au poids (prix au kg)
+                  </label>
+                </div>
+              )}
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="p-price">{nouveauProduit.isWeighted ? 'Prix au kg (FCFA)' : 'Prix au détail (FCFA)'}</label>
                 <input
@@ -1531,16 +1533,18 @@ export function StockPage() {
                   onChange={(e) => setProduitEnEdition({ ...produitEnEdition, sku: e.target.value })}
                 />
               </div>
-              <div className="champ-groupe">
-                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={produitEnEdition.isWeighted}
-                    onChange={(e) => setProduitEnEdition({ ...produitEnEdition, isWeighted: e.target.checked })}
-                  />
-                  Vendu au poids (prix au kg)
-                </label>
-              </div>
+              {!estPharmacie && (
+                <div className="champ-groupe">
+                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={produitEnEdition.isWeighted}
+                      onChange={(e) => setProduitEnEdition({ ...produitEnEdition, isWeighted: e.target.checked })}
+                    />
+                    Vendu au poids (prix au kg)
+                  </label>
+                </div>
+              )}
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="pe-price">{produitEnEdition.isWeighted ? 'Prix au kg (FCFA)' : 'Prix au détail (FCFA)'}</label>
                 <input
