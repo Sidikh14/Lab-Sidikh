@@ -26,10 +26,13 @@ export const SECTEURS = {
     },
     libelleProduit: 'Médicament',
     libelleBoutique: 'Pharmacie',
-    champsProduitSup: [
-      { key: 'datePeremption', label: 'Date de péremption', type: 'date' },
-      { key: 'numeroLot', label: 'Numéro de lot', type: 'text' },
-    ],
+    // Pas de champsProduitSup pour la péremption/lot ici : depuis l'ajout
+    // du suivi par lot (product_lots, FEFO), la date de péremption et le
+    // numéro de lot se saisissent PAR LOT à chaque entrée de stock (modale
+    // "Entrée de stock"), pas une seule fois sur la fiche produit — un
+    // médicament a plusieurs lots avec des péremptions différentes dans le
+    // temps.
+    champsProduitSup: [],
   },
   electromenager: {
     label: 'Électroménager',
