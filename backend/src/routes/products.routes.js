@@ -141,7 +141,7 @@ router.get('/', async (req, res) => {
          p.id, p.name, p.sku, p.unit_price,
          COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock,
          p.quantity_alert_threshold, p.is_weighted, p.tva_applicable, c.name AS category, p.category_id,
-         p.is_activated,
+         p.is_activated, p.is_vital,
          CASE
            WHEN NOT p.is_activated THEN 'a_activer'
            WHEN COALESCE(ps.quantity_in_stock, 0) = 0 THEN 'rupture'
@@ -177,7 +177,7 @@ router.get('/', async (req, res) => {
 
 // POST /products
 router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, attributes, warehouseId: warehouseIdInput, lotNumber, expiryDate } = req.body;
+  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, isVital, attributes, warehouseId: warehouseIdInput, lotNumber, expiryDate } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: 'Le nom du produit est requis.' });
@@ -198,8 +198,8 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
       : true;
 
     const result = await client.query(
-      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_alert_threshold, is_weighted, tva_applicable, attributes, is_activated)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_alert_threshold, is_weighted, tva_applicable, attributes, is_activated, is_vital)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -212,6 +212,7 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
         tvaApplicable === undefined ? true : Boolean(tvaApplicable),
         JSON.stringify(attributes && typeof attributes === 'object' ? attributes : {}),
         isActivated,
+        Boolean(isVital),
       ]
     );
     const product = result.rows[0];
@@ -311,7 +312,7 @@ router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), async (req
 
 // PATCH /products/:id — journalise un changement de prix, s'il y en a un
 router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, quantityAlertThreshold, isWeighted, tvaApplicable, attributes } = req.body;
+  const { name, sku, categoryId, unitPrice, quantityAlertThreshold, isWeighted, tvaApplicable, isVital, attributes } = req.body;
 
   try {
     const avant = await pool.query(
@@ -333,13 +334,15 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
          quantity_alert_threshold = COALESCE($5, quantity_alert_threshold),
          is_weighted = COALESCE($6, is_weighted),
          tva_applicable = COALESCE($7, tva_applicable),
-         attributes = COALESCE($8, attributes)
-       WHERE id = $9 AND merchant_id = $10
+         attributes = COALESCE($8, attributes),
+         is_vital = COALESCE($9, is_vital)
+       WHERE id = $10 AND merchant_id = $11
        RETURNING *`,
       [
         name, sku, categoryId, unitPrice, quantityAlertThreshold, isWeighted,
         tvaApplicable === undefined ? null : Boolean(tvaApplicable),
         attributes && typeof attributes === 'object' ? JSON.stringify(attributes) : null,
+        isVital === undefined ? null : Boolean(isVital),
         req.params.id, req.user.merchantId,
       ]
     );

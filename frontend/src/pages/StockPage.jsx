@@ -8,6 +8,9 @@ import { ComptageTab } from './ComptageTab';
 import { getSecteurConfig } from '../config/sectorConfig';
 
 const ROLES_GESTION = ['manager', 'gerant'];
+// Seuil d'alerte suggéré (pas imposé) quand la case "Produit vital" est
+// cochée — reste librement modifiable ensuite par le pharmacien/gérant.
+const SEUIL_ALERTE_VITAL_SUGGERE = 20;
 const FILTRES_STATUT = [
   { value: 'tous', label: 'Tous statuts' },
   { value: 'en_stock', label: 'En stock' },
@@ -143,7 +146,7 @@ export function StockPage() {
   const [recherche, setRecherche] = useState(searchParams.get('q') || '');
   const [filtreStatut, setFiltreStatut] = useState('tous');
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, attributes: {}, lotNumber: '', expiryDate: '' });
+  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, attributes: {}, lotNumber: '', expiryDate: '' });
   const [conditionnements, setConditionnements] = useState([]);
   const [modalePrixOuverte, setModalePrixOuverte] = useState(false);
   const [prixModifies, setPrixModifies] = useState({});
@@ -351,6 +354,7 @@ export function StockPage() {
         quantityInStock: Number(nouveauProduit.quantityInStock) || 0,
         quantityAlertThreshold: Number(nouveauProduit.quantityAlertThreshold) || 5,
         isWeighted: nouveauProduit.isWeighted,
+        isVital: nouveauProduit.isVital,
         warehouseId: estManager ? warehouseId : undefined,
         categoryId: estPharmacie ? (nouveauProduit.categoryId || undefined) : undefined,
         tvaApplicable: estPharmacie ? nouveauProduit.tvaApplicable : undefined,
@@ -362,7 +366,7 @@ export function StockPage() {
           .map((c) => ({ label: c.label, price: Number(c.price), quantityPerUnit: Number(c.quantityPerUnit) })),
       });
       setModaleOuverte(false);
-      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, attributes: {}, lotNumber: '', expiryDate: '' });
+      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, attributes: {}, lotNumber: '', expiryDate: '' });
       setConditionnements([]);
       charger();
     } catch (err) {
@@ -441,6 +445,7 @@ export function StockPage() {
       isWeighted: product.is_weighted,
       categoryId: product.category_id || '',
       tvaApplicable: product.tva_applicable !== false,
+      isVital: Boolean(product.is_vital),
       units: product.units || [],
       attributes: product.attributes || {},
     });
@@ -489,6 +494,7 @@ export function StockPage() {
         unitPrice: Number(produitEnEdition.unitPrice),
         quantityAlertThreshold: Number(produitEnEdition.quantityAlertThreshold),
         isWeighted: produitEnEdition.isWeighted,
+        isVital: produitEnEdition.isVital,
         categoryId: estPharmacie ? (produitEnEdition.categoryId || null) : undefined,
         tvaApplicable: estPharmacie ? produitEnEdition.tvaApplicable : undefined,
         attributes: produitEnEdition.attributes,
@@ -815,7 +821,10 @@ export function StockPage() {
               <tbody>
                 {produitsFiltres.map((p) => (
                   <tr key={p.id}>
-                    <td>{p.name}</td>
+                    <td>
+                      {p.name}
+                      {p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
+                    </td>
                     <td className="chiffre">{codeInterne(p)}</td>
                     <td className="chiffre">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA{p.is_weighted ? '/kg' : ''}</td>
                     <td className="chiffre">{p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''}</td>
@@ -844,7 +853,10 @@ export function StockPage() {
                     <span className="carte-produit-icone"><IconBoite /></span>
                     <StatusBadge status={p.status} />
                   </div>
-                  <p className="carte-produit-nom">{p.name}</p>
+                  <p className="carte-produit-nom">
+                    {p.name}
+                    {p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
+                  </p>
                   <p className="carte-produit-sku">{codeInterne(p)}</p>
                   <p className="carte-produit-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA{p.is_weighted ? '/kg' : ''}</p>
                   <p className="carte-produit-stock">{p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''} en stock</p>
@@ -1031,6 +1043,28 @@ export function StockPage() {
                   value={nouveauProduit.quantityAlertThreshold}
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, quantityAlertThreshold: estPharmacie ? e.target.value.replace(/[.,].*$/, '') : e.target.value })}
                 />
+              </div>
+
+              <div className="champ-groupe">
+                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={nouveauProduit.isVital}
+                    onChange={(e) => {
+                      const coche = e.target.checked;
+                      setNouveauProduit((prev) => ({
+                        ...prev,
+                        isVital: coche,
+                        // Suggestion de seuil plus élevé, uniquement si le champ
+                        // n'a pas déjà été personnalisé — reste modifiable ensuite.
+                        quantityAlertThreshold: coche && (prev.quantityAlertThreshold === '' || prev.quantityAlertThreshold === '5')
+                          ? String(SEUIL_ALERTE_VITAL_SUGGERE)
+                          : prev.quantityAlertThreshold,
+                      }));
+                    }}
+                  />
+                  Produit vital (première nécessité / urgence) — suggère un seuil d'alerte plus élevé
+                </label>
               </div>
 
               {estPharmacie && (
@@ -1512,6 +1546,26 @@ export function StockPage() {
                   value={produitEnEdition.quantityAlertThreshold}
                   onChange={(e) => setProduitEnEdition({ ...produitEnEdition, quantityAlertThreshold: estPharmacie ? e.target.value.replace(/[.,].*$/, '') : e.target.value })}
                 />
+              </div>
+
+              <div className="champ-groupe">
+                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={produitEnEdition.isVital}
+                    onChange={(e) => {
+                      const coche = e.target.checked;
+                      setProduitEnEdition((prev) => ({
+                        ...prev,
+                        isVital: coche,
+                        quantityAlertThreshold: coche && (prev.quantityAlertThreshold === '' || Number(prev.quantityAlertThreshold) < SEUIL_ALERTE_VITAL_SUGGERE)
+                          ? String(SEUIL_ALERTE_VITAL_SUGGERE)
+                          : prev.quantityAlertThreshold,
+                      }));
+                    }}
+                  />
+                  Produit vital (première nécessité / urgence) — suggère un seuil d'alerte plus élevé
+                </label>
               </div>
 
               {estPharmacie && (
