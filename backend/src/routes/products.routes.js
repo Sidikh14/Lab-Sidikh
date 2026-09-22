@@ -944,4 +944,81 @@ router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), async (req, 
   }
 });
 
+// GET /products/equivalences — toutes les liaisons de substitution
+// (princeps <-> génériques) du commerçant. Chargé une fois côté frontend et
+// croisé avec la liste des produits déjà en mémoire (statut/stock par
+// boutique) : pas de requête supplémentaire par produit.
+router.get('/equivalences', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, product_id_1, product_id_2 FROM product_equivalences WHERE merchant_id = $1`,
+      [req.user.merchantId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des équivalences.' });
+  }
+});
+
+// POST /products/equivalences — lie deux produits comme équivalents
+// (princeps <-> générique). La relation est symétrique : peu importe quel
+// produit est envoyé en premier, elle sert dans les deux sens à la caisse.
+router.post('/equivalences', requireRole('manager', 'gerant'), async (req, res) => {
+  const { productId1, productId2 } = req.body;
+  if (!productId1 || !productId2 || productId1 === productId2) {
+    return res.status(400).json({ error: 'Deux produits distincts sont requis.' });
+  }
+  try {
+    const produits = await pool.query(
+      `SELECT id FROM products WHERE id = ANY($1::uuid[]) AND merchant_id = $2 AND is_active = TRUE`,
+      [[productId1, productId2], req.user.merchantId]
+    );
+    if (produits.rows.length !== 2) {
+      return res.status(404).json({ error: 'Produit introuvable.' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO product_equivalences (merchant_id, product_id_1, product_id_2)
+       VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING
+       RETURNING id, product_id_1, product_id_2`,
+      [req.user.merchantId, productId1, productId2]
+    );
+    if (result.rows.length > 0) {
+      return res.status(201).json(result.rows[0]);
+    }
+
+    // Déjà liée (conflit sur l'index unique symétrique, quel que soit
+    // l'ordre des deux ids envoyés) : on renvoie la liaison existante au
+    // lieu d'une erreur, pour rester idempotent côté frontend.
+    const existante = await pool.query(
+      `SELECT id, product_id_1, product_id_2 FROM product_equivalences
+       WHERE merchant_id = $1
+         AND LEAST(product_id_1, product_id_2) = LEAST($2::uuid, $3::uuid)
+         AND GREATEST(product_id_1, product_id_2) = GREATEST($2::uuid, $3::uuid)`,
+      [req.user.merchantId, productId1, productId2]
+    );
+    res.status(200).json(existante.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors de la création de l'équivalence." });
+  }
+});
+
+// DELETE /products/equivalences/:linkId
+router.delete('/equivalences/:linkId', requireRole('manager', 'gerant'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `DELETE FROM product_equivalences WHERE id = $1 AND merchant_id = $2 RETURNING id`,
+      [req.params.linkId, req.user.merchantId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Équivalence introuvable.' });
+    res.status(204).send();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors de la suppression de l'équivalence." });
+  }
+});
+
 module.exports = router;

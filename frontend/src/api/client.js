@@ -113,6 +113,12 @@ export const api = {
     request(`/categories/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteCategory: (id) => request(`/categories/${id}`, { method: 'DELETE' }),
 
+  getProductEquivalences: () => request('/products/equivalences'),
+  addProductEquivalence: (productId1, productId2) =>
+    request('/products/equivalences', { method: 'POST', body: JSON.stringify({ productId1, productId2 }) }),
+  removeProductEquivalence: (linkId) =>
+    request(`/products/equivalences/${linkId}`, { method: 'DELETE' }),
+
   getClients: () => request('/clients'),
   getClient: (id) => request(`/clients/${id}`),
   createClient: (data) =>

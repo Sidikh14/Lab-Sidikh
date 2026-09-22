@@ -230,9 +230,11 @@ export function StockPage() {
 
   useEffect(charger, [warehouseId]);
 
+  const [equivalences, setEquivalences] = useState([]);
   useEffect(() => {
     if (!estPharmacie) return;
     api.getCategories().then(setCategories).catch((err) => setErreur(err.message));
+    api.getProductEquivalences().then(setEquivalences).catch((err) => setErreur(err.message));
   }, [estPharmacie]);
 
   function changerVueProduits(vue) {
@@ -299,6 +301,28 @@ export function StockPage() {
       .sort((a, b) => (a.status === 'a_activer') - (b.status === 'a_activer'));
   }, [products, recherche, filtreStatut]);
 
+  // Liaisons de substitution (princeps <-> génériques) du produit en cours
+  // d'édition, avec le nom du produit lié résolu depuis la liste products.
+  const equivalencesProduitEdition = useMemo(() => {
+    if (!produitEnEdition) return [];
+    return equivalences
+      .filter((l) => l.product_id_1 === produitEnEdition.id || l.product_id_2 === produitEnEdition.id)
+      .map((l) => {
+        const autreId = l.product_id_1 === produitEnEdition.id ? l.product_id_2 : l.product_id_1;
+        const autreProduit = products.find((p) => p.id === autreId);
+        return { linkId: l.id, id: autreId, name: autreProduit?.name || 'Produit inconnu' };
+      });
+  }, [equivalences, produitEnEdition, products]);
+
+  // Produits pouvant encore être liés (exclut le produit lui-même et ceux déjà liés).
+  const candidatsEquivalence = useMemo(() => {
+    if (!produitEnEdition) return [];
+    const dejaLiesIds = new Set(equivalencesProduitEdition.map((e) => e.id));
+    return products
+      .filter((p) => p.id !== produitEnEdition.id && !dejaLiesIds.has(p.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [products, produitEnEdition, equivalencesProduitEdition]);
+
   function ajouterConditionnement() {
     setConditionnements([...conditionnements, { label: '', price: '', quantityPerUnit: '' }]);
   }
@@ -360,12 +384,37 @@ export function StockPage() {
   const [nouveauConditionnementEdition, setNouveauConditionnementEdition] = useState({ label: '', price: '', quantityPerUnit: '' });
   const [lotsProduitEdition, setLotsProduitEdition] = useState(null);
   const [destructionLotEnCours, setDestructionLotEnCours] = useState(null);
+  const [nouvelleEquivalenceId, setNouvelleEquivalenceId] = useState('');
+  const [enregistrementEquivalence, setEnregistrementEquivalence] = useState(false);
 
   function chargerLotsProduit(productId) {
     setLotsProduitEdition(null);
     api.getProductLots(productId, estManager ? warehouseId : undefined)
       .then(setLotsProduitEdition)
       .catch(() => setLotsProduitEdition([]));
+  }
+
+  async function handleAjouterEquivalence() {
+    if (!nouvelleEquivalenceId || !produitEnEdition) return;
+    setEnregistrementEquivalence(true);
+    try {
+      const lien = await api.addProductEquivalence(produitEnEdition.id, nouvelleEquivalenceId);
+      setEquivalences((prev) => [...prev.filter((l) => l.id !== lien.id), lien]);
+      setNouvelleEquivalenceId('');
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnregistrementEquivalence(false);
+    }
+  }
+
+  async function handleSupprimerEquivalence(linkId) {
+    try {
+      await api.removeProductEquivalence(linkId);
+      setEquivalences((prev) => prev.filter((l) => l.id !== linkId));
+    } catch (err) {
+      setErreur(err.message);
+    }
   }
 
   async function handleDetruireLot(lotId) {
@@ -1555,6 +1604,60 @@ export function StockPage() {
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+
+              {estPharmacie && (
+                <div className="champ-groupe">
+                  <label className="etiquette">Équivalents / génériques (proposés à la caisse en cas de rupture)</label>
+                  {equivalencesProduitEdition.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+                      {equivalencesProduitEdition.map((eq) => (
+                        <div
+                          key={eq.linkId}
+                          style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, padding: '4px 8px', borderRadius: 6,
+                            background: 'var(--fond-alterne, #f5f5f5)',
+                          }}
+                        >
+                          <span>{eq.name}</span>
+                          <button
+                            type="button"
+                            className="btn"
+                            style={{ padding: '2px 8px', fontSize: 12 }}
+                            onClick={() => handleSupprimerEquivalence(eq.linkId)}
+                          >
+                            Délier
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {equivalencesProduitEdition.length === 0 && (
+                    <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 8 }}>
+                      Aucun équivalent lié pour l'instant.
+                    </p>
+                  )}
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <select
+                      className="champ"
+                      value={nouvelleEquivalenceId}
+                      onChange={(e) => setNouvelleEquivalenceId(e.target.value)}
+                    >
+                      <option value="">Choisir un médicament équivalent…</option>
+                      {candidatsEquivalence.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={!nouvelleEquivalenceId || enregistrementEquivalence}
+                      onClick={handleAjouterEquivalence}
+                    >
+                      {enregistrementEquivalence ? '…' : 'Lier'}
+                    </button>
+                  </div>
                 </div>
               )}
 

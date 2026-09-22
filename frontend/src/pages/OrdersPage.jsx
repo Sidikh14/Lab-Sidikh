@@ -191,12 +191,14 @@ export function OrdersPage() {
     peutEncaisser && (user.role !== 'gerant' || o.created_by === user.id);
   const peutGererStatut = PEUT_GERER_STATUT.includes(user.role);
   const estManager = user.role === 'manager';
+  const estPharmacie = merchant?.sector === 'pharmacie';
   const { isOnline, createOrder: creerVenteHorsLigne } = useOfflineSync(api);
 
   const [onglet, setOnglet] = useState(peutCreer ? 'caisse' : 'historique');
   const [orders, setOrders] = useState([]);
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
+  const [equivalences, setEquivalences] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
 
@@ -353,11 +355,17 @@ export function OrdersPage() {
     // /products (le backend renverrait 400 "La boutique est requise").
     if (estManager && !warehouseId) return;
     setChargement(true);
-    Promise.all([api.getOrders(estManager ? warehouseId : undefined), api.getClients(), api.getProducts(estManager ? warehouseId : undefined)])
-      .then(([o, c, p]) => {
+    Promise.all([
+      api.getOrders(estManager ? warehouseId : undefined),
+      api.getClients(),
+      api.getProducts(estManager ? warehouseId : undefined),
+      estPharmacie ? api.getProductEquivalences() : Promise.resolve([]),
+    ])
+      .then(([o, c, p, eq]) => {
         setOrders(o);
         setClients(c);
         setProducts(p);
+        setEquivalences(eq);
         // Copie locale pour pouvoir continuer à vendre hors-ligne : on ne
         // met à jour ce cache que lorsqu'on a effectivement pu joindre le
         // serveur (donc jamais avec des données déjà périmées).
@@ -398,6 +406,29 @@ export function OrdersPage() {
     // Produits activés (stock déjà entré au moins une fois) en premier, "À activer" en dernier.
     return [...filtres].sort((a, b) => (a.status === 'a_activer') - (b.status === 'a_activer'));
   }, [products, rechercheCaisse]);
+
+  // Pour chaque produit lié par une équivalence (princeps <-> générique),
+  // la liste des équivalents ayant du stock dans la boutique courante —
+  // proposés à la caisse quand le produit demandé est en rupture/à activer.
+  const alternativesParProduit = useMemo(() => {
+    if (equivalences.length === 0) return {};
+    const liens = {};
+    equivalences.forEach((l) => {
+      if (!liens[l.product_id_1]) liens[l.product_id_1] = [];
+      if (!liens[l.product_id_2]) liens[l.product_id_2] = [];
+      liens[l.product_id_1].push(l.product_id_2);
+      liens[l.product_id_2].push(l.product_id_1);
+    });
+    const parId = {};
+    products.forEach((p) => { parId[p.id] = p; });
+    const disponibles = {};
+    Object.keys(liens).forEach((id) => {
+      disponibles[id] = liens[id]
+        .map((autreId) => parId[autreId])
+        .filter((p) => p && p.quantity_in_stock > 0);
+    });
+    return disponibles;
+  }, [products, equivalences]);
 
   function demarrerAjout(produit) {
     if (produit.is_weighted) {
@@ -745,7 +776,14 @@ export function OrdersPage() {
                       opacity: p.quantity_in_stock <= 0 ? 0.5 : 1, textAlign: 'left',
                     }}
                   >
-                    <span style={{ flex: 1, fontSize: 14 }}>{p.name}</span>
+                    <span style={{ flex: 1, fontSize: 14 }}>
+                      {p.name}
+                      {p.quantity_in_stock <= 0 && alternativesParProduit[p.id]?.length > 0 && (
+                        <span style={{ display: 'block', fontSize: 11, color: 'var(--accent)', opacity: 1 }}>
+                          Équivalent dispo : {alternativesParProduit[p.id].map((a) => a.name).join(', ')}
+                        </span>
+                      )}
+                    </span>
                     <span className="chiffre" style={{ fontSize: 13, color: 'var(--encre-douce)' }}>
                       {p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''}
                     </span>
@@ -773,7 +811,14 @@ export function OrdersPage() {
                   <span className="carte-caisse-nom">{p.name}</span>
                   <span className="carte-caisse-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')}</span>
                   {p.quantity_in_stock <= 0 ? (
-                    <span className="tampon tampon-brique" style={{ marginTop: 4 }}>Rupture</span>
+                    <>
+                      <span className="tampon tampon-brique" style={{ marginTop: 4 }}>Rupture</span>
+                      {alternativesParProduit[p.id]?.length > 0 && (
+                        <span style={{ fontSize: 11, color: 'var(--accent)', marginTop: 4, textAlign: 'center' }}>
+                          Équivalent dispo : {alternativesParProduit[p.id].map((a) => a.name).join(', ')}
+                        </span>
+                      )}
+                    </>
                   ) : (
                     <span className="carte-caisse-stock">
                       {p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''} en stock{p.units?.length > 0 ? ' · gros dispo' : ''}
