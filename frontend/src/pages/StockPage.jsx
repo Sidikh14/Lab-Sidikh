@@ -130,6 +130,8 @@ export function StockPage() {
   const peutGerer = ROLES_GESTION.includes(user.role);
   const estManager = user.role === 'manager';
   const secteurConfig = getSecteurConfig(merchant?.sector);
+  const estPharmacie = merchant?.sector === 'pharmacie';
+  const [categories, setCategories] = useState([]);
   const [searchParams] = useSearchParams();
 
   const [onglet, setOnglet] = useState('catalogue');
@@ -140,7 +142,7 @@ export function StockPage() {
   const [recherche, setRecherche] = useState(searchParams.get('q') || '');
   const [filtreStatut, setFiltreStatut] = useState('tous');
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, attributes: {} });
+  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, attributes: {} });
   const [conditionnements, setConditionnements] = useState([]);
   const [modalePrixOuverte, setModalePrixOuverte] = useState(false);
   const [prixModifies, setPrixModifies] = useState({});
@@ -226,6 +228,11 @@ export function StockPage() {
   }
 
   useEffect(charger, [warehouseId]);
+
+  useEffect(() => {
+    if (!estPharmacie) return;
+    api.getCategories().then(setCategories).catch((err) => setErreur(err.message));
+  }, [estPharmacie]);
 
   function changerVueProduits(vue) {
     setVueProduits(vue);
@@ -317,13 +324,15 @@ export function StockPage() {
         quantityAlertThreshold: Number(nouveauProduit.quantityAlertThreshold) || 5,
         isWeighted: nouveauProduit.isWeighted,
         warehouseId: estManager ? warehouseId : undefined,
+        categoryId: estPharmacie ? (nouveauProduit.categoryId || undefined) : undefined,
+        tvaApplicable: estPharmacie ? nouveauProduit.tvaApplicable : undefined,
         attributes: nouveauProduit.attributes,
         units: conditionnements
           .filter((c) => c.label && Number(c.price) && Number(c.quantityPerUnit))
           .map((c) => ({ label: c.label, price: Number(c.price), quantityPerUnit: Number(c.quantityPerUnit) })),
       });
       setModaleOuverte(false);
-      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, attributes: {} });
+      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, attributes: {} });
       setConditionnements([]);
       charger();
     } catch (err) {
@@ -352,6 +361,8 @@ export function StockPage() {
       unitPrice: product.unit_price,
       quantityAlertThreshold: product.quantity_alert_threshold,
       isWeighted: product.is_weighted,
+      categoryId: product.category_id || '',
+      tvaApplicable: product.tva_applicable !== false,
       units: product.units || [],
       attributes: product.attributes || {},
     });
@@ -397,6 +408,8 @@ export function StockPage() {
         unitPrice: Number(produitEnEdition.unitPrice),
         quantityAlertThreshold: Number(produitEnEdition.quantityAlertThreshold),
         isWeighted: produitEnEdition.isWeighted,
+        categoryId: estPharmacie ? (produitEnEdition.categoryId || null) : undefined,
+        tvaApplicable: estPharmacie ? produitEnEdition.tvaApplicable : undefined,
         attributes: produitEnEdition.attributes,
       });
       setProduitEnEdition(null);
@@ -909,6 +922,35 @@ export function StockPage() {
                 />
               </div>
 
+              {estPharmacie && (
+                <>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="p-categorie">Catégorie</label>
+                    <select
+                      id="p-categorie"
+                      className="champ"
+                      value={nouveauProduit.categoryId || ''}
+                      onChange={(e) => setNouveauProduit({ ...nouveauProduit, categoryId: e.target.value })}
+                    >
+                      <option value="">Aucune catégorie</option>
+                      {categories.map((cat) => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="champ-groupe">
+                    <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={nouveauProduit.tvaApplicable}
+                        onChange={(e) => setNouveauProduit({ ...nouveauProduit, tvaApplicable: e.target.checked })}
+                      />
+                      Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)
+                    </label>
+                  </div>
+                </>
+              )}
+
               {secteurConfig.champsProduitSup.map((champ) => (
                 <div className="champ-groupe" key={champ.key}>
                   <label className="etiquette" htmlFor={`p-${champ.key}`}>{champ.label}</label>
@@ -1336,6 +1378,35 @@ export function StockPage() {
                   onChange={(e) => setProduitEnEdition({ ...produitEnEdition, quantityAlertThreshold: e.target.value })}
                 />
               </div>
+
+              {estPharmacie && (
+                <>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="pe-categorie">Catégorie</label>
+                    <select
+                      id="pe-categorie"
+                      className="champ"
+                      value={produitEnEdition.categoryId || ''}
+                      onChange={(e) => setProduitEnEdition({ ...produitEnEdition, categoryId: e.target.value })}
+                    >
+                      <option value="">Aucune catégorie</option>
+                      {categories.map((cat) => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="champ-groupe">
+                    <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={produitEnEdition.tvaApplicable}
+                        onChange={(e) => setProduitEnEdition({ ...produitEnEdition, tvaApplicable: e.target.checked })}
+                      />
+                      Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)
+                    </label>
+                  </div>
+                </>
+              )}
 
               {secteurConfig.champsProduitSup.map((champ) => (
                 <div className="champ-groupe" key={champ.key}>
