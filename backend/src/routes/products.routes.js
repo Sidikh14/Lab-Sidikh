@@ -868,7 +868,8 @@ router.get('/:id/lots', async (req, res) => {
     const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
     const result = await pool.query(
       `SELECT id, lot_number, expiry_date, quantity,
-              (expiry_date < CURRENT_DATE) AS is_expired
+              (expiry_date < CURRENT_DATE) AS is_expired,
+              (expiry_date >= CURRENT_DATE AND expiry_date < CURRENT_DATE + INTERVAL '90 days') AS is_expiring_soon
        FROM product_lots
        WHERE product_id = $1 AND merchant_id = $2 AND warehouse_id = $3 AND quantity > 0
        ORDER BY expiry_date ASC`,
@@ -879,6 +880,67 @@ router.get('/:id/lots', async (req, res) => {
     if (err.status) return res.status(err.status).json({ error: err.message });
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération des lots.' });
+  }
+});
+
+// DELETE /products/:id/lots/:lotId — détruit (met au rebut) un lot périmé.
+// Contrairement à une simple suppression, ça décrémente aussi le stock
+// affiché (product_stock) de la quantité détruite, sinon le lot périmé
+// continuerait à gonfler le stock affiché indéfiniment — juste bloqué à
+// la vente. Trace conservée via un mouvement de stock ('ajustement').
+// Le lot n'est jamais vraiment vendable une fois périmé : on ne permet
+// la destruction que d'un lot déjà périmé (expiry_date < aujourd'hui),
+// pour éviter qu'un lot valide soit détruit par erreur au lieu d'être
+// simplement corrigé/vendu.
+router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const warehouseId = await resolveWarehouseId(req, client, req.query.warehouseId);
+
+    const lotResult = await client.query(
+      `SELECT * FROM product_lots
+       WHERE id = $1 AND product_id = $2 AND merchant_id = $3 AND warehouse_id = $4
+       FOR UPDATE`,
+      [req.params.lotId, req.params.id, req.user.merchantId, warehouseId]
+    );
+    const lot = lotResult.rows[0];
+    if (!lot) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Lot introuvable.' });
+    }
+    if (new Date(lot.expiry_date) >= new Date(new Date().toISOString().slice(0, 10))) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: "Ce lot n'est pas périmé — seul un lot périmé peut être détruit." });
+    }
+
+    const quantiteDetruite = Number(lot.quantity);
+    await client.query(`UPDATE product_lots SET quantity = 0 WHERE id = $1`, [lot.id]);
+
+    const stockResult = await client.query(
+      `UPDATE product_stock SET quantity_in_stock = GREATEST(0, quantity_in_stock - $1)
+       WHERE product_id = $2 AND warehouse_id = $3
+       RETURNING quantity_in_stock`,
+      [quantiteDetruite, req.params.id, warehouseId]
+    );
+
+    await client.query(
+      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
+       VALUES ($1, $2, $3, 'ajustement', $4, $5, $6)`,
+      [req.user.merchantId, req.params.id, req.user.id, quantiteDetruite,
+        `Lot périmé détruit${lot.lot_number ? ` (n° ${lot.lot_number})` : ''} — péremption ${lot.expiry_date.toISOString().slice(0, 10)}`,
+        warehouseId]
+    );
+
+    await client.query('COMMIT');
+    res.json({ quantityDestroyed: quantiteDetruite, newStock: stockResult.rows[0]?.quantity_in_stock ?? 0 });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la destruction du lot.' });
+  } finally {
+    client.release();
   }
 });
 

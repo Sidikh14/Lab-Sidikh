@@ -99,6 +99,8 @@ export const api = {
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
   getProductLots: (id, warehouseId) =>
     request(`/products/${id}/lots${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
+  destroyProductLot: (id, lotId, warehouseId) =>
+    request(`/products/${id}/lots/${lotId}${warehouseId ? `?warehouseId=${warehouseId}` : ''}`, { method: 'DELETE' }),
   addProductUnit: (productId, data) =>
     request(`/products/${productId}/units`, { method: 'POST', body: JSON.stringify(data) }),
   deleteProductUnit: (productId, unitId) =>

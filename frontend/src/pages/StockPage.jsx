@@ -143,7 +143,7 @@ export function StockPage() {
   const [recherche, setRecherche] = useState(searchParams.get('q') || '');
   const [filtreStatut, setFiltreStatut] = useState('tous');
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, attributes: {} });
+  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, attributes: {}, lotNumber: '', expiryDate: '' });
   const [conditionnements, setConditionnements] = useState([]);
   const [modalePrixOuverte, setModalePrixOuverte] = useState(false);
   const [prixModifies, setPrixModifies] = useState({});
@@ -328,12 +328,14 @@ export function StockPage() {
         categoryId: estPharmacie ? (nouveauProduit.categoryId || undefined) : undefined,
         tvaApplicable: estPharmacie ? nouveauProduit.tvaApplicable : undefined,
         attributes: nouveauProduit.attributes,
+        lotNumber: estPharmacie ? (nouveauProduit.lotNumber || undefined) : undefined,
+        expiryDate: estPharmacie ? (nouveauProduit.expiryDate || undefined) : undefined,
         units: conditionnements
           .filter((c) => c.label && Number(c.price) && Number(c.quantityPerUnit))
           .map((c) => ({ label: c.label, price: Number(c.price), quantityPerUnit: Number(c.quantityPerUnit) })),
       });
       setModaleOuverte(false);
-      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, attributes: {} });
+      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, attributes: {}, lotNumber: '', expiryDate: '' });
       setConditionnements([]);
       charger();
     } catch (err) {
@@ -354,6 +356,28 @@ export function StockPage() {
 
   const [nouveauConditionnementEdition, setNouveauConditionnementEdition] = useState({ label: '', price: '', quantityPerUnit: '' });
   const [lotsProduitEdition, setLotsProduitEdition] = useState(null);
+  const [destructionLotEnCours, setDestructionLotEnCours] = useState(null);
+
+  function chargerLotsProduit(productId) {
+    setLotsProduitEdition(null);
+    api.getProductLots(productId, estManager ? warehouseId : undefined)
+      .then(setLotsProduitEdition)
+      .catch(() => setLotsProduitEdition([]));
+  }
+
+  async function handleDetruireLot(lotId) {
+    if (!window.confirm('Détruire ce lot périmé ? Il sera retiré du stock affiché. Action irréversible.')) return;
+    setDestructionLotEnCours(lotId);
+    try {
+      await api.destroyProductLot(produitEnEdition.id, lotId, estManager ? warehouseId : undefined);
+      chargerLotsProduit(produitEnEdition.id);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setDestructionLotEnCours(null);
+    }
+  }
 
   function ouvrirEdition(product) {
     setProduitEnEdition({
@@ -370,10 +394,7 @@ export function StockPage() {
     });
     setNouveauConditionnementEdition({ label: '', price: '', quantityPerUnit: '' });
     if (estPharmacie) {
-      setLotsProduitEdition(null);
-      api.getProductLots(product.id, estManager ? warehouseId : undefined)
-        .then(setLotsProduitEdition)
-        .catch(() => setLotsProduitEdition([]));
+      chargerLotsProduit(product.id);
     }
   }
 
@@ -924,6 +945,30 @@ export function StockPage() {
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, quantityInStock: estPharmacie ? e.target.value.replace(/[.,].*$/, '') : e.target.value })}
                 />
               </div>
+              {estPharmacie && Number(nouveauProduit.quantityInStock) > 0 && (
+                <div className="champ-groupe">
+                  <label className="etiquette">Lot de ce stock initial</label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      type="date"
+                      className="champ"
+                      style={{ flex: 1 }}
+                      title="Date de péremption de ce lot"
+                      value={nouveauProduit.expiryDate}
+                      min={new Date().toISOString().slice(0, 10)}
+                      onChange={(e) => setNouveauProduit({ ...nouveauProduit, expiryDate: e.target.value })}
+                    />
+                    <input
+                      type="text"
+                      className="champ"
+                      style={{ flex: 1 }}
+                      placeholder="N° de lot (facultatif)"
+                      value={nouveauProduit.lotNumber}
+                      onChange={(e) => setNouveauProduit({ ...nouveauProduit, lotNumber: e.target.value })}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="p-alert">Seuil d'alerte</label>
                 <input
@@ -1480,12 +1525,28 @@ export function StockPage() {
                       {lotsProduitEdition.map((lot) => (
                         <div
                           key={lot.id}
-                          style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '4px 8px', borderRadius: 6, background: lot.is_expired ? '#fee2e2' : 'var(--fond-alterne, #f5f5f5)' }}
+                          style={{
+                            display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, padding: '4px 8px', borderRadius: 6,
+                            background: lot.is_expired ? '#fee2e2' : (lot.is_expiring_soon ? '#ffedd5' : 'var(--fond-alterne, #f5f5f5)'),
+                          }}
                         >
                           <span>{lot.lot_number || 'Sans n° de lot'} — {lot.quantity} unité(s)</span>
-                          <span style={{ fontWeight: 600, color: lot.is_expired ? '#b91c1c' : 'inherit' }}>
-                            {lot.is_expired ? 'Périmé le ' : 'Péremption : '}
-                            {new Date(lot.expiry_date).toLocaleDateString('fr-FR')}
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontWeight: 600, color: lot.is_expired ? '#b91c1c' : (lot.is_expiring_soon ? '#c2410c' : 'inherit') }}>
+                              {lot.is_expired ? 'Périmé le ' : (lot.is_expiring_soon ? 'Bientôt périmé : ' : 'Péremption : ')}
+                              {new Date(lot.expiry_date).toLocaleDateString('fr-FR')}
+                            </span>
+                            {lot.is_expired && (
+                              <button
+                                type="button"
+                                className="btn"
+                                style={{ padding: '2px 8px', fontSize: 12 }}
+                                disabled={destructionLotEnCours === lot.id}
+                                onClick={() => handleDetruireLot(lot.id)}
+                              >
+                                {destructionLotEnCours === lot.id ? '…' : 'Détruire'}
+                              </button>
+                            )}
                           </span>
                         </div>
                       ))}
