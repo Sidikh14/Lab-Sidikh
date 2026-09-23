@@ -15,6 +15,9 @@ const PEUT_ENCAISSER = ['manager', 'caissier', 'gerant', 'vendeur_caissier'];
 const PEUT_GERER_STATUT = ['manager', 'gerant', 'caissier', 'vendeur_caissier'];
 const PEUT_TRAITER_RETOUR = ['manager', 'gerant'];
 const LABEL_MOYEN_PAIEMENT = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
+// Reliquat (commande client en attente sur rupture de stock) : mêmes
+// secteurs que côté backend (orders_routes.js) — à garder synchronisé.
+const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
 
 function IconPanier() {
   return (
@@ -194,6 +197,7 @@ export function OrdersPage() {
   const peutGererStatut = PEUT_GERER_STATUT.includes(user.role);
   const estManager = user.role === 'manager';
   const estPharmacie = merchant?.sector === 'pharmacie';
+  const estSecteurReliquat = SECTEURS_RELIQUAT.includes(merchant?.sector);
   const { isOnline, createOrder: creerVenteHorsLigne } = useOfflineSync(api);
 
   const [onglet, setOnglet] = useState(peutCreer ? 'caisse' : 'historique');
@@ -249,6 +253,7 @@ export function OrdersPage() {
   const [choixConditionnement, setChoixConditionnement] = useState(null);
   const [saisiePoids, setSaisiePoids] = useState(null);
   const [produitRuptureConsulte, setProduitRuptureConsulte] = useState(null);
+  const [quantiteReliquat, setQuantiteReliquat] = useState('1');
   const [valeurPoids, setValeurPoids] = useState('');
   const [scannerCameraOuvert, setScannerCameraOuvert] = useState(false);
   const rechercheCaisseRef = useRef(null);
@@ -540,6 +545,11 @@ export function OrdersPage() {
     return disponibles;
   }, [products, equivalences]);
 
+  function ouvrirRupture(produit) {
+    setQuantiteReliquat('1');
+    setProduitRuptureConsulte(produit);
+  }
+
   function demarrerAjout(produit) {
     if (produit.is_weighted) {
       const options = optionsDeVente(produit);
@@ -611,6 +621,39 @@ export function OrdersPage() {
       return [...prev, { productId: produit.id, unitId: option.unitId, quantity: 1 }];
     });
     setChoixConditionnement(null);
+  }
+
+  // Reliquat : ajoute au panier une quantité qui dépasse volontairement le
+  // stock disponible (0, puisque le produit est en rupture) — le surplus
+  // sera couvert par une réservation créée côté serveur (authorizeOutOfStock).
+  function ajouterReliquatAuPanier(produit, quantite) {
+    if (!(quantite > 0)) return;
+    setPanier((prev) => {
+      const cle = cleLigne(produit.id, null);
+      const existant = prev.find((l) => cleLigne(l.productId, l.unitId) === cle);
+      if (existant) {
+        return prev.map((l) =>
+          cleLigne(l.productId, l.unitId) === cle ? { ...l, quantity: l.quantity + quantite, authorizeOutOfStock: true } : l
+        );
+      }
+      return [...prev, { productId: produit.id, unitId: null, quantity: quantite, authorizeOutOfStock: true }];
+    });
+  }
+
+  function confirmerReliquat() {
+    if (!clientId) {
+      setErreur('Sélectionnez un client enregistré avant de créer une commande en attente.');
+      return;
+    }
+    const quantite = Number(quantiteReliquat);
+    if (!quantite || quantite <= 0) {
+      setErreur('Entrez une quantité valide.');
+      return;
+    }
+    ajouterReliquatAuPanier(produitRuptureConsulte, quantite);
+    setProduitRuptureConsulte(null);
+    setQuantiteReliquat('1');
+    setErreur('');
   }
 
   function changerQuantite(productId, unitId, delta) {
@@ -728,7 +771,7 @@ export function OrdersPage() {
     setErreur('');
     const payload = {
       clientId: clientId || null,
-      items: panier.map((l) => ({ productId: l.productId, quantity: l.quantity, unitId: l.unitId || undefined })),
+      items: panier.map((l) => ({ productId: l.productId, quantity: l.quantity, unitId: l.unitId || undefined, authorizeOutOfStock: l.authorizeOutOfStock || undefined })),
       tvaApplicable,
       warehouseId: estManager ? warehouseId : undefined,
       prescriptionId: prescriptionId || undefined,
@@ -929,7 +972,7 @@ export function OrdersPage() {
                     key={p.id}
                     type="button"
                     className="ligne-caisse"
-                    onClick={() => (p.quantity_in_stock <= 0 ? setProduitRuptureConsulte(p) : demarrerAjout(p))}
+                    onClick={() => (p.quantity_in_stock <= 0 ? ouvrirRupture(p) : demarrerAjout(p))}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 10, width: '100%',
                       padding: '8px 12px', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)',
@@ -959,7 +1002,7 @@ export function OrdersPage() {
                   type="button"
                   className="carte-caisse"
                   style={{ opacity: p.quantity_in_stock <= 0 ? 0.6 : 1 }}
-                  onClick={() => (p.quantity_in_stock <= 0 ? setProduitRuptureConsulte(p) : demarrerAjout(p))}
+                  onClick={() => (p.quantity_in_stock <= 0 ? ouvrirRupture(p) : demarrerAjout(p))}
                 >
                   <span className="carte-produit-icone"><IconPanier /></span>
                   <span className="carte-caisse-nom">{p.name}</span>
@@ -1021,6 +1064,7 @@ export function OrdersPage() {
                         {l.produit.name}
                         {l.option.label !== 'Détail' && <span style={{ color: 'var(--accent)' }}> · {l.option.label}</span>}
                         {l.produit.requires_prescription && <span className="tampon tampon-brique" style={{ marginLeft: 6 }}>Ordonnance</span>}
+                        {l.authorizeOutOfStock && <span className="tampon tampon-brique" style={{ marginLeft: 6 }}>Reliquat</span>}
                       </p>
                       <p className="ticket-ligne-prix">
                         {Math.round(l.option.price).toLocaleString('fr-FR')} FCFA{l.produit.is_weighted ? '/kg' : ''}
@@ -1572,6 +1616,34 @@ export function OrdersPage() {
                 Aucun équivalent disponible pour ce produit pour l'instant.
               </p>
             )}
+
+            {estSecteurReliquat && estManager && (
+              <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--trait)' }}>
+                <p style={{ fontSize: 13, marginBottom: 10 }}>
+                  Créer une commande en attente (reliquat) : le client sera servi dès la prochaine réception fournisseur.
+                </p>
+                {!clientId && (
+                  <p style={{ fontSize: 12, color: 'var(--danger, #B84A3E)', marginBottom: 10 }}>
+                    Sélectionnez d'abord un client enregistré dans le ticket.
+                  </p>
+                )}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    className="champ"
+                    style={{ width: 90 }}
+                    value={quantiteReliquat}
+                    onChange={(e) => setQuantiteReliquat(e.target.value)}
+                  />
+                  <button type="button" className="btn btn-principal" disabled={!clientId} onClick={confirmerReliquat}>
+                    Ajouter au ticket en reliquat
+                  </button>
+                </div>
+              </div>
+            )}
+
             <div className="actions-modale">
               <button type="button" className="btn" onClick={() => setProduitRuptureConsulte(null)}>Fermer</button>
             </div>

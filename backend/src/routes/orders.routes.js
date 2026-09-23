@@ -14,6 +14,10 @@ const SEUIL_ALERTE_PEREMPTION_JOURS = 30; // Pharmacie : lot bientôt périmé, 
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement', 'a_credit'];
 const TYPES_REDUCTION = ['remise', 'rabais', 'ristourne', 'escompte'];
 const MODES_REDUCTION = ['pourcentage', 'montant'];
+// Reliquat (commande client en attente sur rupture de stock) : réservé à
+// ces secteurs — la pharmacie a déjà ses propres mécanismes (équivalents,
+// lots) et ne doit jamais faire attendre un client sur un médicament.
+const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
 
 const router = express.Router();
 router.use(authenticate);
@@ -299,11 +303,22 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
 
       const baseQuantity = item.quantity * quantitePerUnite;
       const rupture = product.quantity_in_stock < baseQuantity;
+      // Part de la vente réellement couverte par le stock actuel, et part
+      // manquante qui deviendra une réservation (reliquat) si le secteur
+      // le permet — jamais l'inverse : le stock ne descend jamais sous 0.
+      const quantiteDisponible = Math.min(baseQuantity, Math.max(0, product.quantity_in_stock));
+      const quantiteManquante = baseQuantity - quantiteDisponible;
       if (rupture) {
         if (req.user.role !== 'manager' || !item.authorizeOutOfStock) {
           throw { status: 400, message: `Stock insuffisant pour ${product.name}.` };
         }
         stockOverrideUtilise = true;
+        if (quantiteManquante > 0 && SECTEURS_RELIQUAT.includes(req.user.sector) && !clientId) {
+          throw {
+            status: 400,
+            message: `${product.name} : un client enregistré est requis pour créer une commande en attente (reliquat) sur un article en rupture.`,
+          };
+        }
       }
 
       const lineTotal = prixParConditionnement * item.quantity;
@@ -311,6 +326,8 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
       resolvedItems.push({
         product,
         baseQuantity,
+        quantiteDisponible,
+        quantiteManquante,
         unitPrice: prixParConditionnement / quantitePerUnite,
         originalUnitPrice: originalUnitPrice !== null ? originalUnitPrice / quantitePerUnite : null,
         packagingLabel,
@@ -363,13 +380,31 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
     );
     const order = orderResult.rows[0];
     const alertesStock = [];
+    const reservationsCreees = [];
 
     for (const resolved of resolvedItems) {
-      await client.query(
+      const orderItemResult = await client.query(
         `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
         [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity]
       );
+      const orderItemId = orderItemResult.rows[0].id;
+
+      // Réservation (reliquat) : la part non couverte par le stock actuel,
+      // uniquement pour les secteurs concernés — le client attend la
+      // prochaine livraison fournisseur pour cette quantité-là.
+      if (resolved.quantiteManquante > 0 && SECTEURS_RELIQUAT.includes(req.user.sector)) {
+        const reservationResult = await client.query(
+          `INSERT INTO pending_reservations (merchant_id, warehouse_id, product_id, order_id, order_item_id, client_id, quantity, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+          [req.user.merchantId, warehouseId, resolved.product.id, order.id, orderItemId, clientId, resolved.quantiteManquante, req.user.id]
+        );
+        reservationsCreees.push({
+          id: reservationResult.rows[0].id,
+          productName: resolved.product.name,
+          quantity: resolved.quantiteManquante,
+        });
+      }
 
       // Le stock ne descend jamais sous zéro, même en vente autorisée en rupture.
       const newQuantity = Math.max(0, resolved.product.quantity_in_stock - resolved.baseQuantity);
@@ -414,11 +449,16 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
         }
       }
 
-      await client.query(
-        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
-         VALUES ($1, $2, $3, 'sortie', $4, $5, $6)`,
-        [req.user.merchantId, resolved.product.id, req.user.id, resolved.baseQuantity, `Commande ${order.id}`, warehouseId]
-      );
+      // On ne journalise que ce qui a réellement quitté le rayon — la part
+      // réservée (quantiteManquante) n'est pas encore sortie physiquement,
+      // elle le sera au moment de la réception fournisseur.
+      if (resolved.quantiteDisponible > 0) {
+        await client.query(
+          `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
+           VALUES ($1, $2, $3, 'sortie', $4, $5, $6)`,
+          [req.user.merchantId, resolved.product.id, req.user.id, resolved.quantiteDisponible, `Commande ${order.id}`, warehouseId]
+        );
+      }
 
       // Alerte rupture / seuil bas : seulement au franchissement du seuil
       // (pas à chaque vente si le produit y était déjà, pour éviter de
@@ -449,6 +489,14 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
           description: `a autorisé une vente en rupture de stock pour ${resolved.product.name} sur la commande ${formatOrderNumber(order)}`,
         });
       }
+      if (resolved.quantiteManquante > 0 && SECTEURS_RELIQUAT.includes(req.user.sector)) {
+        await logActivity({
+          merchantId: req.user.merchantId,
+          userId: req.user.id,
+          action: 'order_reservation_created',
+          description: `a créé une réservation (reliquat) de ${resolved.quantiteManquante} ${resolved.product.name} sur la commande ${formatOrderNumber(order)}`,
+        });
+      }
     }
 
     await client.query('COMMIT');
@@ -469,6 +517,19 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
           : `${productName} est passé sous le seuil d'alerte (${newQuantity} restant(s)).`,
         referenceId: productId,
       }).catch((err) => console.error('Erreur alerte stock (vente) :', err));
+    });
+
+    // Reliquat créé : notifie manager/gérant qu'il faudra penser à cet
+    // article à la prochaine commande groupée fournisseur.
+    reservationsCreees.forEach(({ id, productName, quantity }) => {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'reliquat_cree',
+        titre: 'Commande client en attente (reliquat)',
+        message: `${quantity} ${productName} en attente de réapprovisionnement pour honorer la commande ${orderComplet.order_number}.`,
+        referenceId: id,
+        roles: ['manager', 'gerant'],
+      }).catch((err) => console.error('Erreur alerte reliquat_cree :', err));
     });
 
     // Notification au caissier de sa boutique : seulement quand c'est un

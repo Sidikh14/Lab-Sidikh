@@ -12,6 +12,10 @@ const { addLot } = require('../utils/lots');
 const router = express.Router();
 router.use(authenticate);
 
+// Reliquat (commande client en attente sur rupture de stock) : mêmes
+// secteurs que côté orders_routes.js — à garder synchronisé.
+const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
+
 // Détermine la boutique à utiliser pour une opération de stock/vente.
 // - manager (aucune boutique assignée) : doit choisir explicitement via
 //   warehouseId (query ou body) à chaque fois.
@@ -721,6 +725,7 @@ router.post('/purchases', async (req, res) => {
 
     const alertesStock = [];
     const mouvementsCrees = [];
+    const reservationsFulfillies = [];
 
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index];
@@ -787,6 +792,70 @@ router.post('/purchases', async (req, res) => {
       );
       mouvementsCrees.push(mouvement.rows[0].id);
 
+      // Reliquat : cette réception sert-elle une ou plusieurs commandes
+      // clients en attente sur ce produit/boutique ? On consomme les
+      // réservations les plus anciennes en premier (FIFO), et on retire
+      // aussitôt la part servie du stock disponible à la vente — sinon un
+      // autre caissier pourrait la revendre par erreur avant l'encaissement
+      // du client qui l'attendait.
+      if (SECTEURS_RELIQUAT.includes(req.user.sector)) {
+        const reservationsResult = await client.query(
+          `SELECT pr.id, pr.order_id, pr.quantity, pr.quantity_fulfilled, c.full_name AS client_name
+           FROM pending_reservations pr
+           LEFT JOIN clients c ON c.id = pr.client_id
+           WHERE pr.merchant_id = $1 AND pr.product_id = $2 AND pr.warehouse_id = $3
+             AND pr.status IN ('en_attente', 'partielle')
+           ORDER BY pr.created_at ASC
+           FOR UPDATE`,
+          [req.user.merchantId, product.id, warehouseId]
+        );
+
+        let quantiteAServir = item.quantity;
+        let quantiteServieTotale = 0;
+        const reservationsServies = [];
+
+        for (const reservation of reservationsResult.rows) {
+          if (quantiteAServir <= 0) break;
+          const restant = Number(reservation.quantity) - Number(reservation.quantity_fulfilled);
+          const quantiteServie = Math.min(restant, quantiteAServir);
+          if (quantiteServie <= 0) continue;
+
+          const nouveauFulfilled = Number(reservation.quantity_fulfilled) + quantiteServie;
+          const nouveauStatut = nouveauFulfilled >= Number(reservation.quantity) ? 'complete' : 'partielle';
+
+          await client.query(
+            `UPDATE pending_reservations
+             SET quantity_fulfilled = $1, status = $2, fulfilled_at = CASE WHEN $2 = 'complete' THEN now() ELSE fulfilled_at END
+             WHERE id = $3`,
+            [nouveauFulfilled, nouveauStatut, reservation.id]
+          );
+
+          quantiteAServir -= quantiteServie;
+          quantiteServieTotale += quantiteServie;
+          reservationsServies.push({
+            orderId: reservation.order_id,
+            clientName: reservation.client_name,
+            quantiteServie,
+            statut: nouveauStatut,
+          });
+        }
+
+        if (quantiteServieTotale > 0) {
+          // On retire la part réservée du stock qu'on vient d'ajouter ci-dessus.
+          await client.query(
+            `UPDATE product_stock SET quantity_in_stock = GREATEST(0, quantity_in_stock - $1)
+             WHERE product_id = $2 AND warehouse_id = $3`,
+            [quantiteServieTotale, product.id, warehouseId]
+          );
+          await client.query(
+            `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
+             VALUES ($1, $2, $3, 'sortie', $4, $5, $6)`,
+            [req.user.merchantId, product.id, req.user.id, quantiteServieTotale, 'Réservation(s) client servie(s) à la réception', warehouseId]
+          );
+          reservationsFulfillies.push({ productName: product.name, reservationsServies });
+        }
+      }
+
       const seuil = product.quantity_alert_threshold;
       const etaitDejaBas = product.quantity_in_stock <= seuil;
       const franchitSeuil = !etaitDejaBas && newQuantity <= seuil;
@@ -827,7 +896,20 @@ router.post('/purchases', async (req, res) => {
       }).catch((err) => console.error('Erreur alerte stock (achat groupé) :', err));
     });
 
-    res.status(201).json({ warehouseId, movementIds: mouvementsCrees, advancePaid: avanceFinale || 0 });
+    // Reliquat honoré : notifie manager/gérant que l'article réservé est
+    // arrivé, avec le(s) client(s) concerné(s) pour l'encaissement à venir.
+    reservationsFulfillies.forEach(({ productName, reservationsServies }) => {
+      const nomsClients = reservationsServies.map((r) => `${r.clientName || 'Client'} (${r.quantiteServie})`).join(', ');
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'reliquat_disponible',
+        titre: 'Article réservé reçu',
+        message: `${productName} reçu — réservation(s) à honorer : ${nomsClients}.`,
+        roles: ['manager', 'gerant'],
+      }).catch((err) => console.error('Erreur alerte reliquat_disponible :', err));
+    });
+
+    res.status(201).json({ warehouseId, movementIds: mouvementsCrees, advancePaid: avanceFinale || 0, reservationsFulfilled: reservationsFulfillies });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     if (err.status) return res.status(err.status).json({ error: err.message });
@@ -1070,6 +1152,42 @@ router.delete('/equivalences/:linkId', requireRole('manager', 'gerant'), async (
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Erreur lors de la suppression de l'équivalence." });
+  }
+});
+
+// GET /products/reservations — reliquats en attente/partiels, groupés par
+// produit, pour préparer la prochaine commande groupée fournisseur. Placée
+// avant les routes /:id pour éviter tout conflit (comme /pdf et /equivalences).
+router.get('/reservations', async (req, res) => {
+  try {
+    const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
+    const result = await pool.query(
+      `SELECT pr.id, pr.product_id, p.name AS product_name, pr.quantity, pr.quantity_fulfilled,
+              pr.status, pr.created_at, c.id AS client_id, c.full_name AS client_name, c.phone AS client_phone,
+              pr.order_id
+       FROM pending_reservations pr
+       JOIN products p ON p.id = pr.product_id
+       LEFT JOIN clients c ON c.id = pr.client_id
+       WHERE pr.merchant_id = $1 AND pr.warehouse_id = $2 AND pr.status IN ('en_attente', 'partielle')
+       ORDER BY p.name, pr.created_at ASC`,
+      [req.user.merchantId, warehouseId]
+    );
+
+    const parProduit = {};
+    result.rows.forEach((r) => {
+      if (!parProduit[r.product_id]) {
+        parProduit[r.product_id] = { productId: r.product_id, productName: r.product_name, quantiteRestanteTotale: 0, reservations: [] };
+      }
+      const restant = Number(r.quantity) - Number(r.quantity_fulfilled);
+      parProduit[r.product_id].quantiteRestanteTotale += restant;
+      parProduit[r.product_id].reservations.push({ ...r, quantiteRestante: restant });
+    });
+
+    res.json(Object.values(parProduit));
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des réservations en attente.' });
   }
 });
 
