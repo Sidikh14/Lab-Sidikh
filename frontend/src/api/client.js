@@ -152,6 +152,10 @@ export const api = {
   returnOrderToSeller: (id, reason) =>
     request(`/orders/${id}/return-to-seller`, { method: 'PATCH', body: JSON.stringify({ reason }) }),
 
+  getReturns: (warehouseId) => request(`/returns${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
+  createReturn: (data) =>
+    request('/returns', { method: 'POST', body: JSON.stringify(data) }),
+
   getUsers: () => request('/users'),
   createUser: (data) =>
     request('/users', { method: 'POST', body: JSON.stringify(data) }),

@@ -13,6 +13,8 @@ import { useLiveEvent } from '../offline/liveEvents';
 const PEUT_CREER = ['manager', 'gerant', 'vendeur', 'vendeur_caissier'];
 const PEUT_ENCAISSER = ['manager', 'caissier', 'gerant', 'vendeur_caissier'];
 const PEUT_GERER_STATUT = ['manager', 'gerant', 'caissier', 'vendeur_caissier'];
+const PEUT_TRAITER_RETOUR = ['manager', 'gerant'];
+const LABEL_MOYEN_PAIEMENT = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
 
 function IconPanier() {
   return (
@@ -288,6 +290,106 @@ export function OrdersPage() {
   }
 
   const peutTraiterRenvoi = ['manager', 'gerant', 'vendeur', 'vendeur_caissier'].includes(user.role);
+  const peutTraiterRetour = PEUT_TRAITER_RETOUR.includes(user.role);
+
+  // Module retours client — séparé du flux de vente, lié à une commande
+  // existante. Réservé manager/gérant.
+  const [retours, setRetours] = useState([]);
+  const [chargementRetours, setChargementRetours] = useState(false);
+  const [retourCommande, setRetourCommande] = useState(null);
+  const [chargementRetourCommande, setChargementRetourCommande] = useState(false);
+  const [retourLignes, setRetourLignes] = useState([]);
+  const [retourMotif, setRetourMotif] = useState('');
+  const [retourMoyenRemboursement, setRetourMoyenRemboursement] = useState('especes');
+  const [retourMontantRemboursement, setRetourMontantRemboursement] = useState('');
+  const [retourEnCours, setRetourEnCours] = useState(false);
+
+  function chargerRetours() {
+    if (estManager && !warehouseId) return;
+    setChargementRetours(true);
+    api.getReturns(estManager ? warehouseId : undefined)
+      .then(setRetours)
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementRetours(false));
+  }
+
+  useEffect(() => {
+    if (onglet === 'retours' && peutTraiterRetour) chargerRetours();
+  }, [onglet, warehouseId]);
+
+  async function ouvrirRetour(order) {
+    setChargementRetourCommande(true);
+    setErreur('');
+    try {
+      const detail = await api.getOrder(order.id);
+      setRetourCommande(detail);
+      setRetourLignes(
+        (detail.items || []).map((it) => ({
+          productId: it.product_id,
+          productName: it.product_name,
+          maxQuantity: it.quantity,
+          unitPrice: it.line_total / it.quantity,
+          quantity: 0,
+        }))
+      );
+      setRetourMotif('');
+      setRetourMoyenRemboursement('especes');
+      setRetourMontantRemboursement('');
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setChargementRetourCommande(false);
+    }
+  }
+
+  function fermerRetour() {
+    setRetourCommande(null);
+    setRetourLignes([]);
+  }
+
+  function changerQuantiteRetour(productId, quantity) {
+    setRetourLignes((lignes) => {
+      const nouvelles = lignes.map((l) => (l.productId === productId ? { ...l, quantity } : l));
+      const total = nouvelles.reduce((s, l) => s + l.quantity * l.unitPrice, 0);
+      setRetourMontantRemboursement(total > 0 ? String(Math.round(total)) : '');
+      return nouvelles;
+    });
+  }
+
+  async function soumettreRetour(e) {
+    e.preventDefault();
+    const lignesSelectionnees = retourLignes.filter((l) => l.quantity > 0);
+    if (lignesSelectionnees.length === 0) {
+      setErreur('Sélectionnez au moins un article à retourner.');
+      return;
+    }
+    if (!retourMotif.trim()) {
+      setErreur('Le motif du retour est obligatoire.');
+      return;
+    }
+    if (!Number(retourMontantRemboursement) || Number(retourMontantRemboursement) <= 0) {
+      setErreur('Le montant du remboursement est requis.');
+      return;
+    }
+    setRetourEnCours(true);
+    setErreur('');
+    try {
+      await api.createReturn({
+        orderId: retourCommande.id,
+        items: lignesSelectionnees.map((l) => ({ productId: l.productId, quantity: l.quantity })),
+        reason: retourMotif.trim(),
+        refundMethod: retourMoyenRemboursement,
+        refundAmount: Number(retourMontantRemboursement),
+        warehouseId: estManager ? warehouseId : undefined,
+      });
+      fermerRetour();
+      chargerRetours();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setRetourEnCours(false);
+    }
+  }
 
   // La liste des commandes (GET /orders) ne contient pas le détail des
   // articles : on va chercher la commande complète avant d'ouvrir la
@@ -749,6 +851,11 @@ export function OrdersPage() {
         <button className={onglet === 'historique' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('historique')}>
           Historique
         </button>
+        {peutTraiterRetour && (
+          <button className={onglet === 'retours' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('retours')}>
+            Retours
+          </button>
+        )}
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
@@ -1016,7 +1123,7 @@ export function OrdersPage() {
                   <th>Client</th>
                   <th>Montant</th>
                   <th>Statut</th>
-                  {(peutEncaisser || peutGererStatut || peutTraiterRenvoi) && <th>Actions</th>}
+                  {(peutEncaisser || peutGererStatut || peutTraiterRenvoi || peutTraiterRetour) && <th>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -1035,7 +1142,7 @@ export function OrdersPage() {
                     <td>{o.client_name || 'Client de passage'}</td>
                     <td className="chiffre">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
                     <td><StatusBadge status={o.status} /></td>
-                    {(peutEncaisser || peutGererStatut || peutTraiterRenvoi) && (
+                    {(peutEncaisser || peutGererStatut || peutTraiterRenvoi || peutTraiterRetour) && (
                       <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
                         {peutEncaisserCetteCommande(o) && o.status === 'en_attente' && (
                           <button
@@ -1076,6 +1183,16 @@ export function OrdersPage() {
                             Annuler
                           </button>
                         )}
+                        {peutTraiterRetour && ['validee', 'livree'].includes(o.status) && (
+                          <button
+                            className="btn"
+                            style={{ padding: '5px 10px', fontSize: 13 }}
+                            disabled={chargementRetourCommande}
+                            onClick={() => ouvrirRetour(o)}
+                          >
+                            Retour
+                          </button>
+                        )}
                       </td>
                     )}
                   </tr>
@@ -1084,6 +1201,150 @@ export function OrdersPage() {
             </table>
           )}
         </>
+      )}
+
+      {onglet === 'retours' && peutTraiterRetour && (
+        <>
+          <div className="barre-outils">
+            <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{retours.length} retour(s)</span>
+          </div>
+
+          {chargementRetours ? (
+            <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+          ) : retours.length === 0 ? (
+            <p className="etat-vide">Aucun retour enregistré pour le moment.</p>
+          ) : (
+            <table className="registre">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Commande</th>
+                  <th>Produit</th>
+                  <th>Qté</th>
+                  <th>Client</th>
+                  <th>Motif</th>
+                  <th>Remboursement</th>
+                  <th>Enregistré par</th>
+                </tr>
+              </thead>
+              <tbody>
+                {retours.map((r) => (
+                  <tr key={r.id}>
+                    <td>{new Date(r.created_at).toLocaleDateString('fr-FR')}</td>
+                    <td className="chiffre">#{r.order_id}</td>
+                    <td>{r.product_name}</td>
+                    <td className="chiffre">{r.quantity}</td>
+                    <td>{r.client_name || 'Client de passage'}</td>
+                    <td>{r.reason}</td>
+                    <td className="chiffre">
+                      {r.refund_amount
+                        ? `${Math.round(r.refund_amount).toLocaleString('fr-FR')} FCFA (${LABEL_MOYEN_PAIEMENT[r.refund_method] || r.refund_method})`
+                        : '—'}
+                    </td>
+                    <td>{r.recorded_by_name}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+
+      {(retourCommande || chargementRetourCommande) && (
+        <div className="modale-fond" onClick={fermerRetour}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            {chargementRetourCommande && !retourCommande ? (
+              <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+            ) : (
+              <form onSubmit={soumettreRetour}>
+                <h2>Retour — {retourCommande.order_number}</h2>
+                <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+                  {retourCommande.client_name || 'Client de passage'}
+                </p>
+
+                <table className="registre" style={{ marginBottom: 16 }}>
+                  <thead>
+                    <tr>
+                      <th>Produit</th>
+                      <th>Vendu</th>
+                      <th>Qté retournée</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {retourLignes.map((l) => (
+                      <tr key={l.productId}>
+                        <td>{l.productName}</td>
+                        <td className="chiffre">{l.maxQuantity}</td>
+                        <td>
+                          <input
+                            type="number"
+                            className="champ"
+                            min="0"
+                            max={l.maxQuantity}
+                            step="1"
+                            value={l.quantity || ''}
+                            placeholder="0"
+                            onChange={(e) => {
+                              const val = Math.max(0, Math.min(l.maxQuantity, Number(e.target.value) || 0));
+                              changerQuantiteRetour(l.productId, val);
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div className="champ-groupe">
+                  <label className="etiquette" htmlFor="retour-motif">Motif du retour *</label>
+                  <textarea
+                    id="retour-motif"
+                    className="champ"
+                    rows={2}
+                    required
+                    value={retourMotif}
+                    onChange={(e) => setRetourMotif(e.target.value)}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <div className="champ-groupe" style={{ flex: 1 }}>
+                    <label className="etiquette" htmlFor="retour-moyen">Moyen de remboursement *</label>
+                    <select
+                      id="retour-moyen"
+                      className="champ"
+                      value={retourMoyenRemboursement}
+                      onChange={(e) => setRetourMoyenRemboursement(e.target.value)}
+                    >
+                      {Object.entries(LABEL_MOYEN_PAIEMENT).map(([valeur, libelle]) => (
+                        <option key={valeur} value={valeur}>{libelle}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="champ-groupe" style={{ flex: 1 }}>
+                    <label className="etiquette" htmlFor="retour-montant">Montant remboursé (FCFA) *</label>
+                    <input
+                      id="retour-montant"
+                      type="number"
+                      className="champ"
+                      min="1"
+                      required
+                      value={retourMontantRemboursement}
+                      onChange={(e) => setRetourMontantRemboursement(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="actions-modale">
+                  <button type="button" className="btn" onClick={fermerRetour}>Annuler</button>
+                  <button type="submit" className="btn btn-principal" disabled={retourEnCours}>
+                    {retourEnCours ? 'Enregistrement…' : 'Enregistrer le retour'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
       )}
 
       {scannerCameraOuvert && (

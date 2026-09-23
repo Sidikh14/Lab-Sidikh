@@ -24,6 +24,7 @@ const warehousesRoutes = require('./routes/warehouses.routes');
 const stockTransfersRoutes = require('./routes/stock-transfers.routes');
 const categoriesRoutes = require('./routes/categories.routes');
 const prescriptionsRoutes = require('./routes/prescriptions.routes');
+const returnsRoutes = require('./routes/returns.routes');
 
 const app = express();
 
@@ -65,6 +66,7 @@ app.use('/warehouses', warehousesRoutes);
 app.use('/stock-transfers', stockTransfersRoutes);
 app.use('/categories', categoriesRoutes);
 app.use('/prescriptions', prescriptionsRoutes);
+app.use('/returns', returnsRoutes);
 
 // Gestion des routes inconnues
 app.use((req, res) => {
