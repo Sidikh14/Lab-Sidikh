@@ -119,6 +119,7 @@ export function DashboardPage() {
   const [venteParBoutique, setVenteParBoutique] = useState(null);
   const [alerteSalaires, setAlerteSalaires] = useState(null);
   const [lotsBientotPerimes, setLotsBientotPerimes] = useState([]);
+  const [horizonOuvert, setHorizonOuvert] = useState(null);
   const estManager = user.role === 'manager';
 
   // Même boutique active que Stock/Ventes (mémorisée en local), pour que le
@@ -652,7 +653,7 @@ export function DashboardPage() {
               ) : (
                 <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
                   {lotsBientotPerimes.map((h) => (
-                    <div key={h.horizon} className="stat" style={{ cursor: h.count > 0 ? 'pointer' : undefined }} onClick={() => h.count > 0 && navigate('/stock')}>
+                    <div key={h.horizon} className="stat" style={{ cursor: h.count > 0 ? 'pointer' : undefined }} onClick={() => h.count > 0 && setHorizonOuvert(h)}>
                       <span className="stat-icone" style={h.count > 0 ? { background: 'var(--danger-clair)', color: 'var(--danger)' } : undefined}><IconAlerte /></span>
                       <span className="etiquette">
                         {h.horizon === '3_mois' ? '≤ 3 mois' : h.horizon === '6_mois' ? '3 à 6 mois' : '6 à 12 mois'}
@@ -775,6 +776,41 @@ export function DashboardPage() {
             </>
           )}
         </>
+      )}
+
+      {horizonOuvert && (
+        <div className="modale-fond" onClick={() => setHorizonOuvert(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>
+              Périmés {horizonOuvert.horizon === '3_mois' ? 'sous 3 mois' : horizonOuvert.horizon === '6_mois' ? 'entre 3 et 6 mois' : 'entre 6 et 12 mois'}
+            </h2>
+            <table className="registre" style={{ marginBottom: 16 }}>
+              <thead>
+                <tr>
+                  <th>Produit</th>
+                  <th>N° de lot</th>
+                  <th>Péremption</th>
+                  <th>Qté</th>
+                  <th>Valeur</th>
+                </tr>
+              </thead>
+              <tbody>
+                {horizonOuvert.lots.map((l) => (
+                  <tr key={l.lot_id}>
+                    <td>{l.product_name}</td>
+                    <td>{l.lot_number || '—'}</td>
+                    <td>{new Date(l.expiry_date).toLocaleDateString('fr-FR')}</td>
+                    <td className="chiffre">{Math.round(Number(l.quantity))}</td>
+                    <td className="chiffre">{Math.round(Number(l.quantity) * Number(l.unit_price)).toLocaleString('fr-FR')} FCFA</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="actions-modale">
+              <button className="btn" onClick={() => setHorizonOuvert(null)}>Fermer</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {(commandeDetail || chargementDetail) && (
