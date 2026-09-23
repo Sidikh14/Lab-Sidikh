@@ -39,7 +39,7 @@ router.get('/', async (req, res) => {
   try {
     const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
     const result = await pool.query(
-      `SELECT pr.*, p.name AS product_name, c.name AS client_name,
+      `SELECT pr.*, p.name AS product_name, c.full_name AS client_name,
               o.order_seq, o.created_at AS order_created_at, u.full_name AS recorded_by_name
        FROM product_returns pr
        JOIN products p ON p.id = pr.product_id
