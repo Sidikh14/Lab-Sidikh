@@ -236,10 +236,12 @@ export function StockPage() {
 
   const [equivalences, setEquivalences] = useState([]);
   useEffect(() => {
-    if (!estPharmacie) return;
+    if (!estPharmacie && !estElectromenager) return;
     api.getCategories().then(setCategories).catch((err) => setErreur(err.message));
-    api.getProductEquivalences().then(setEquivalences).catch((err) => setErreur(err.message));
-  }, [estPharmacie]);
+    if (estPharmacie) {
+      api.getProductEquivalences().then(setEquivalences).catch((err) => setErreur(err.message));
+    }
+  }, [estPharmacie, estElectromenager]);
 
   function changerVueProduits(vue) {
     setVueProduits(vue);
@@ -358,7 +360,7 @@ export function StockPage() {
         isVital: nouveauProduit.isVital,
         requiresPrescription: estPharmacie ? nouveauProduit.requiresPrescription : undefined,
         warehouseId: estManager ? warehouseId : undefined,
-        categoryId: estPharmacie ? (nouveauProduit.categoryId || undefined) : undefined,
+        categoryId: (estPharmacie || estElectromenager) ? (nouveauProduit.categoryId || undefined) : undefined,
         tvaApplicable: estPharmacie ? nouveauProduit.tvaApplicable : undefined,
         attributes: nouveauProduit.attributes,
         lotNumber: estPharmacie ? (nouveauProduit.lotNumber || undefined) : undefined,
@@ -499,7 +501,7 @@ export function StockPage() {
         isWeighted: estPharmacie ? false : produitEnEdition.isWeighted,
         isVital: produitEnEdition.isVital,
         requiresPrescription: estPharmacie ? produitEnEdition.requiresPrescription : undefined,
-        categoryId: estPharmacie ? (produitEnEdition.categoryId || null) : undefined,
+        categoryId: (estPharmacie || estElectromenager) ? (produitEnEdition.categoryId || null) : undefined,
         tvaApplicable: estPharmacie ? produitEnEdition.tvaApplicable : undefined,
         attributes: produitEnEdition.attributes,
       });
@@ -1078,43 +1080,46 @@ export function StockPage() {
               )}
 
               {estPharmacie && (
-                <>
-                  <div className="champ-groupe">
-                    <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={nouveauProduit.requiresPrescription}
-                        onChange={(e) => setNouveauProduit({ ...nouveauProduit, requiresPrescription: e.target.checked })}
-                      />
-                      Ordonnance obligatoire pour la vente
-                    </label>
-                  </div>
+                <div className="champ-groupe">
+                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={nouveauProduit.requiresPrescription}
+                      onChange={(e) => setNouveauProduit({ ...nouveauProduit, requiresPrescription: e.target.checked })}
+                    />
+                    Ordonnance obligatoire pour la vente
+                  </label>
+                </div>
+              )}
 
-                  <div className="champ-groupe">
-                    <label className="etiquette" htmlFor="p-categorie">Catégorie</label>
-                    <select
-                      id="p-categorie"
-                      className="champ"
-                      value={nouveauProduit.categoryId || ''}
-                      onChange={(e) => setNouveauProduit({ ...nouveauProduit, categoryId: e.target.value })}
-                    >
-                      <option value="">Aucune catégorie</option>
-                      {categories.map((cat) => (
-                        <option key={cat.id} value={cat.id}>{cat.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="champ-groupe">
-                    <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={nouveauProduit.tvaApplicable}
-                        onChange={(e) => setNouveauProduit({ ...nouveauProduit, tvaApplicable: e.target.checked })}
-                      />
-                      Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)
-                    </label>
-                  </div>
-                </>
+              {(estPharmacie || estElectromenager) && (
+                <div className="champ-groupe">
+                  <label className="etiquette" htmlFor="p-categorie">Catégorie</label>
+                  <select
+                    id="p-categorie"
+                    className="champ"
+                    value={nouveauProduit.categoryId || ''}
+                    onChange={(e) => setNouveauProduit({ ...nouveauProduit, categoryId: e.target.value })}
+                  >
+                    <option value="">Aucune catégorie</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {estPharmacie && (
+                <div className="champ-groupe">
+                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={nouveauProduit.tvaApplicable}
+                      onChange={(e) => setNouveauProduit({ ...nouveauProduit, tvaApplicable: e.target.checked })}
+                    />
+                    Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)
+                  </label>
+                </div>
               )}
 
               {secteurConfig.champsProduitSup.map((champ) => (
@@ -1594,43 +1599,46 @@ export function StockPage() {
               )}
 
               {estPharmacie && (
-                <>
-                  <div className="champ-groupe">
-                    <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={produitEnEdition.requiresPrescription}
-                        onChange={(e) => setProduitEnEdition({ ...produitEnEdition, requiresPrescription: e.target.checked })}
-                      />
-                      Ordonnance obligatoire pour la vente
-                    </label>
-                  </div>
+                <div className="champ-groupe">
+                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={produitEnEdition.requiresPrescription}
+                      onChange={(e) => setProduitEnEdition({ ...produitEnEdition, requiresPrescription: e.target.checked })}
+                    />
+                    Ordonnance obligatoire pour la vente
+                  </label>
+                </div>
+              )}
 
-                  <div className="champ-groupe">
-                    <label className="etiquette" htmlFor="pe-categorie">Catégorie</label>
-                    <select
-                      id="pe-categorie"
-                      className="champ"
-                      value={produitEnEdition.categoryId || ''}
-                      onChange={(e) => setProduitEnEdition({ ...produitEnEdition, categoryId: e.target.value })}
-                    >
-                      <option value="">Aucune catégorie</option>
-                      {categories.map((cat) => (
-                        <option key={cat.id} value={cat.id}>{cat.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="champ-groupe">
-                    <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={produitEnEdition.tvaApplicable}
-                        onChange={(e) => setProduitEnEdition({ ...produitEnEdition, tvaApplicable: e.target.checked })}
-                      />
-                      Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)
-                    </label>
-                  </div>
-                </>
+              {(estPharmacie || estElectromenager) && (
+                <div className="champ-groupe">
+                  <label className="etiquette" htmlFor="pe-categorie">Catégorie</label>
+                  <select
+                    id="pe-categorie"
+                    className="champ"
+                    value={produitEnEdition.categoryId || ''}
+                    onChange={(e) => setProduitEnEdition({ ...produitEnEdition, categoryId: e.target.value })}
+                  >
+                    <option value="">Aucune catégorie</option>
+                    {categories.map((cat) => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {estPharmacie && (
+                <div className="champ-groupe">
+                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={produitEnEdition.tvaApplicable}
+                      onChange={(e) => setProduitEnEdition({ ...produitEnEdition, tvaApplicable: e.target.checked })}
+                    />
+                    Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)
+                  </label>
+                </div>
               )}
 
               {secteurConfig.champsProduitSup.map((champ) => (
