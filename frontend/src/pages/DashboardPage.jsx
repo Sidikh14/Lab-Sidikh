@@ -659,7 +659,7 @@ export function DashboardPage() {
                       </span>
                       <span className="valeur">{h.count}</span>
                       {h.count > 0 && (
-                        <span style={{ fontSize: 12, color: 'var(--encre-douce)' }}>
+                        <span style={{ fontSize: 12, color: 'var(--encre-douce)', display: 'block', marginTop: 4 }}>
                           {Math.round(h.totalValue).toLocaleString('fr-FR')} FCFA en jeu
                         </span>
                       )}
