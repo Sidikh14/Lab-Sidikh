@@ -15,14 +15,6 @@ const PEUT_ENCAISSER = ['manager', 'caissier', 'gerant', 'vendeur_caissier'];
 const PEUT_GERER_STATUT = ['manager', 'gerant', 'caissier', 'vendeur_caissier'];
 const PEUT_TRAITER_RETOUR = ['manager', 'gerant'];
 const LABEL_MOYEN_PAIEMENT = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
-const FILTRES_STATUT_HISTORIQUE = [
-  { value: 'tous', label: 'Toutes' },
-  { value: 'en_attente', label: 'En attente' },
-  { value: 'validee', label: 'À livrer' },
-  { value: 'livree', label: 'Livrée' },
-  { value: 'renvoyee_vendeur', label: 'Renvoyée' },
-  { value: 'annulee', label: 'Annulée' },
-];
 
 function IconPanier() {
   return (
@@ -272,7 +264,6 @@ export function OrdersPage() {
   const [exportFin, setExportFin] = useState(() => new Date().toISOString().slice(0, 10));
   const [exportEnCours, setExportEnCours] = useState(false);
   const [rechercheHistorique, setRechercheHistorique] = useState('');
-  const [filtreStatutHistorique, setFiltreStatutHistorique] = useState('tous');
 
   async function ouvrirDetailHistorique(order) {
     setChargementDetailCommande(true);
@@ -804,12 +795,11 @@ export function OrdersPage() {
 
   const rechercheHistoriqueNormalisee = rechercheHistorique.trim().toLowerCase();
   const ordersFiltres = ordersTries.filter((o) => {
-    const correspondStatut = filtreStatutHistorique === 'tous' || o.status === filtreStatutHistorique;
     const correspondRecherche =
       !rechercheHistoriqueNormalisee ||
       (o.order_number || '').toLowerCase().includes(rechercheHistoriqueNormalisee) ||
       (o.client_name || '').toLowerCase().includes(rechercheHistoriqueNormalisee);
-    return correspondStatut && correspondRecherche;
+    return correspondRecherche;
   });
 
   return (
@@ -1123,44 +1113,6 @@ export function OrdersPage() {
                 value={rechercheHistorique}
                 onChange={(e) => setRechercheHistorique(e.target.value)}
               />
-            </div>
-            <div
-              className="filtre-pilules"
-              style={{
-                display: 'flex',
-                gap: 4,
-                padding: 4,
-                background: 'var(--fond-alterne, rgba(0,0,0,0.03))',
-                borderRadius: 999,
-                border: '1px solid var(--trait)',
-                flexWrap: 'wrap',
-              }}
-            >
-              {FILTRES_STATUT_HISTORIQUE.map((f) => {
-                const actif = filtreStatutHistorique === f.value;
-                return (
-                  <button
-                    key={f.value}
-                    type="button"
-                    onClick={() => setFiltreStatutHistorique(f.value)}
-                    style={{
-                      border: 'none',
-                      cursor: 'pointer',
-                      padding: '7px 16px',
-                      borderRadius: 999,
-                      fontSize: 13,
-                      fontWeight: actif ? 600 : 500,
-                      color: actif ? '#fff' : 'var(--encre-douce)',
-                      background: actif ? 'var(--accent)' : 'transparent',
-                      boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
-                      transition: 'background 0.15s ease, color 0.15s ease',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {f.label}
-                  </button>
-                );
-              })}
             </div>
           </div>
 

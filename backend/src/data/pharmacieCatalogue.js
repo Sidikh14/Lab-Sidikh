@@ -26,7 +26,22 @@ const CATEGORIES_PHARMACIE = [
   "Contraception / Gynecologie",
   "Antiseptiques / Premiers secours",
   "Materiel medical",
-  "Parapharmacie / Hygiene"
+  "Parapharmacie / Hygiene",
+  "Blog Beauté",
+  "Atelier De Préparation Produit Cosmétique",
+  "Paramédical",
+  "Soins intimes & sexualité",
+  "Catégorie par défaut",
+  "Santé",
+  "Visage",
+  "Maquillage",
+  "Corps",
+  "Diagnostic de peau",
+  "Parfumerie",
+  "Cheveux",
+  "Bouche et dents",
+  "Maman & Bébé",
+  "Parapharmacie"
 ];
 
 const PRODUITS_PHARMACIE = [
