@@ -10,6 +10,7 @@ const { creerAlerte, getSeuilVenteElevee, getNomUtilisateur } = require('../serv
 const { consumeFEFO } = require('../utils/lots');
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
+const SEUIL_ALERTE_PEREMPTION_JOURS = 30; // Pharmacie : lot bientôt périmé, vente réservée au pharmacien responsable
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement', 'a_credit'];
 const TYPES_REDUCTION = ['remise', 'rabais', 'ristourne', 'escompte'];
 const MODES_REDUCTION = ['pourcentage', 'montant'];
@@ -391,6 +392,23 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
         });
         if (fefo.tracked && !fefo.ok) {
           throw { status: 400, message: `${resolved.product.name} : stock non périmé insuffisant (lots restants périmés ou épuisés).` };
+        }
+        // Alerte bloquante péremption proche (< 30 jours) : seul le
+        // pharmacien responsable (manager ou gérant) peut valider une
+        // vente qui puise dans un lot bientôt périmé — un vendeur/caissier
+        // doit lui faire valider la vente en personne, pas de mot de passe
+        // de déblocage (décision utilisateur).
+        if (fefo.tracked && fefo.consommes && !['manager', 'gerant'].includes(req.user.role)) {
+          const dansMoins30Jours = fefo.consommes.some((c) => {
+            const jours = (new Date(c.expiryDate) - new Date()) / (1000 * 60 * 60 * 24);
+            return jours < SEUIL_ALERTE_PEREMPTION_JOURS;
+          });
+          if (dansMoins30Jours) {
+            throw {
+              status: 403,
+              message: `${resolved.product.name} : ce lot périme dans moins de ${SEUIL_ALERTE_PEREMPTION_JOURS} jours — seul le pharmacien responsable (manager/gérant) peut valider cette vente.`,
+            };
+          }
         }
       }
 
@@ -1090,6 +1108,18 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
         });
         if (fefo.tracked && !fefo.ok) {
           throw { status: 400, message: `${resolved.product.name} : stock non périmé insuffisant (lots restants périmés ou épuisés).` };
+        }
+        if (fefo.tracked && fefo.consommes && !['manager', 'gerant'].includes(req.user.role)) {
+          const dansMoins30Jours = fefo.consommes.some((c) => {
+            const jours = (new Date(c.expiryDate) - new Date()) / (1000 * 60 * 60 * 24);
+            return jours < SEUIL_ALERTE_PEREMPTION_JOURS;
+          });
+          if (dansMoins30Jours) {
+            throw {
+              status: 403,
+              message: `${resolved.product.name} : ce lot périme dans moins de ${SEUIL_ALERTE_PEREMPTION_JOURS} jours — seul le pharmacien responsable (manager/gérant) peut valider cette vente.`,
+            };
+          }
         }
       }
 

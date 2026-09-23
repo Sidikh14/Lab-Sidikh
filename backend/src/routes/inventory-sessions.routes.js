@@ -229,6 +229,17 @@ router.patch('/:id/adjust', async (req, res) => {
          VALUES ($1, $2, $3, 'ajustement', $4, $5, $6)`,
         [req.user.merchantId, item.product_id, req.user.id, Math.abs(delta), `Comptage ${formatSessionNumber(session)}`, session.warehouse_id]
       );
+
+      // Pharmacie : un produit créé sans stock initial reste "À activer"
+      // (is_activated = FALSE) tant qu'aucune entrée de stock classique ne
+      // lui a été faite (voir products.routes.js). Le comptage initial
+      // (Sessions d'inventaire) est une autre façon légitime de mettre un
+      // produit en stock pour la première fois — sans ça, un produit
+      // renseigné uniquement via un comptage resterait éternellement
+      // affiché "À activer" malgré un stock réel positif.
+      if (Number(item.counted_quantity) > 0) {
+        await client.query(`UPDATE products SET is_activated = TRUE WHERE id = $1`, [item.product_id]);
+      }
     }
 
     const updated = await client.query(

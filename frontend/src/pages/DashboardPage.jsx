@@ -92,11 +92,12 @@ function formatMois(moisStr) {
 }
 
 export function DashboardPage() {
-  const { user } = useAuth();
+  const { user, merchant } = useAuth();
   const navigate = useNavigate();
   const vueEquipe = ['manager', 'gerant'].includes(user.role);
   const estCaissier = user.role === 'caissier';
   const estVendeur = user.role === 'vendeur';
+  const estPharmacie = merchant?.sector === 'pharmacie';
 
   const [onglet, setOnglet] = useState('pilotage');
   const [products, setProducts] = useState([]);
@@ -117,6 +118,7 @@ export function DashboardPage() {
   const [chiffreAffaires, setChiffreAffaires] = useState(null);
   const [venteParBoutique, setVenteParBoutique] = useState(null);
   const [alerteSalaires, setAlerteSalaires] = useState(null);
+  const [lotsBientotPerimes, setLotsBientotPerimes] = useState([]);
   const estManager = user.role === 'manager';
 
   // Même boutique active que Stock/Ventes (mémorisée en local), pour que le
@@ -209,6 +211,9 @@ export function DashboardPage() {
     if (estManager) {
       api.getRevenue().then(setChiffreAffaires).catch((err) => setErreur(err.message));
       api.getSalaryAlert().then(setAlerteSalaires).catch((err) => setErreur(err.message));
+    }
+    if (estPharmacie && vueEquipe) {
+      api.getExpiringLots(estManager ? warehouseId : undefined).then(setLotsBientotPerimes).catch((err) => setErreur(err.message));
     }
   }
 
@@ -538,11 +543,13 @@ export function DashboardPage() {
                 <span className="etiquette">Ventes du jour</span>
                 <span className="valeur">{Math.round(ventesDuJour).toLocaleString('fr-FR')} FCFA</span>
               </div>
-              <div className="stat">
-                <span className="stat-icone"><IconHorloge /></span>
-                <span className="etiquette">En attente</span>
-                <span className="valeur">{commandesEnAttente.length}</span>
-              </div>
+              {!estPharmacie && (
+                <div className="stat">
+                  <span className="stat-icone"><IconHorloge /></span>
+                  <span className="etiquette">En attente</span>
+                  <span className="valeur">{commandesEnAttente.length}</span>
+                </div>
+              )}
               <div className="stat" style={{ cursor: 'pointer' }} onClick={() => setOnglet('suivi')}>
                 <span className="stat-icone"><IconCamion /></span>
                 <span className="etiquette">À livrer</span>
@@ -580,61 +587,89 @@ export function DashboardPage() {
       )}
 
       {onglet === 'suivi' && vueEquipe && (
-        <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 280 }}>
-            <h2 style={{ fontSize: 16, marginBottom: 12 }}>Alertes de seuil</h2>
-            {enRupture.length + enFaible.length === 0 ? (
-              <p className="etat-vide">Aucune alerte de seuil pour le moment.</p>
-            ) : (
-              <div className="liste-a-encaisser">
-                {[...enRupture, ...enFaible].map((p) => (
-                  <div key={p.id} className="carte-a-encaisser">
-                    <span
-                      className="stat-icone"
-                      style={{
-                        width: 36,
-                        height: 36,
-                        flexShrink: 0,
-                        background: p.status === 'rupture' ? 'var(--danger-clair)' : 'var(--accent-clair)',
-                        color: p.status === 'rupture' ? 'var(--danger)' : 'var(--accent)',
-                      }}
-                    >
-                      <IconAlerte />
-                    </span>
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <p className="carte-a-encaisser-numero">{p.name}</p>
-                      <p className="carte-a-encaisser-client">{p.quantity_in_stock} en stock</p>
+        <>
+          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 280 }}>
+              <h2 style={{ fontSize: 16, marginBottom: 12 }}>Alertes de seuil</h2>
+              {enRupture.length + enFaible.length === 0 ? (
+                <p className="etat-vide">Aucune alerte de seuil pour le moment.</p>
+              ) : (
+                <div className="liste-a-encaisser">
+                  {[...enRupture, ...enFaible].map((p) => (
+                    <div key={p.id} className="carte-a-encaisser">
+                      <span
+                        className="stat-icone"
+                        style={{
+                          width: 36,
+                          height: 36,
+                          flexShrink: 0,
+                          background: p.status === 'rupture' ? 'var(--danger-clair)' : 'var(--accent-clair)',
+                          color: p.status === 'rupture' ? 'var(--danger)' : 'var(--accent)',
+                        }}
+                      >
+                        <IconAlerte />
+                      </span>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <p className="carte-a-encaisser-numero">{p.name}</p>
+                        <p className="carte-a-encaisser-client">{p.quantity_in_stock} en stock</p>
+                      </div>
+                      <StatusBadge status={p.status} />
                     </div>
-                    <StatusBadge status={p.status} />
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={{ flex: 1, minWidth: 280 }}>
+              <h2 style={{ fontSize: 16, marginBottom: 12 }}>Commandes à livrer</h2>
+              {aLivrer.length === 0 ? (
+                <p className="etat-vide">Aucune commande à livrer pour le moment.</p>
+              ) : (
+                <div className="liste-a-encaisser">
+                  {aLivrer.map((o) => (
+                    <div key={o.id} className="carte-a-encaisser">
+                      <span className="stat-icone" style={{ width: 36, height: 36, flexShrink: 0 }}>
+                        <IconCamion />
+                      </span>
+                      <div className="ligne-cliquable" style={{ minWidth: 0, flex: 1 }} onClick={() => ouvrirDetailCommande(o.id)}>
+                        <p className="carte-a-encaisser-numero">{o.order_number}</p>
+                        <p className="carte-a-encaisser-client">{o.client_name || 'Client de passage'}</p>
+                      </div>
+                      <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                      <button className="btn btn-principal" onClick={() => marquerCommandeLivree(o)}>Marquer comme livrée</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
 
-          <div style={{ flex: 1, minWidth: 280 }}>
-            <h2 style={{ fontSize: 16, marginBottom: 12 }}>Commandes à livrer</h2>
-            {aLivrer.length === 0 ? (
-              <p className="etat-vide">Aucune commande à livrer pour le moment.</p>
-            ) : (
-              <div className="liste-a-encaisser">
-                {aLivrer.map((o) => (
-                  <div key={o.id} className="carte-a-encaisser">
-                    <span className="stat-icone" style={{ width: 36, height: 36, flexShrink: 0 }}>
-                      <IconCamion />
-                    </span>
-                    <div className="ligne-cliquable" style={{ minWidth: 0, flex: 1 }} onClick={() => ouvrirDetailCommande(o.id)}>
-                      <p className="carte-a-encaisser-numero">{o.order_number}</p>
-                      <p className="carte-a-encaisser-client">{o.client_name || 'Client de passage'}</p>
+          {estPharmacie && (
+            <div style={{ marginTop: 24 }}>
+              <h2 style={{ fontSize: 16, marginBottom: 12 }}>Périmés imminents</h2>
+              {lotsBientotPerimes.every((h) => h.count === 0) ? (
+                <p className="etat-vide">Aucun lot bientôt périmé.</p>
+              ) : (
+                <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                  {lotsBientotPerimes.map((h) => (
+                    <div key={h.horizon} className="stat" style={{ cursor: h.count > 0 ? 'pointer' : undefined }} onClick={() => h.count > 0 && navigate('/stock')}>
+                      <span className="stat-icone" style={h.count > 0 ? { background: 'var(--danger-clair)', color: 'var(--danger)' } : undefined}><IconAlerte /></span>
+                      <span className="etiquette">
+                        {h.horizon === '3_mois' ? '≤ 3 mois' : h.horizon === '6_mois' ? '3 à 6 mois' : '6 à 12 mois'}
+                      </span>
+                      <span className="valeur">{h.count}</span>
+                      {h.count > 0 && (
+                        <span style={{ fontSize: 12, color: 'var(--encre-douce)' }}>
+                          {Math.round(h.totalValue).toLocaleString('fr-FR')} FCFA en jeu
+                        </span>
+                      )}
                     </div>
-                    <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
-                    <button className="btn btn-principal" onClick={() => marquerCommandeLivree(o)}>Marquer comme livrée</button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {onglet === 'activite' && (

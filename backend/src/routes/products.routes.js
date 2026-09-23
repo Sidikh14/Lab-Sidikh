@@ -957,6 +957,49 @@ router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), async (req, 
 // (princeps <-> génériques) du commerçant. Chargé une fois côté frontend et
 // croisé avec la liste des produits déjà en mémoire (statut/stock par
 // boutique) : pas de requête supplémentaire par produit.
+// GET /products/expiring-lots — tableau de bord des lots bientôt périmés,
+// répartis en 3 horizons (≤ 3 mois / ≤ 6 mois / ≤ 12 mois, exclusifs : un
+// lot n'apparaît que dans l'horizon le plus proche qui le couvre). Les
+// lots déjà périmés ne sont PAS inclus ici — ils sont gérés séparément
+// (surlignage rouge + destruction, voir GET /:id/lots).
+router.get('/expiring-lots', async (req, res) => {
+  try {
+    const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
+    const result = await pool.query(
+      `SELECT l.id AS lot_id, l.lot_number, l.expiry_date, l.quantity,
+              p.id AS product_id, p.name AS product_name, p.unit_price,
+              CASE
+                WHEN l.expiry_date <= CURRENT_DATE + INTERVAL '3 months' THEN '3_mois'
+                WHEN l.expiry_date <= CURRENT_DATE + INTERVAL '6 months' THEN '6_mois'
+                ELSE '12_mois'
+              END AS horizon
+       FROM product_lots l
+       JOIN products p ON p.id = l.product_id
+       WHERE l.merchant_id = $1 AND l.warehouse_id = $2 AND l.quantity > 0
+         AND l.expiry_date >= CURRENT_DATE AND l.expiry_date <= CURRENT_DATE + INTERVAL '12 months'
+       ORDER BY l.expiry_date ASC`,
+      [req.user.merchantId, warehouseId]
+    );
+
+    const horizons = { '3_mois': [], '6_mois': [], '12_mois': [] };
+    for (const row of result.rows) {
+      horizons[row.horizon].push(row);
+    }
+    const resume = Object.entries(horizons).map(([horizon, lots]) => ({
+      horizon,
+      count: lots.length,
+      totalQuantity: lots.reduce((s, l) => s + Number(l.quantity), 0),
+      totalValue: lots.reduce((s, l) => s + Number(l.quantity) * Number(l.unit_price), 0),
+      lots,
+    }));
+    res.json(resume);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des lots bientôt périmés.' });
+  }
+});
+
 router.get('/equivalences', async (req, res) => {
   try {
     const result = await pool.query(
