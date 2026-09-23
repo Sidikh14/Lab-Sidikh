@@ -95,7 +95,8 @@ router.get('/', async (req, res) => {
               o.created_at, o.created_by, o.assigned_cashier_id, o.returned_at, o.returned_reason,
               o.warehouse_id, w.name AS warehouse_name,
               c.full_name AS client_name,
-              cr.status AS credit_request_status, cr.rejection_reason AS credit_request_reason
+              cr.status AS credit_request_status, cr.rejection_reason AS credit_request_reason,
+              EXISTS (SELECT 1 FROM product_returns pr WHERE pr.order_id = o.id) AS has_return
        FROM orders o
        LEFT JOIN clients c ON c.id = o.client_id
        LEFT JOIN warehouses w ON w.id = o.warehouse_id
@@ -165,7 +166,8 @@ router.get('/pdf', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const orderResult = await pool.query(
-      `SELECT o.*, c.full_name AS client_name
+      `SELECT o.*, c.full_name AS client_name,
+              EXISTS (SELECT 1 FROM product_returns pr WHERE pr.order_id = o.id) AS has_return
        FROM orders o LEFT JOIN clients c ON c.id = o.client_id
        WHERE o.id = $1 AND o.merchant_id = $2`,
       [req.params.id, req.user.merchantId]
@@ -1218,7 +1220,8 @@ async function getOrderReceiptDetail(merchantId, id) {
             m.business_name, m.currency, m.ninea, m.rccm,
             m.address AS merchant_address, m.bank_details, m.mobile_money_details, m.payment_terms,
             uv.full_name AS vendeur_name,
-            uc.full_name AS caissier_name
+            uc.full_name AS caissier_name,
+            EXISTS (SELECT 1 FROM product_returns pr WHERE pr.order_id = o.id) AS has_return
      FROM orders o
      JOIN merchants m ON m.id = o.merchant_id
      LEFT JOIN clients c ON c.id = o.client_id
@@ -1320,6 +1323,7 @@ function mesurerHauteurTicket(order, largeurContenu) {
   let hauteur = 176; // en-tête + bloc totaux fixe + marge basse (sans pied de page)
   if (order.tva_applicable) hauteur += 13;
   if (Number(order.change_given) > 0) hauteur += 12;
+  if (order.has_return) hauteur += 18;
 
   order.items.forEach((item) => {
     mesure.font('Helvetica').fontSize(8.5);
@@ -1371,6 +1375,12 @@ function genererTicketEtroit(res, order) {
   doc.fillColor(COULEURS.muted).font('Helvetica').fontSize(7.5)
     .text(new Date(order.validated_at || order.created_at).toLocaleString('fr-FR'), MARGE, y, { width: largeurContenu, align: 'center' });
   y += 18;
+
+  if (order.has_return) {
+    doc.fillColor(COULEURS.brique || '#B84A3E').font('Helvetica-Bold').fontSize(9)
+      .text('FACTURE RETOURNÉE', MARGE, y, { width: largeurContenu, align: 'center', characterSpacing: 1 });
+    y += 16;
+  }
 
   traitSeparateur(doc, y);
   y += 10;
@@ -1495,6 +1505,11 @@ function genererFactureA4(res, order, creditInfo) {
     .text('FACTURE', 50, 45, { width: largeurContenu, align: 'right' });
   doc.font('Helvetica').fontSize(13).fillColor(COULEURS.muted)
     .text(order.order_number, 50, 92, { width: largeurContenu, align: 'right' });
+
+  if (order.has_return) {
+    doc.font('Helvetica-Bold').fontSize(13).fillColor(COULEURS.brique || '#B84A3E')
+      .text('FACTURE RETOURNÉE', 50, 112, { width: largeurContenu, align: 'right', characterSpacing: 0.5 });
+  }
 
   // Les deux blocs (émetteur à gauche, client à droite) démarrent tous les
   // deux SOUS le titre, avec un espace net entre les deux zones.

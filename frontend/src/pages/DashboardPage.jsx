@@ -110,6 +110,7 @@ export function DashboardPage() {
   const [activite, setActivite] = useState([]);
   const [chargementActivite, setChargementActivite] = useState(true);
   const [activiteAujourdhui, setActiviteAujourdhui] = useState([]);
+  const [retours, setRetours] = useState([]);
 
   const [commandeDetail, setCommandeDetail] = useState(null);
   const [chargementDetail, setChargementDetail] = useState(false);
@@ -196,11 +197,17 @@ export function DashboardPage() {
     // ni /orders (le backend renverrait 400 "La boutique est requise").
     if (estManager && !warehouseId) return;
     setChargement(true);
-    Promise.all([api.getProducts(estManager ? warehouseId : undefined), api.getOrders(estManager ? warehouseId : undefined), api.getActivityToday()])
-      .then(([p, o, a]) => {
+    Promise.all([
+      api.getProducts(estManager ? warehouseId : undefined),
+      api.getOrders(estManager ? warehouseId : undefined),
+      api.getActivityToday(),
+      api.getReturns(estManager ? warehouseId : undefined),
+    ])
+      .then(([p, o, a, r]) => {
         setProducts(p);
         setOrders(o);
         setActiviteAujourdhui(a);
+        setRetours(r);
       })
       .catch((err) => setErreur(err.message))
       .finally(() => setChargement(false));
@@ -319,12 +326,22 @@ export function DashboardPage() {
   const aLivrer = orders.filter((o) => o.status === 'validee');
   const valeurStock = products.reduce((sum, p) => sum + Number(p.unit_price) * Number(p.quantity_in_stock), 0);
   const aujourdHui = new Date().toDateString();
-  const ventesDuJour = orders
+  const ventesDuJourBrut = orders
     .filter((o) => new Date(o.created_at).toDateString() === aujourdHui)
     .reduce((sum, o) => sum + Number(o.total_amount), 0);
 
+  // Un retour rembourse un client sur une vente (éventuellement d'un jour
+  // précédent) : on ne déduit du jour que les remboursements enregistrés
+  // aujourd'hui, pas le montant total de la commande d'origine.
+  const retoursAujourdhui = retours.filter((r) => new Date(r.created_at).toDateString() === aujourdHui);
+  const totalRembourseAujourdhui = retoursAujourdhui.reduce((sum, r) => sum + Number(r.refund_amount || 0), 0);
+  const ventesDuJour = Math.max(0, ventesDuJourBrut - totalRembourseAujourdhui);
+
   const encaissementsAujourdhui = activiteAujourdhui.filter((a) => a.type === 'encaissement');
-  const totalEncaisseAujourdhui = encaissementsAujourdhui.reduce((sum, a) => sum + Number(a.montant), 0);
+  const totalEncaisseAujourdhui = Math.max(
+    0,
+    encaissementsAujourdhui.reduce((sum, a) => sum + Number(a.montant), 0) - totalRembourseAujourdhui
+  );
 
   const mesVentesAujourdhui = activiteAujourdhui.filter((a) => a.type === 'vente');
   const totalMesVentesAujourdhui = mesVentesAujourdhui.reduce((sum, a) => sum + Number(a.montant), 0);

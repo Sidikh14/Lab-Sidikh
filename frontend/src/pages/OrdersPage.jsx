@@ -15,6 +15,14 @@ const PEUT_ENCAISSER = ['manager', 'caissier', 'gerant', 'vendeur_caissier'];
 const PEUT_GERER_STATUT = ['manager', 'gerant', 'caissier', 'vendeur_caissier'];
 const PEUT_TRAITER_RETOUR = ['manager', 'gerant'];
 const LABEL_MOYEN_PAIEMENT = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
+const FILTRES_STATUT_HISTORIQUE = [
+  { value: 'tous', label: 'Toutes' },
+  { value: 'en_attente', label: 'En attente' },
+  { value: 'validee', label: 'À livrer' },
+  { value: 'livree', label: 'Livrée' },
+  { value: 'renvoyee_vendeur', label: 'Renvoyée' },
+  { value: 'annulee', label: 'Annulée' },
+];
 
 function IconPanier() {
   return (
@@ -263,6 +271,8 @@ export function OrdersPage() {
   const [exportDebut, setExportDebut] = useState(() => new Date().toISOString().slice(0, 10));
   const [exportFin, setExportFin] = useState(() => new Date().toISOString().slice(0, 10));
   const [exportEnCours, setExportEnCours] = useState(false);
+  const [rechercheHistorique, setRechercheHistorique] = useState('');
+  const [filtreStatutHistorique, setFiltreStatutHistorique] = useState('tous');
 
   async function ouvrirDetailHistorique(order) {
     setChargementDetailCommande(true);
@@ -792,6 +802,16 @@ export function OrdersPage() {
       })
     : orders;
 
+  const rechercheHistoriqueNormalisee = rechercheHistorique.trim().toLowerCase();
+  const ordersFiltres = ordersTries.filter((o) => {
+    const correspondStatut = filtreStatutHistorique === 'tous' || o.status === filtreStatutHistorique;
+    const correspondRecherche =
+      !rechercheHistoriqueNormalisee ||
+      (o.order_number || '').toLowerCase().includes(rechercheHistoriqueNormalisee) ||
+      (o.client_name || '').toLowerCase().includes(rechercheHistoriqueNormalisee);
+    return correspondStatut && correspondRecherche;
+  });
+
   return (
     <>
       <div className="entete-page">
@@ -1093,11 +1113,59 @@ export function OrdersPage() {
 
       {onglet === 'historique' && (
         <>
-          <div className="barre-outils">
-            <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{orders.length} vente(s)</span>
+          <div className="barre-filtres">
+            <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
+              <span className="champ-icone"><IconRecherche /></span>
+              <input
+                type="text"
+                className="champ champ--avec-icone"
+                placeholder="Rechercher par n° de commande ou client…"
+                value={rechercheHistorique}
+                onChange={(e) => setRechercheHistorique(e.target.value)}
+              />
+            </div>
+            <div
+              className="filtre-pilules"
+              style={{
+                display: 'flex',
+                gap: 4,
+                padding: 4,
+                background: 'var(--fond-alterne, rgba(0,0,0,0.03))',
+                borderRadius: 999,
+                border: '1px solid var(--trait)',
+                flexWrap: 'wrap',
+              }}
+            >
+              {FILTRES_STATUT_HISTORIQUE.map((f) => {
+                const actif = filtreStatutHistorique === f.value;
+                return (
+                  <button
+                    key={f.value}
+                    type="button"
+                    onClick={() => setFiltreStatutHistorique(f.value)}
+                    style={{
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: '7px 16px',
+                      borderRadius: 999,
+                      fontSize: 13,
+                      fontWeight: actif ? 600 : 500,
+                      color: actif ? '#fff' : 'var(--encre-douce)',
+                      background: actif ? 'var(--accent)' : 'transparent',
+                      boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
+                      transition: 'background 0.15s ease, color 0.15s ease',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="barre-filtres" style={{ marginBottom: 16 }}>
+            <span style={{ color: 'var(--encre-douce)', fontSize: 14, alignSelf: 'center' }}>{ordersFiltres.length} vente(s)</span>
             <div className="champ-groupe" style={{ marginBottom: 0 }}>
               <label className="etiquette" htmlFor="ov-debut">Du</label>
               <input id="ov-debut" type="date" className="champ" value={exportDebut} onChange={(e) => setExportDebut(e.target.value)} />
@@ -1113,8 +1181,10 @@ export function OrdersPage() {
 
           {chargement ? (
             <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
-          ) : orders.length === 0 ? (
-            <p className="etat-vide">Aucune vente enregistrée pour le moment.</p>
+          ) : ordersFiltres.length === 0 ? (
+            <p className="etat-vide">
+              {orders.length === 0 ? 'Aucune vente enregistrée pour le moment.' : 'Aucune vente ne correspond à ces filtres.'}
+            </p>
           ) : (
             <table className="registre">
               <thead>
@@ -1127,7 +1197,7 @@ export function OrdersPage() {
                 </tr>
               </thead>
               <tbody>
-                {ordersTries.map((o) => (
+                {ordersFiltres.map((o) => (
                   <tr
                     key={o.id}
                     className={
@@ -1141,7 +1211,14 @@ export function OrdersPage() {
                     <td className="chiffre">{o.order_number}</td>
                     <td>{o.client_name || 'Client de passage'}</td>
                     <td className="chiffre">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
-                    <td><StatusBadge status={o.status} /></td>
+                    <td>
+                      <StatusBadge status={o.status} />
+                      {o.has_return && (
+                        <span style={{ display: 'block', marginTop: 4, fontSize: 11, fontWeight: 700, color: 'var(--brique, #B84A3E)' }}>
+                          FACTURE RETOURNÉE
+                        </span>
+                      )}
+                    </td>
                     {(peutEncaisser || peutGererStatut || peutTraiterRenvoi || peutTraiterRetour) && (
                       <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
                         {peutEncaisserCetteCommande(o) && o.status === 'en_attente' && (
@@ -1183,7 +1260,7 @@ export function OrdersPage() {
                             Annuler
                           </button>
                         )}
-                        {peutTraiterRetour && ['validee', 'livree'].includes(o.status) && (
+                        {peutTraiterRetour && !o.has_return && ['validee', 'livree'].includes(o.status) && (
                           <button
                             className="btn"
                             style={{ padding: '5px 10px', fontSize: 13 }}
@@ -1569,6 +1646,11 @@ export function OrdersPage() {
             ) : (
               <>
                 <h2>{detailCommande.order_number}</h2>
+                {detailCommande.has_return && (
+                  <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--brique, #B84A3E)', marginBottom: 4 }}>
+                    FACTURE RETOURNÉE
+                  </p>
+                )}
                 <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
                   {detailCommande.client_name || 'Client de passage'} · <StatusBadge status={detailCommande.status} />
                 </p>
