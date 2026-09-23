@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const { requireAdminKey } = require('../middleware/adminKey');
 const { CATEGORIES_PHARMACIE, PRODUITS_PHARMACIE } = require('../data/pharmacieCatalogue');
+const { CATEGORIES_ELECTROMENAGER } = require('../data/electromenagerCategories');
 
 const router = express.Router();
 
@@ -63,6 +64,19 @@ router.post('/register', requireAdminKey, async (req, res) => {
           `INSERT INTO products (merchant_id, category_id, name, unit_price, tva_applicable, quantity_alert_threshold, is_weighted, attributes, is_activated)
            VALUES ($1, $2, $3, $4, $5, $6, FALSE, '{}', FALSE)`,
           [merchant.id, categorieIdParNom[produit.categorie] || null, produit.name, produit.unitPrice, produit.tvaApplicable, 5]
+        );
+      }
+    }
+
+    // Pour tout nouveau commerce du secteur électroménager, on pré-remplit
+    // uniquement les catégories (pas de produits — trop variable d'un
+    // commerçant à l'autre) pour que le sélecteur "Catégorie" ne soit pas
+    // vide à la création du tout premier article.
+    if (sector === 'electromenager') {
+      for (const nomCategorie of CATEGORIES_ELECTROMENAGER) {
+        await client.query(
+          `INSERT INTO categories (merchant_id, name) VALUES ($1, $2)`,
+          [merchant.id, nomCategorie]
         );
       }
     }
