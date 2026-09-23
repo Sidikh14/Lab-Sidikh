@@ -147,7 +147,7 @@ export function StockPage() {
   const [recherche, setRecherche] = useState(searchParams.get('q') || '');
   const [filtreStatut, setFiltreStatut] = useState('tous');
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, attributes: {}, lotNumber: '', expiryDate: '' });
+  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, requiresColdChain: false, attributes: {}, lotNumber: '', expiryDate: '' });
   const [conditionnements, setConditionnements] = useState([]);
   const [modalePrixOuverte, setModalePrixOuverte] = useState(false);
   const [prixModifies, setPrixModifies] = useState({});
@@ -359,6 +359,7 @@ export function StockPage() {
         isWeighted: estPharmacie ? false : nouveauProduit.isWeighted,
         isVital: nouveauProduit.isVital,
         requiresPrescription: estPharmacie ? nouveauProduit.requiresPrescription : undefined,
+        requiresColdChain: estPharmacie ? nouveauProduit.requiresColdChain : undefined,
         warehouseId: estManager ? warehouseId : undefined,
         categoryId: (estPharmacie || estElectromenager) ? (nouveauProduit.categoryId || undefined) : undefined,
         tvaApplicable: estPharmacie ? nouveauProduit.tvaApplicable : undefined,
@@ -370,7 +371,7 @@ export function StockPage() {
           .map((c) => ({ label: c.label, price: Number(c.price), quantityPerUnit: Number(c.quantityPerUnit) })),
       });
       setModaleOuverte(false);
-      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, attributes: {}, lotNumber: '', expiryDate: '' });
+      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, requiresColdChain: false, attributes: {}, lotNumber: '', expiryDate: '' });
       setConditionnements([]);
       charger();
     } catch (err) {
@@ -451,6 +452,7 @@ export function StockPage() {
       tvaApplicable: product.tva_applicable !== false,
       isVital: Boolean(product.is_vital),
       requiresPrescription: Boolean(product.requires_prescription),
+      requiresColdChain: Boolean(product.requires_cold_chain),
       units: product.units || [],
       attributes: product.attributes || {},
     });
@@ -501,6 +503,7 @@ export function StockPage() {
         isWeighted: estPharmacie ? false : produitEnEdition.isWeighted,
         isVital: produitEnEdition.isVital,
         requiresPrescription: estPharmacie ? produitEnEdition.requiresPrescription : undefined,
+        requiresColdChain: estPharmacie ? produitEnEdition.requiresColdChain : undefined,
         categoryId: (estPharmacie || estElectromenager) ? (produitEnEdition.categoryId || null) : undefined,
         tvaApplicable: estPharmacie ? produitEnEdition.tvaApplicable : undefined,
         attributes: produitEnEdition.attributes,
@@ -830,6 +833,7 @@ export function StockPage() {
                     <td>
                       {p.name}
                       {estPharmacie && p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
+                      {p.requires_cold_chain && <span className="tampon tampon-info" style={{ marginLeft: 6, fontSize: 11 }}>❄ Froid</span>}
                       {p.requires_prescription && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6, fontSize: 11 }}>Ordonnance</span>}
                     </td>
                     <td className="chiffre">{codeInterne(p)}</td>
@@ -863,6 +867,7 @@ export function StockPage() {
                   <p className="carte-produit-nom">
                     {p.name}
                     {estPharmacie && p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
+                    {p.requires_cold_chain && <span className="tampon tampon-info" style={{ marginLeft: 6, fontSize: 11 }}>❄ Froid</span>}
                     {p.requires_prescription && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6, fontSize: 11 }}>Ordonnance</span>}
                   </p>
                   <p className="carte-produit-sku">{codeInterne(p)}</p>
@@ -1092,6 +1097,19 @@ export function StockPage() {
                 </div>
               )}
 
+              {estPharmacie && (
+                <div className="champ-groupe">
+                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={nouveauProduit.requiresColdChain}
+                      onChange={(e) => setNouveauProduit({ ...nouveauProduit, requiresColdChain: e.target.checked })}
+                    />
+                    Chaîne du froid (à conserver au frais)
+                  </label>
+                </div>
+              )}
+
               {(estPharmacie || estElectromenager) && (
                 <div className="champ-groupe">
                   <label className="etiquette" htmlFor="p-categorie">Catégorie</label>
@@ -1278,6 +1296,11 @@ export function StockPage() {
                           </button>
                         )}
                       </div>
+                      {produitLigne?.requires_cold_chain && (
+                        <p style={{ margin: '2px 0 0 4px', fontSize: 12, color: 'var(--info)' }}>
+                          ❄ Chaîne du froid — à conserver au frais dès la réception.
+                        </p>
+                      )}
                       {estPharmacie && item.productId && (
                         <div style={{ display: 'flex', gap: 8, paddingLeft: 4 }}>
                           <input
@@ -1607,6 +1630,19 @@ export function StockPage() {
                       onChange={(e) => setProduitEnEdition({ ...produitEnEdition, requiresPrescription: e.target.checked })}
                     />
                     Ordonnance obligatoire pour la vente
+                  </label>
+                </div>
+              )}
+
+              {estPharmacie && (
+                <div className="champ-groupe">
+                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={produitEnEdition.requiresColdChain}
+                      onChange={(e) => setProduitEnEdition({ ...produitEnEdition, requiresColdChain: e.target.checked })}
+                    />
+                    Chaîne du froid (à conserver au frais)
                   </label>
                 </div>
               )}
