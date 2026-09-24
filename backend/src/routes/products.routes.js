@@ -834,7 +834,7 @@ router.post('/purchases', async (req, res) => {
 
           await client.query(
             `UPDATE pending_reservations
-             SET quantity_fulfilled = $1, status = $2, fulfilled_at = CASE WHEN $2 = 'complete' THEN now() ELSE fulfilled_at END
+             SET quantity_fulfilled = $1, status = $2::reservation_status, fulfilled_at = CASE WHEN $2::text = 'complete' THEN now() ELSE fulfilled_at END
              WHERE id = $3`,
             [nouveauFulfilled, nouveauStatut, reservation.id]
           );
