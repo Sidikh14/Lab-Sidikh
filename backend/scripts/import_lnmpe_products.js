@@ -15,7 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const pool = require('../config/db');
+const pool = require('../src/config/db');
 
 const DATA_FILE = path.join(__dirname, 'lnmpe_medicaments_import.json');
 
