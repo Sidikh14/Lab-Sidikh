@@ -1020,7 +1020,12 @@ export function StockPage() {
                   style={{ border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', padding: '14px 16px', background: 'var(--surface)' }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                    <span style={{ fontWeight: 700, fontSize: 15 }}>{groupe.productName}</span>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>
+                      {groupe.productName}
+                      <span className="chiffre" style={{ fontWeight: 400, fontSize: 12, color: 'var(--encre-douce)', marginLeft: 8 }}>
+                        Réf. {groupe.productSku}
+                      </span>
+                    </span>
                     <span className="chiffre" style={{ fontWeight: 700 }}>
                       {groupe.quantiteRestanteTotale} unité(s) à commander
                     </span>
@@ -1030,6 +1035,7 @@ export function StockPage() {
                       <tr>
                         <th>Client</th>
                         <th>Quantité restante</th>
+                        <th>Facture</th>
                         <th>Depuis le</th>
                         <th></th>
                       </tr>
@@ -1043,6 +1049,17 @@ export function StockPage() {
                             {r.status === 'partielle' && <span className="tampon tampon-brique" style={{ marginLeft: 6 }}>Partiel</span>}
                           </td>
                           <td className="chiffre">{r.quantiteRestante}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="btn"
+                              style={{ padding: '4px 10px', fontSize: 12 }}
+                              onClick={() => api.previewOrderReceipt(r.order_id).catch((err) => setErreur(err.message))}
+                              title="Ouvrir la facture en PDF"
+                            >
+                              {r.orderNumber}
+                            </button>
+                          </td>
                           <td>{new Date(r.created_at).toLocaleDateString('fr-FR')}</td>
                           <td>
                             <button

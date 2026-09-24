@@ -16,6 +16,15 @@ router.use(authenticate);
 // secteurs que côté orders_routes.js — à garder synchronisé.
 const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
 
+// Même logique que formatOrderNumber() dans orders_routes.js — dupliquée
+// ici car non exportée par ce module (uniquement utilisée pour l'affichage
+// du numéro de commande sur la liste des reliquats).
+function formatOrderNumberSimple(order) {
+  const annee = new Date(order.created_at).getFullYear();
+  const numero = String(order.order_seq).padStart(4, '0');
+  return `CMD-${annee}-${numero}`;
+}
+
 // Détermine la boutique à utiliser pour une opération de stock/vente.
 // - manager (aucune boutique assignée) : doit choisir explicitement via
 //   warehouseId (query ou body) à chaque fois.
@@ -1162,11 +1171,13 @@ router.get('/reservations', async (req, res) => {
   try {
     const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
     const result = await pool.query(
-      `SELECT pr.id, pr.product_id, p.name AS product_name, pr.quantity, pr.quantity_fulfilled,
+      `SELECT pr.id, pr.product_id, p.name AS product_name, p.sku AS product_sku,
+              pr.quantity, pr.quantity_fulfilled,
               pr.status, pr.created_at, c.id AS client_id, c.full_name AS client_name, c.phone AS client_phone,
-              pr.order_id
+              pr.order_id, o.order_seq, o.created_at AS order_created_at, o.status AS order_status
        FROM pending_reservations pr
        JOIN products p ON p.id = pr.product_id
+       JOIN orders o ON o.id = pr.order_id
        LEFT JOIN clients c ON c.id = pr.client_id
        WHERE pr.merchant_id = $1 AND pr.warehouse_id = $2 AND pr.status IN ('en_attente', 'partielle')
        ORDER BY p.name, pr.created_at ASC`,
@@ -1176,11 +1187,21 @@ router.get('/reservations', async (req, res) => {
     const parProduit = {};
     result.rows.forEach((r) => {
       if (!parProduit[r.product_id]) {
-        parProduit[r.product_id] = { productId: r.product_id, productName: r.product_name, quantiteRestanteTotale: 0, reservations: [] };
+        parProduit[r.product_id] = {
+          productId: r.product_id,
+          productName: r.product_name,
+          productSku: r.product_sku || r.product_id.slice(0, 6).toUpperCase(),
+          quantiteRestanteTotale: 0,
+          reservations: [],
+        };
       }
       const restant = Number(r.quantity) - Number(r.quantity_fulfilled);
       parProduit[r.product_id].quantiteRestanteTotale += restant;
-      parProduit[r.product_id].reservations.push({ ...r, quantiteRestante: restant });
+      parProduit[r.product_id].reservations.push({
+        ...r,
+        quantiteRestante: restant,
+        orderNumber: formatOrderNumberSimple({ order_seq: r.order_seq, created_at: r.order_created_at }),
+      });
     });
 
     res.json(Object.values(parProduit));
