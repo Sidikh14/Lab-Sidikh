@@ -112,6 +112,7 @@ export const api = {
   getPendingReservations: (warehouseId) =>
     request(`/products/reservations${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   cancelReservation: (id) => request(`/products/reservations/${id}/cancel`, { method: 'PATCH' }),
+  deliverReservation: (id) => request(`/products/reservations/${id}/deliver`, { method: 'PATCH' }),
 
   getCategories: () => request('/categories'),
   createCategory: (data) =>

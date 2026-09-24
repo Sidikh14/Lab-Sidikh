@@ -241,6 +241,8 @@ export function StockPage() {
   const [reservations, setReservations] = useState([]);
   const [chargementReservations, setChargementReservations] = useState(false);
   const [annulationEnCours, setAnnulationEnCours] = useState(null);
+  const [livraisonEnCours, setLivraisonEnCours] = useState(null);
+  const [livraisonsAAnnoncer, setLivraisonsAAnnoncer] = useState(null);
 
   function chargerReservations() {
     if (estManager && !warehouseId) return;
@@ -266,6 +268,19 @@ export function StockPage() {
       setErreur(err.message);
     } finally {
       setAnnulationEnCours(null);
+    }
+  }
+
+  async function marquerReservationLivree(reservationId) {
+    setLivraisonEnCours(reservationId);
+    setErreur('');
+    try {
+      await api.deliverReservation(reservationId);
+      chargerReservations();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setLivraisonEnCours(null);
     }
   }
 
@@ -597,7 +612,7 @@ export function StockPage() {
     }
     setEnregistrementEntree(true);
     try {
-      await api.recordStockPurchase({
+      const resultat = await api.recordStockPurchase({
         items: items.map((it) => ({
           productId: it.productId,
           quantity: Number(it.quantity),
@@ -617,6 +632,13 @@ export function StockPage() {
       setModaleEntreeOuverte(false);
       setEntreeStock(entreeStockVide);
       charger();
+      // Un ou plusieurs clients en attente sont servis par cette réception :
+      // on l'annonce tout de suite, avant que quelqu'un ne revende l'article
+      // par erreur ou n'oublie de prévenir le client.
+      if (resultat?.reservationsFulfilled?.length > 0) {
+        setLivraisonsAAnnoncer(resultat.reservationsFulfilled);
+        if (onglet === 'reliquats') chargerReservations();
+      }
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -750,7 +772,7 @@ export function StockPage() {
         </button>
         {peutGerer && (
           <button className={onglet === 'comptage' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('comptage')}>
-            Inventaire
+            Comptage
           </button>
         )}
         <button className={onglet === 'etiquettes' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('etiquettes')}>
@@ -1034,7 +1056,7 @@ export function StockPage() {
                     <thead>
                       <tr>
                         <th>Client</th>
-                        <th>Quantité restante</th>
+                        <th>Statut</th>
                         <th>Facture</th>
                         <th>Depuis le</th>
                         <th></th>
@@ -1046,9 +1068,17 @@ export function StockPage() {
                           <td>
                             {r.client_name || 'Client'}
                             {r.client_phone ? ` · ${r.client_phone}` : ''}
-                            {r.status === 'partielle' && <span className="tampon tampon-brique" style={{ marginLeft: 6 }}>Partiel</span>}
                           </td>
-                          <td className="chiffre">{r.quantiteRestante}</td>
+                          <td>
+                            {r.status === 'complete' ? (
+                              <span className="tampon tampon-sarcelle">Reçu — à livrer ({r.quantity} un.)</span>
+                            ) : (
+                              <>
+                                <span className="chiffre">{r.quantiteRestante} unité(s) en attente</span>
+                                {r.status === 'partielle' && <span className="tampon tampon-brique" style={{ marginLeft: 6 }}>Partiel</span>}
+                              </>
+                            )}
+                          </td>
                           <td>
                             <button
                               type="button"
@@ -1062,18 +1092,33 @@ export function StockPage() {
                           </td>
                           <td>{new Date(r.created_at).toLocaleDateString('fr-FR')}</td>
                           <td>
-                            <button
-                              type="button"
-                              className="btn"
-                              disabled={annulationEnCours === r.id}
-                              onClick={() => {
-                                if (window.confirm(`Annuler la réservation de ${r.quantiteRestante} ${groupe.productName} pour ${r.client_name || 'ce client'} ?`)) {
-                                  annulerReservation(r.id);
-                                }
-                              }}
-                            >
-                              {annulationEnCours === r.id ? 'Annulation…' : 'Annuler'}
-                            </button>
+                            {r.status === 'complete' ? (
+                              <button
+                                type="button"
+                                className="btn btn-principal"
+                                disabled={livraisonEnCours === r.id}
+                                onClick={() => {
+                                  if (window.confirm(`Confirmer la remise de ${r.quantity} ${groupe.productName} à ${r.client_name || 'ce client'} ?`)) {
+                                    marquerReservationLivree(r.id);
+                                  }
+                                }}
+                              >
+                                {livraisonEnCours === r.id ? 'Enregistrement…' : 'Marquer livré'}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                className="btn"
+                                disabled={annulationEnCours === r.id}
+                                onClick={() => {
+                                  if (window.confirm(`Annuler la réservation de ${r.quantiteRestante} ${groupe.productName} pour ${r.client_name || 'ce client'} ?`)) {
+                                    annulerReservation(r.id);
+                                  }
+                                }}
+                              >
+                                {annulationEnCours === r.id ? 'Annulation…' : 'Annuler'}
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1658,6 +1703,44 @@ export function StockPage() {
                 <button type="submit" className="btn btn-principal">Créer et sélectionner</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {livraisonsAAnnoncer && (
+        <div className="modale-fond" onClick={() => setLivraisonsAAnnoncer(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Client(s) à contacter pour livraison</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 12 }}>
+              Cette réception couvre une ou plusieurs commandes en attente. Pensez à prévenir le(s) client(s) :
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {livraisonsAAnnoncer.map((groupe, i) => (
+                <div key={i} style={{ border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', padding: '10px 12px' }}>
+                  <strong>{groupe.productName}</strong>
+                  <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                    {groupe.reservationsServies.map((r, j) => (
+                      <li key={j} style={{ fontSize: 13 }}>
+                        {r.clientName || 'Client'} — {r.quantiteServie} unité(s)
+                        {r.statut === 'partielle' ? ' (livraison partielle, il en manque encore)' : ' (commande complète)'}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+            <div className="actions-modale">
+              <button type="button" className="btn" onClick={() => setLivraisonsAAnnoncer(null)}>Fermer</button>
+              <button
+                type="button"
+                className="btn btn-principal"
+                onClick={() => {
+                  setLivraisonsAAnnoncer(null);
+                  setOnglet('reliquats');
+                }}
+              >
+                Voir dans Reliquats
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1164,8 +1164,8 @@ router.delete('/equivalences/:linkId', requireRole('manager', 'gerant'), async (
   }
 });
 
-// GET /products/reservations — reliquats en attente/partiels, groupés par
-// produit, pour préparer la prochaine commande groupée fournisseur. Placée
+// GET /products/reservations — reliquats en attente/partiels + réservations
+// reçues mais pas encore remises au client, groupés par produit. Placée
 // avant les routes /:id pour éviter tout conflit (comme /pdf et /equivalences).
 router.get('/reservations', async (req, res) => {
   try {
@@ -1173,13 +1173,14 @@ router.get('/reservations', async (req, res) => {
     const result = await pool.query(
       `SELECT pr.id, pr.product_id, p.name AS product_name, p.sku AS product_sku,
               pr.quantity, pr.quantity_fulfilled,
-              pr.status, pr.created_at, c.id AS client_id, c.full_name AS client_name, c.phone AS client_phone,
+              pr.status, pr.created_at, pr.delivered_at, c.id AS client_id, c.full_name AS client_name, c.phone AS client_phone,
               pr.order_id, o.order_seq, o.created_at AS order_created_at, o.status AS order_status
        FROM pending_reservations pr
        JOIN products p ON p.id = pr.product_id
        JOIN orders o ON o.id = pr.order_id
        LEFT JOIN clients c ON c.id = pr.client_id
-       WHERE pr.merchant_id = $1 AND pr.warehouse_id = $2 AND pr.status IN ('en_attente', 'partielle')
+       WHERE pr.merchant_id = $1 AND pr.warehouse_id = $2
+         AND (pr.status IN ('en_attente', 'partielle') OR (pr.status = 'complete' AND pr.delivered_at IS NULL))
        ORDER BY p.name, pr.created_at ASC`,
       [req.user.merchantId, warehouseId]
     );
@@ -1196,7 +1197,12 @@ router.get('/reservations', async (req, res) => {
         };
       }
       const restant = Number(r.quantity) - Number(r.quantity_fulfilled);
-      parProduit[r.product_id].quantiteRestanteTotale += restant;
+      // Une réservation "complete" (déjà reçue) n'a plus de quantité
+      // manquante — elle n'entre pas dans le total à commander, mais reste
+      // affichée pour que le manager la marque livrée.
+      if (r.status !== 'complete') {
+        parProduit[r.product_id].quantiteRestanteTotale += restant;
+      }
       parProduit[r.product_id].reservations.push({
         ...r,
         quantiteRestante: restant,
@@ -1215,6 +1221,8 @@ router.get('/reservations', async (req, res) => {
 // PATCH /products/reservations/:id/cancel — le client renonce à sa commande
 // en attente (ou le manager annule pour toute autre raison). Ne touche pas
 // au stock : la part manquante n'a jamais été physiquement prélevée.
+// Uniquement pour une réservation pas encore reçue (en_attente/partielle) —
+// une fois "complete", le stock a déjà été prélevé, il faut la livrer.
 router.patch('/reservations/:id/cancel', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const result = await pool.query(
@@ -1237,6 +1245,33 @@ router.patch('/reservations/:id/cancel', requireRole('manager', 'gerant'), async
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Erreur lors de l'annulation de la réservation." });
+  }
+});
+
+// PATCH /products/reservations/:id/deliver — le client est venu récupérer
+// (ou a été livré) l'article réservé, une fois le stock effectivement reçu.
+router.patch('/reservations/:id/deliver', requireRole('manager', 'gerant'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE pending_reservations
+       SET delivered_at = now()
+       WHERE id = $1 AND merchant_id = $2 AND status = 'complete' AND delivered_at IS NULL
+       RETURNING *`,
+      [req.params.id, req.user.merchantId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Réservation introuvable, pas encore reçue, ou déjà livrée.' });
+    }
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'reservation_delivered',
+      description: `a marqué une réservation (reliquat) comme livrée au client.`,
+    });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors du marquage de la livraison." });
   }
 });
 
