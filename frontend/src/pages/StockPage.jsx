@@ -8,6 +8,9 @@ import { ComptageTab } from './ComptageTab';
 import { getSecteurConfig } from '../config/sectorConfig';
 
 const ROLES_GESTION = ['manager', 'gerant'];
+// Reliquat (commande client en attente sur rupture de stock) : mêmes
+// secteurs que côté backend (orders_routes.js/products_routes.js).
+const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
 // Seuil d'alerte suggéré (pas imposé) quand la case "Produit vital" est
 // cochée — reste librement modifiable ensuite par le pharmacien/gérant.
 const SEUIL_ALERTE_VITAL_SUGGERE = 20;
@@ -136,6 +139,7 @@ export function StockPage() {
   const secteurConfig = getSecteurConfig(merchant?.sector);
   const estPharmacie = merchant?.sector === 'pharmacie';
   const estElectromenager = merchant?.sector === 'electromenager';
+  const estSecteurReliquat = SECTEURS_RELIQUAT.includes(merchant?.sector);
   const [categories, setCategories] = useState([]);
   const [searchParams] = useSearchParams();
 
@@ -233,6 +237,37 @@ export function StockPage() {
   }
 
   useEffect(charger, [warehouseId]);
+
+  const [reservations, setReservations] = useState([]);
+  const [chargementReservations, setChargementReservations] = useState(false);
+  const [annulationEnCours, setAnnulationEnCours] = useState(null);
+
+  function chargerReservations() {
+    if (estManager && !warehouseId) return;
+    setChargementReservations(true);
+    api.getPendingReservations(estManager ? warehouseId : undefined)
+      .then(setReservations)
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementReservations(false));
+  }
+
+  useEffect(() => {
+    if (onglet === 'reliquats') chargerReservations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onglet, warehouseId]);
+
+  async function annulerReservation(reservationId) {
+    setAnnulationEnCours(reservationId);
+    setErreur('');
+    try {
+      await api.cancelReservation(reservationId);
+      chargerReservations();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setAnnulationEnCours(null);
+    }
+  }
 
   const [equivalences, setEquivalences] = useState([]);
   useEffect(() => {
@@ -721,6 +756,11 @@ export function StockPage() {
         <button className={onglet === 'etiquettes' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('etiquettes')}>
           Étiquettes
         </button>
+        {peutGerer && estSecteurReliquat && (
+          <button className={onglet === 'reliquats' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('reliquats')}>
+            Reliquats{reservations.length > 0 ? ` (${reservations.length})` : ''}
+          </button>
+        )}
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
@@ -963,6 +1003,69 @@ export function StockPage() {
               ));
             })}
           </div>
+        </>
+      )}
+
+      {onglet === 'reliquats' && (
+        <>
+          {chargementReservations ? (
+            <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+          ) : reservations.length === 0 ? (
+            <p className="etat-vide">Aucune commande client en attente pour l'instant.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {reservations.map((groupe) => (
+                <div
+                  key={groupe.productId}
+                  style={{ border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', padding: '14px 16px', background: 'var(--surface)' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>{groupe.productName}</span>
+                    <span className="chiffre" style={{ fontWeight: 700 }}>
+                      {groupe.quantiteRestanteTotale} unité(s) à commander
+                    </span>
+                  </div>
+                  <table className="registre">
+                    <thead>
+                      <tr>
+                        <th>Client</th>
+                        <th>Quantité restante</th>
+                        <th>Depuis le</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {groupe.reservations.map((r) => (
+                        <tr key={r.id}>
+                          <td>
+                            {r.client_name || 'Client'}
+                            {r.client_phone ? ` · ${r.client_phone}` : ''}
+                            {r.status === 'partielle' && <span className="tampon tampon-brique" style={{ marginLeft: 6 }}>Partiel</span>}
+                          </td>
+                          <td className="chiffre">{r.quantiteRestante}</td>
+                          <td>{new Date(r.created_at).toLocaleDateString('fr-FR')}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="btn"
+                              disabled={annulationEnCours === r.id}
+                              onClick={() => {
+                                if (window.confirm(`Annuler la réservation de ${r.quantiteRestante} ${groupe.productName} pour ${r.client_name || 'ce client'} ?`)) {
+                                  annulerReservation(r.id);
+                                }
+                              }}
+                            >
+                              {annulationEnCours === r.id ? 'Annulation…' : 'Annuler'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          )}
         </>
       )}
 

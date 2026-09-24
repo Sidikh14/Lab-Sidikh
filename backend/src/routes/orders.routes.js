@@ -1029,22 +1029,49 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
     const warehouseId = order.warehouse_id;
 
     // 1. On remet en stock les anciens articles avant d'appliquer les nouveaux.
+    // Si certains articles avaient un reliquat (réservation non encore
+    // honorée), on ne remet en stock que la part réellement prélevée à
+    // l'époque — la part réservée n'a jamais quitté le rayon. On annule ces
+    // réservations : elles seront recréées avec les nouveaux articles si le
+    // manager reconduit la vente en rupture.
+    const reservationsExistantes = await client.query(
+      `SELECT order_item_id, quantity, quantity_fulfilled FROM pending_reservations
+       WHERE order_id = $1 AND status IN ('en_attente', 'partielle')`,
+      [order.id]
+    );
+    const quantiteReserveeParItem = {};
+    for (const r of reservationsExistantes.rows) {
+      if (r.order_item_id) {
+        quantiteReserveeParItem[r.order_item_id] =
+          (quantiteReserveeParItem[r.order_item_id] || 0) + (Number(r.quantity) - Number(r.quantity_fulfilled));
+      }
+    }
+    if (reservationsExistantes.rows.length > 0) {
+      await client.query(
+        `UPDATE pending_reservations SET status = 'annulee' WHERE order_id = $1 AND status IN ('en_attente', 'partielle')`,
+        [order.id]
+      );
+    }
+
     const anciensItems = await client.query(
-      `SELECT product_id, quantity FROM order_items WHERE order_id = $1`,
+      `SELECT id, product_id, quantity FROM order_items WHERE order_id = $1`,
       [order.id]
     );
     for (const ancien of anciensItems.rows) {
+      const quantiteEncoreReservee = quantiteReserveeParItem[ancien.id] || 0;
+      const quantiteARemettre = Number(ancien.quantity) - quantiteEncoreReservee;
+      if (quantiteARemettre <= 0) continue;
       await client.query(
         `INSERT INTO product_stock (merchant_id, product_id, warehouse_id, quantity_in_stock)
          VALUES ($1, $2, $3, $4)
          ON CONFLICT (product_id, warehouse_id)
          DO UPDATE SET quantity_in_stock = product_stock.quantity_in_stock + $4`,
-        [req.user.merchantId, ancien.product_id, warehouseId, ancien.quantity]
+        [req.user.merchantId, ancien.product_id, warehouseId, quantiteARemettre]
       );
       await client.query(
         `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
          VALUES ($1, $2, $3, 'entree', $4, $5, $6)`,
-        [req.user.merchantId, ancien.product_id, req.user.id, ancien.quantity, `Correction commande ${formatOrderNumber(order)} (retour caissier)`, warehouseId]
+        [req.user.merchantId, ancien.product_id, req.user.id, quantiteARemettre, `Correction commande ${formatOrderNumber(order)} (retour caissier)`, warehouseId]
       );
     }
     await client.query(`DELETE FROM order_items WHERE order_id = $1`, [order.id]);
@@ -1107,11 +1134,19 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
 
       const baseQuantity = item.quantity * quantitePerUnite;
       const rupture = product.quantity_in_stock < baseQuantity;
+      const quantiteDisponible = Math.min(baseQuantity, Math.max(0, product.quantity_in_stock));
+      const quantiteManquante = baseQuantity - quantiteDisponible;
       if (rupture) {
         if (req.user.role !== 'manager' || !item.authorizeOutOfStock) {
           throw { status: 400, message: `Stock insuffisant pour ${product.name}.` };
         }
         stockOverrideUtilise = true;
+        if (quantiteManquante > 0 && SECTEURS_RELIQUAT.includes(req.user.sector) && !clientId) {
+          throw {
+            status: 400,
+            message: `${product.name} : un client enregistré est requis pour créer une commande en attente (reliquat) sur un article en rupture.`,
+          };
+        }
       }
 
       const lineTotal = prixParConditionnement * item.quantity;
@@ -1119,6 +1154,8 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       resolvedItems.push({
         product,
         baseQuantity,
+        quantiteDisponible,
+        quantiteManquante,
         unitPrice: prixParConditionnement / quantitePerUnite,
         originalUnitPrice: originalUnitPrice !== null ? originalUnitPrice / quantitePerUnite : null,
         packagingLabel,
@@ -1144,13 +1181,28 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
     const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
     const alertesStock = [];
+    const reservationsCreees = [];
 
     for (const resolved of resolvedItems) {
-      await client.query(
+      const orderItemResult = await client.query(
         `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
         [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity]
       );
+      const orderItemId = orderItemResult.rows[0].id;
+
+      if (resolved.quantiteManquante > 0 && SECTEURS_RELIQUAT.includes(req.user.sector)) {
+        const reservationResult = await client.query(
+          `INSERT INTO pending_reservations (merchant_id, warehouse_id, product_id, order_id, order_item_id, client_id, quantity, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+          [req.user.merchantId, warehouseId, resolved.product.id, order.id, orderItemId, clientId, resolved.quantiteManquante, req.user.id]
+        );
+        reservationsCreees.push({
+          id: reservationResult.rows[0].id,
+          productName: resolved.product.name,
+          quantity: resolved.quantiteManquante,
+        });
+      }
 
       // Le stock ne descend jamais sous zéro, même en vente autorisée en rupture.
       const newQuantity = Math.max(0, resolved.product.quantity_in_stock - resolved.baseQuantity);
@@ -1186,11 +1238,13 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
         }
       }
 
-      await client.query(
-        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
-         VALUES ($1, $2, $3, 'sortie', $4, $5, $6)`,
-        [req.user.merchantId, resolved.product.id, req.user.id, resolved.baseQuantity, `Commande ${formatOrderNumber(order)} (modifiée)`, warehouseId]
-      );
+      if (resolved.quantiteDisponible > 0) {
+        await client.query(
+          `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
+           VALUES ($1, $2, $3, 'sortie', $4, $5, $6)`,
+          [req.user.merchantId, resolved.product.id, req.user.id, resolved.quantiteDisponible, `Commande ${formatOrderNumber(order)} (modifiée)`, warehouseId]
+        );
+      }
 
       // Alerte rupture / seuil bas : même logique que la création.
       const seuilProduit = resolved.product.quantity_alert_threshold;
@@ -1215,6 +1269,14 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
           userId: req.user.id,
           action: 'order_stock_override',
           description: `a autorisé une vente en rupture de stock pour ${resolved.product.name} sur la commande ${formatOrderNumber(order)}`,
+        });
+      }
+      if (resolved.quantiteManquante > 0 && SECTEURS_RELIQUAT.includes(req.user.sector)) {
+        await logActivity({
+          merchantId: req.user.merchantId,
+          userId: req.user.id,
+          action: 'order_reservation_created',
+          description: `a créé une réservation (reliquat) de ${resolved.quantiteManquante} ${resolved.product.name} sur la commande ${formatOrderNumber(order)} (modifiée)`,
         });
       }
     }
@@ -1250,6 +1312,17 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
           : `${productName} est passé sous le seuil d'alerte (${newQuantity} restant(s)).`,
         referenceId: productId,
       }).catch((err) => console.error('Erreur alerte stock (modification commande) :', err));
+    });
+
+    reservationsCreees.forEach(({ id, productName, quantity }) => {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'reliquat_cree',
+        titre: 'Commande client en attente (reliquat)',
+        message: `${quantity} ${productName} en attente de réapprovisionnement pour honorer la commande ${formatOrderNumber(orderMisAJour)} (modifiée).`,
+        referenceId: id,
+        roles: ['manager', 'gerant'],
+      }).catch((err) => console.error('Erreur alerte reliquat_cree (modification commande) :', err));
     });
 
     await logActivity({
@@ -1296,8 +1369,15 @@ async function getOrderReceiptDetail(merchantId, id) {
 
   const itemsResult = await pool.query(
     `SELECT oi.id, oi.product_id, p.name AS product_name, oi.quantity, oi.unit_price, oi.line_total,
-            oi.packaging_label, oi.packaging_quantity
-     FROM order_items oi JOIN products p ON p.id = oi.product_id
+            oi.packaging_label, oi.packaging_quantity,
+            COALESCE(pr.quantite_reliquat, 0) AS quantite_reliquat
+     FROM order_items oi
+     JOIN products p ON p.id = oi.product_id
+     LEFT JOIN LATERAL (
+       SELECT SUM(quantity - quantity_fulfilled) AS quantite_reliquat
+       FROM pending_reservations
+       WHERE order_item_id = oi.id AND status IN ('en_attente', 'partielle')
+     ) pr ON true
      WHERE oi.order_id = $1`,
     [order.id]
   );
@@ -1623,6 +1703,8 @@ function genererFactureA4(res, order, creditInfo) {
   traitSeparateur(doc, y);
   y += 22;
 
+  let contientReliquat = false;
+
   order.items.forEach((item) => {
     const quantiteAffichee = item.packaging_label ? item.packaging_quantity : item.quantity;
     const prixUnitaire = item.line_total / quantiteAffichee;
@@ -1635,6 +1717,13 @@ function genererFactureA4(res, order, creditInfo) {
     doc.font('Helvetica').fontSize(13).fillColor(COULEURS.encre)
       .text(`${formatMontant(item.line_total)} ${order.currency}`, 350, y, { width: 195, align: 'right' });
     doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted).text(sousLigne, 50, y + 17, { width: 320 });
+
+    if (Number(item.quantite_reliquat) > 0) {
+      contientReliquat = true;
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(COULEURS.brique || '#B84A3E')
+        .text(`En attente de réapprovisionnement : ${item.quantite_reliquat} unité(s)`, 50, y + 29, { width: 320 });
+      y += 12;
+    }
 
     y += 42;
   });
@@ -1681,6 +1770,13 @@ function genererFactureA4(res, order, creditInfo) {
   }
 
   y += 34;
+
+  if (contientReliquat) {
+    doc.roundedRect(50, y, largeurContenu, 34, 4).fillAndStroke('#FBEAE7', COULEURS.brique || '#B84A3E');
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.brique || '#B84A3E')
+      .text('Cette facture comprend un ou plusieurs articles en attente de réapprovisionnement. Vous serez contacté(e) dès réception.', 62, y + 11, { width: largeurContenu - 24 });
+    y += 34 + 16;
+  }
 
   // Pied de page en deux colonnes (informations de paiement / conditions),
   // comme sur la maquette — seulement si le commerçant a renseigné l'un ou

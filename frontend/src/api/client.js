@@ -108,6 +108,11 @@ export const api = {
   deleteProductUnit: (productId, unitId) =>
     request(`/products/${productId}/units/${unitId}`, { method: 'DELETE' }),
 
+  // Reliquat : commandes clients en attente sur rupture de stock.
+  getPendingReservations: (warehouseId) =>
+    request(`/products/reservations${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
+  cancelReservation: (id) => request(`/products/reservations/${id}/cancel`, { method: 'PATCH' }),
+
   getCategories: () => request('/categories'),
   createCategory: (data) =>
     request('/categories', { method: 'POST', body: JSON.stringify(data) }),
