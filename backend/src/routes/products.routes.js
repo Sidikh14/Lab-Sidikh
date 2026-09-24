@@ -815,7 +815,7 @@ router.post('/purchases', async (req, res) => {
            WHERE pr.merchant_id = $1 AND pr.product_id = $2 AND pr.warehouse_id = $3
              AND pr.status IN ('en_attente', 'partielle')
            ORDER BY pr.created_at ASC
-           FOR UPDATE`,
+           FOR UPDATE OF pr`,
           [req.user.merchantId, product.id, warehouseId]
         );
 
