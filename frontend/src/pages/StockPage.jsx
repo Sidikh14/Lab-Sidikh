@@ -772,7 +772,7 @@ export function StockPage() {
         </button>
         {peutGerer && (
           <button className={onglet === 'comptage' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('comptage')}>
-            Comptage
+            Inventaire
           </button>
         )}
         <button className={onglet === 'etiquettes' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('etiquettes')}>
