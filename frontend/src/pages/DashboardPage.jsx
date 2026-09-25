@@ -116,6 +116,7 @@ export function DashboardPage() {
   const [chargementDetail, setChargementDetail] = useState(false);
   const [commandeAEncaisser, setCommandeAEncaisser] = useState(null);
   const [demandesCredit, setDemandesCredit] = useState([]);
+  const [demandesRetour, setDemandesRetour] = useState([]);
   const [chiffreAffaires, setChiffreAffaires] = useState(null);
   const [venteParBoutique, setVenteParBoutique] = useState(null);
   const [alerteSalaires, setAlerteSalaires] = useState(null);
@@ -216,6 +217,11 @@ export function DashboardPage() {
       api.getCreditRequests('en_attente').then(setDemandesCredit).catch((err) => setErreur(err.message));
       api.getRevenueByWarehouse().then(setVenteParBoutique).catch((err) => setErreur(err.message));
     }
+    if (estPharmacie && vueEquipe) {
+      api.getReturnRequests(estManager ? warehouseId : undefined)
+        .then((liste) => setDemandesRetour(liste.filter((d) => d.status === 'en_attente')))
+        .catch((err) => setErreur(err.message));
+    }
     if (estManager) {
       api.getRevenue().then(setChiffreAffaires).catch((err) => setErreur(err.message));
       api.getSalaryAlert().then(setAlerteSalaires).catch((err) => setErreur(err.message));
@@ -309,6 +315,24 @@ export function DashboardPage() {
   async function rejeterDemandeCredit(demande) {
     try {
       await api.rejectCreditRequest(demande.id);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
+  async function approuverDemandeRetour(demande) {
+    try {
+      await api.approveReturnRequest(demande.id);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
+  async function refuserDemandeRetour(demande) {
+    try {
+      await api.rejectReturnRequest(demande.id);
       charger();
     } catch (err) {
       setErreur(err.message);
@@ -591,6 +615,32 @@ export function DashboardPage() {
                       <p className="carte-a-encaisser-montant">{Math.round(d.total_amount).toLocaleString('fr-FR')} FCFA</p>
                       <button className="btn btn-principal" onClick={() => approuverDemandeCredit(d)}>Approuver</button>
                       <button className="btn btn-brique" onClick={() => rejeterDemandeCredit(d)}>Rejeter</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {demandesRetour.length > 0 && (
+              <div style={{ marginBottom: 24 }}>
+                <h2 style={{ fontSize: 16, marginBottom: 12 }}>Demandes de retour</h2>
+                <div className="liste-a-encaisser">
+                  {demandesRetour.map((d) => (
+                    <div key={d.id} className="carte-a-encaisser">
+                      <div style={{ minWidth: 0 }}>
+                        <p className="carte-a-encaisser-numero">
+                          Commande CMD-{new Date(d.order_created_at).getFullYear()}-{String(d.order_seq).padStart(4, '0')}
+                        </p>
+                        <p className="carte-a-encaisser-client">
+                          {d.reason}
+                          {d.client_name && ` · ${d.client_name}`} · demandé par {d.requested_by_name || '—'}
+                        </p>
+                      </div>
+                      <p className="carte-a-encaisser-montant">
+                        {Math.round(d.refund_amount).toLocaleString('fr-FR')} FCFA
+                      </p>
+                      <button className="btn btn-principal" onClick={() => approuverDemandeRetour(d)}>Approuver</button>
+                      <button className="btn btn-brique" onClick={() => refuserDemandeRetour(d)}>Rejeter</button>
                     </div>
                   ))}
                 </div>

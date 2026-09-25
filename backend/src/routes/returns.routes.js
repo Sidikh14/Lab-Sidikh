@@ -217,7 +217,7 @@ router.get('/requests', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
     const result = await pool.query(
-      `SELECT rr.*, o.order_seq, c.full_name AS client_name,
+      `SELECT rr.*, o.order_seq, o.created_at AS order_created_at, c.full_name AS client_name,
               ureq.full_name AS requested_by_name, urev.full_name AS reviewed_by_name
        FROM return_requests rr
        JOIN orders o ON o.id = rr.order_id
