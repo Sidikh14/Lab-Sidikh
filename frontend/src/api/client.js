@@ -170,6 +170,12 @@ export const api = {
   rejectReturnRequest: (id, rejectionReason) =>
     request(`/returns/requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ rejectionReason }) }),
 
+  getVapidPublicKey: () => request('/push/vapid-public-key'),
+  subscribePush: (subscription) =>
+    request('/push/subscribe', { method: 'POST', body: JSON.stringify(subscription) }),
+  unsubscribePush: (endpoint) =>
+    request('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint }) }),
+
   getUsers: () => request('/users'),
   createUser: (data) =>
     request('/users', { method: 'POST', body: JSON.stringify(data) }),
