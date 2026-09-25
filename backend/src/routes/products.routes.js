@@ -190,7 +190,7 @@ router.get('/', async (req, res) => {
 
 // POST /products
 router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes, warehouseId: warehouseIdInput, lotNumber, expiryDate } = req.body;
+  const { name, sku, categoryId, unitPrice, costPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes, warehouseId: warehouseIdInput, lotNumber, expiryDate } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: 'Le nom du produit est requis.' });
@@ -211,8 +211,8 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
       : true;
 
     const result = await client.query(
-      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, quantity_alert_threshold, is_weighted, tva_applicable, attributes, is_activated, is_vital, requires_prescription, requires_cold_chain)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, cost_price, quantity_alert_threshold, is_weighted, tva_applicable, attributes, is_activated, is_vital, requires_prescription, requires_cold_chain)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -220,6 +220,7 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
         name,
         sku || null,
         unitPrice || 0,
+        costPrice || 0,
         quantityAlertThreshold || 5,
         Boolean(isWeighted),
         tvaApplicable === undefined ? true : Boolean(tvaApplicable),
@@ -327,7 +328,7 @@ router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), async (req
 
 // PATCH /products/:id — journalise un changement de prix, s'il y en a un
 router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, quantityAlertThreshold, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes } = req.body;
+  const { name, sku, categoryId, unitPrice, costPrice, quantityAlertThreshold, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes } = req.body;
 
   try {
     const avant = await pool.query(
@@ -346,17 +347,18 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
          sku = COALESCE($2, sku),
          category_id = COALESCE($3, category_id),
          unit_price = COALESCE($4, unit_price),
-         quantity_alert_threshold = COALESCE($5, quantity_alert_threshold),
-         is_weighted = COALESCE($6, is_weighted),
-         tva_applicable = COALESCE($7, tva_applicable),
-         attributes = COALESCE($8, attributes),
-         is_vital = COALESCE($9, is_vital),
-         requires_prescription = COALESCE($10, requires_prescription),
-         requires_cold_chain = COALESCE($11, requires_cold_chain)
-       WHERE id = $12 AND merchant_id = $13
+         cost_price = COALESCE($5, cost_price),
+         quantity_alert_threshold = COALESCE($6, quantity_alert_threshold),
+         is_weighted = COALESCE($7, is_weighted),
+         tva_applicable = COALESCE($8, tva_applicable),
+         attributes = COALESCE($9, attributes),
+         is_vital = COALESCE($10, is_vital),
+         requires_prescription = COALESCE($11, requires_prescription),
+         requires_cold_chain = COALESCE($12, requires_cold_chain)
+       WHERE id = $13 AND merchant_id = $14
        RETURNING *`,
       [
-        name, sku, categoryId, unitPrice, quantityAlertThreshold, isWeighted,
+        name, sku, categoryId, unitPrice, costPrice, quantityAlertThreshold, isWeighted,
         tvaApplicable === undefined ? null : Boolean(tvaApplicable),
         attributes && typeof attributes === 'object' ? JSON.stringify(attributes) : null,
         isVital === undefined ? null : Boolean(isVital),

@@ -151,7 +151,7 @@ export function StockPage() {
   const [recherche, setRecherche] = useState(searchParams.get('q') || '');
   const [filtreStatut, setFiltreStatut] = useState('tous');
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, requiresColdChain: false, attributes: {}, lotNumber: '', expiryDate: '' });
+  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', costPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, requiresColdChain: false, attributes: {}, lotNumber: '', expiryDate: '' });
   const [conditionnements, setConditionnements] = useState([]);
   const [modalePrixOuverte, setModalePrixOuverte] = useState(false);
   const [prixModifies, setPrixModifies] = useState({});
@@ -404,6 +404,7 @@ export function StockPage() {
         name: nouveauProduit.name,
         sku: nouveauProduit.sku || undefined,
         unitPrice: Number(nouveauProduit.unitPrice) || 0,
+        costPrice: Number(nouveauProduit.costPrice) || 0,
         quantityInStock: Number(nouveauProduit.quantityInStock) || 0,
         quantityAlertThreshold: Number(nouveauProduit.quantityAlertThreshold) || 5,
         isWeighted: estPharmacie ? false : nouveauProduit.isWeighted,
@@ -421,7 +422,7 @@ export function StockPage() {
           .map((c) => ({ label: c.label, price: Number(c.price), quantityPerUnit: Number(c.quantityPerUnit) })),
       });
       setModaleOuverte(false);
-      setNouveauProduit({ name: '', sku: '', unitPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, requiresColdChain: false, attributes: {}, lotNumber: '', expiryDate: '' });
+      setNouveauProduit({ name: '', sku: '', unitPrice: '', costPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, requiresColdChain: false, attributes: {}, lotNumber: '', expiryDate: '' });
       setConditionnements([]);
       charger();
     } catch (err) {
@@ -496,6 +497,7 @@ export function StockPage() {
       name: product.name,
       sku: product.sku || '',
       unitPrice: product.unit_price,
+      costPrice: product.cost_price,
       quantityAlertThreshold: estPharmacie ? String(Math.round(Number(product.quantity_alert_threshold))) : product.quantity_alert_threshold,
       isWeighted: estPharmacie ? false : product.is_weighted,
       categoryId: product.category_id || '',
@@ -549,6 +551,7 @@ export function StockPage() {
         name: produitEnEdition.name,
         sku: produitEnEdition.sku || undefined,
         unitPrice: Number(produitEnEdition.unitPrice),
+        costPrice: Number(produitEnEdition.costPrice) || 0,
         quantityAlertThreshold: Number(produitEnEdition.quantityAlertThreshold),
         isWeighted: estPharmacie ? false : produitEnEdition.isWeighted,
         isVital: produitEnEdition.isVital,
@@ -1169,6 +1172,16 @@ export function StockPage() {
                 </div>
               )}
               <div className="champ-groupe">
+                <label className="etiquette" htmlFor="p-cost-price">Prix d'achat (FCFA)</label>
+                <input
+                  id="p-cost-price"
+                  type="number"
+                  className="champ"
+                  value={nouveauProduit.costPrice}
+                  onChange={(e) => setNouveauProduit({ ...nouveauProduit, costPrice: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
                 <label className="etiquette" htmlFor="p-price">{nouveauProduit.isWeighted ? 'Prix au kg (FCFA)' : 'Prix au détail (FCFA)'}</label>
                 <input
                   id="p-price"
@@ -1177,6 +1190,12 @@ export function StockPage() {
                   value={nouveauProduit.unitPrice}
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, unitPrice: e.target.value })}
                 />
+                {Number(nouveauProduit.costPrice) > 0 && Number(nouveauProduit.unitPrice) > 0 && (
+                  <p style={{ fontSize: 12, color: 'var(--encre-douce)', marginTop: 4 }}>
+                    Marge : {Math.round(Number(nouveauProduit.unitPrice) - Number(nouveauProduit.costPrice)).toLocaleString('fr-FR')} FCFA
+                    {' '}({Math.round(((Number(nouveauProduit.unitPrice) - Number(nouveauProduit.costPrice)) / Number(nouveauProduit.unitPrice)) * 100)}%)
+                  </p>
+                )}
               </div>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="p-qty">{nouveauProduit.isWeighted ? 'Quantité initiale (kg)' : 'Quantité initiale (unités de base)'}</label>
@@ -1780,6 +1799,16 @@ export function StockPage() {
                 </div>
               )}
               <div className="champ-groupe">
+                <label className="etiquette" htmlFor="pe-cost-price">Prix d'achat (FCFA)</label>
+                <input
+                  id="pe-cost-price"
+                  type="number"
+                  className="champ"
+                  value={produitEnEdition.costPrice}
+                  onChange={(e) => setProduitEnEdition({ ...produitEnEdition, costPrice: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
                 <label className="etiquette" htmlFor="pe-price">{produitEnEdition.isWeighted ? 'Prix au kg (FCFA)' : 'Prix au détail (FCFA)'}</label>
                 <input
                   id="pe-price"
@@ -1788,6 +1817,12 @@ export function StockPage() {
                   value={produitEnEdition.unitPrice}
                   onChange={(e) => setProduitEnEdition({ ...produitEnEdition, unitPrice: e.target.value })}
                 />
+                {Number(produitEnEdition.costPrice) > 0 && Number(produitEnEdition.unitPrice) > 0 && (
+                  <p style={{ fontSize: 12, color: 'var(--encre-douce)', marginTop: 4 }}>
+                    Marge : {Math.round(Number(produitEnEdition.unitPrice) - Number(produitEnEdition.costPrice)).toLocaleString('fr-FR')} FCFA
+                    {' '}({Math.round(((Number(produitEnEdition.unitPrice) - Number(produitEnEdition.costPrice)) / Number(produitEnEdition.unitPrice)) * 100)}%)
+                  </p>
+                )}
               </div>
 
               <div className="champ-groupe">
