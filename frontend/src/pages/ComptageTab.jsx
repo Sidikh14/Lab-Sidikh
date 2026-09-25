@@ -14,6 +14,7 @@ export function ComptageTab() {
   const [erreur, setErreur] = useState('');
   const [sessionOuverte, setSessionOuverte] = useState(null);
   const [creation, setCreation] = useState(false);
+  const [recherche, setRecherche] = useState('');
 
   // Boutique active — même sélecteur/clé localStorage que les autres pages
   // (Stock, Achats…), pour rester cohérent d'une page à l'autre.
@@ -66,6 +67,7 @@ export function ComptageTab() {
     try {
       const detail = await api.getInventorySession(id);
       setSessionOuverte(detail);
+      setRecherche('');
     } catch (err) {
       setErreur(err.message);
     }
@@ -113,17 +115,38 @@ export function ComptageTab() {
       const ecart = item.counted_quantity - item.theoretical_quantity;
       return ecart < 0 ? somme + Math.abs(ecart) * Number(item.unit_price || 0) : somme;
     }, 0);
+    const rechercheNormalisee = recherche.trim().toLowerCase();
+    const itemsAffiches = rechercheNormalisee
+      ? sessionOuverte.items.filter((item) => item.product_name.toLowerCase().includes(rechercheNormalisee))
+      : sessionOuverte.items;
     return (
       <>
-        <div className="barre-outils">
+        <div className="barre-outils" style={{ flexWrap: 'wrap', gap: 12 }}>
           <button className="btn" onClick={() => setSessionOuverte(null)}>← Retour aux sessions</button>
           <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>
             {sessionOuverte.session_number}{sessionOuverte.warehouse_name ? ` — ${sessionOuverte.warehouse_name}` : ''} — {totalCompte}/{sessionOuverte.items.length} comptés
           </span>
+          <input
+            type="text"
+            className="champ"
+            placeholder="Rechercher un produit…"
+            value={recherche}
+            onChange={(e) => setRecherche(e.target.value)}
+            style={{ marginLeft: 'auto', maxWidth: 260 }}
+          />
         </div>
 
         {erreur && <div className="erreur">{erreur}</div>}
 
+        {rechercheNormalisee && (
+          <p style={{ color: 'var(--encre-douce)', fontSize: 13, marginTop: -8, marginBottom: 12 }}>
+            {itemsAffiches.length} produit(s) trouvé(s)
+          </p>
+        )}
+
+        {itemsAffiches.length === 0 ? (
+          <p className="etat-vide">Aucun produit ne correspond à « {recherche} ».</p>
+        ) : (
         <table className="registre" style={{ marginBottom: 20 }}>
           <thead>
             <tr>
@@ -135,7 +158,7 @@ export function ComptageTab() {
             </tr>
           </thead>
           <tbody>
-            {sessionOuverte.items.map((item) => {
+            {itemsAffiches.map((item) => {
               const ecart = item.counted_quantity !== null ? item.counted_quantity - item.theoretical_quantity : null;
               const montant = ecart !== null ? ecart * Number(item.unit_price || 0) : null;
               return (
@@ -174,6 +197,7 @@ export function ComptageTab() {
             </tfoot>
           )}
         </table>
+        )}
 
         {sessionOuverte.status === 'en_cours' && (
           <div style={{ display: 'flex', gap: 10 }}>
@@ -235,7 +259,7 @@ export function ComptageTab() {
       </div>
 
       {estManager && !chargementBoutiques && warehouses.length === 0 && (
-        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de faire un comptage.</p>
+        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de faire un inventaire.</p>
       )}
 
       {erreur && <div className="erreur">{erreur}</div>}
@@ -243,7 +267,7 @@ export function ComptageTab() {
       {chargement ? (
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
       ) : sessions.length === 0 ? (
-        <p className="etat-vide">Aucune session de comptage pour le moment.</p>
+        <p className="etat-vide">Aucune session d'inventaire pour le moment.</p>
       ) : (
         <table className="registre">
           <thead>
@@ -251,7 +275,7 @@ export function ComptageTab() {
               <th>Numéro</th>
               <th>Date</th>
               <th>Responsable</th>
-              <th>Comptage</th>
+              <th>Inventaire</th>
               <th>Écarts</th>
               <th>Montant perdu</th>
               <th>Statut</th>
