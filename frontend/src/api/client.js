@@ -162,6 +162,14 @@ export const api = {
   createReturn: (data) =>
     request('/returns', { method: 'POST', body: JSON.stringify(data) }),
 
+  // Pharmacie uniquement : demande de retour caissier, à valider par manager/gérant.
+  getReturnRequests: (warehouseId) => request(`/returns/requests${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
+  createReturnRequest: (data) =>
+    request('/returns/requests', { method: 'POST', body: JSON.stringify(data) }),
+  approveReturnRequest: (id) => request(`/returns/requests/${id}/approve`, { method: 'PATCH' }),
+  rejectReturnRequest: (id, rejectionReason) =>
+    request(`/returns/requests/${id}/reject`, { method: 'PATCH', body: JSON.stringify({ rejectionReason }) }),
+
   getUsers: () => request('/users'),
   createUser: (data) =>
     request('/users', { method: 'POST', body: JSON.stringify(data) }),
