@@ -275,7 +275,7 @@ export function ComptageTab() {
               <th>Numéro</th>
               <th>Date</th>
               <th>Responsable</th>
-              <th>Inventaire</th>
+              <th>Comptés</th>
               <th>Écarts</th>
               <th>Montant perdu</th>
               <th>Statut</th>

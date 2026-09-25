@@ -14,6 +14,9 @@ const PEUT_CREER = ['manager', 'gerant', 'vendeur', 'vendeur_caissier'];
 const PEUT_ENCAISSER = ['manager', 'caissier', 'gerant', 'vendeur_caissier'];
 const PEUT_GERER_STATUT = ['manager', 'gerant', 'caissier', 'vendeur_caissier'];
 const PEUT_TRAITER_RETOUR = ['manager', 'gerant'];
+// Pharmacie uniquement : le caissier/vendeur_caissier ne traite jamais un
+// retour lui-même, il dépose une demande que manager/gérant doit valider.
+const PEUT_DEMANDER_RETOUR = ['caissier', 'vendeur_caissier'];
 const LABEL_MOYEN_PAIEMENT = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
 // Reliquat (commande client en attente sur rupture de stock) : mêmes
 // secteurs que côté backend (orders_routes.js) — à garder synchronisé.
@@ -297,9 +300,12 @@ export function OrdersPage() {
 
   const peutTraiterRenvoi = ['manager', 'gerant', 'vendeur', 'vendeur_caissier'].includes(user.role);
   const peutTraiterRetour = PEUT_TRAITER_RETOUR.includes(user.role);
+  // Pharmacie uniquement — voir la constante PEUT_DEMANDER_RETOUR.
+  const peutDemanderRetour = estPharmacie && PEUT_DEMANDER_RETOUR.includes(user.role);
 
   // Module retours client — séparé du flux de vente, lié à une commande
-  // existante. Réservé manager/gérant.
+  // existante. Traitement direct réservé manager/gérant ; en pharmacie,
+  // caissier/vendeur_caissier passent par une demande à valider (voir plus bas).
   const [retours, setRetours] = useState([]);
   const [chargementRetours, setChargementRetours] = useState(false);
   const [retourCommande, setRetourCommande] = useState(null);
@@ -322,6 +328,54 @@ export function OrdersPage() {
   useEffect(() => {
     if (onglet === 'retours' && peutTraiterRetour) chargerRetours();
   }, [onglet, warehouseId]);
+
+  // Demandes de retour en attente de validation (pharmacie) — manager/gérant
+  // seulement.
+  const [demandesRetour, setDemandesRetour] = useState([]);
+  const [chargementDemandesRetour, setChargementDemandesRetour] = useState(false);
+  const [demandeEnCoursTraitement, setDemandeEnCoursTraitement] = useState(null);
+
+  function chargerDemandesRetour() {
+    if (estManager && !warehouseId) return;
+    setChargementDemandesRetour(true);
+    api.getReturnRequests(estManager ? warehouseId : undefined)
+      .then(setDemandesRetour)
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementDemandesRetour(false));
+  }
+
+  useEffect(() => {
+    if (onglet === 'demandes-retour' && peutTraiterRetour && estPharmacie) chargerDemandesRetour();
+  }, [onglet, warehouseId]);
+
+  const demandesRetourEnAttente = demandesRetour.filter((d) => d.status === 'en_attente');
+
+  async function approuverDemandeRetour(demande) {
+    setDemandeEnCoursTraitement(demande.id);
+    setErreur('');
+    try {
+      await api.approveReturnRequest(demande.id);
+      chargerDemandesRetour();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setDemandeEnCoursTraitement(null);
+    }
+  }
+
+  async function refuserDemandeRetour(demande) {
+    const motif = window.prompt('Motif du refus (optionnel) :', '') || '';
+    setDemandeEnCoursTraitement(demande.id);
+    setErreur('');
+    try {
+      await api.rejectReturnRequest(demande.id, motif.trim() || undefined);
+      chargerDemandesRetour();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setDemandeEnCoursTraitement(null);
+    }
+  }
 
   async function ouvrirRetour(order) {
     setChargementRetourCommande(true);
@@ -379,17 +433,23 @@ export function OrdersPage() {
     }
     setRetourEnCours(true);
     setErreur('');
+    const payload = {
+      orderId: retourCommande.id,
+      items: lignesSelectionnees.map((l) => ({ productId: l.productId, quantity: l.quantity })),
+      reason: retourMotif.trim(),
+      refundMethod: retourMoyenRemboursement,
+      refundAmount: Number(retourMontantRemboursement),
+      warehouseId: estManager ? warehouseId : undefined,
+    };
     try {
-      await api.createReturn({
-        orderId: retourCommande.id,
-        items: lignesSelectionnees.map((l) => ({ productId: l.productId, quantity: l.quantity })),
-        reason: retourMotif.trim(),
-        refundMethod: retourMoyenRemboursement,
-        refundAmount: Number(retourMontantRemboursement),
-        warehouseId: estManager ? warehouseId : undefined,
-      });
+      if (peutTraiterRetour) {
+        await api.createReturn(payload);
+        chargerRetours();
+      } else {
+        await api.createReturnRequest(payload);
+        window.alert('Demande de retour envoyée — en attente de validation par le gérant ou le manager.');
+      }
       fermerRetour();
-      chargerRetours();
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -909,6 +969,11 @@ export function OrdersPage() {
             Retours
           </button>
         )}
+        {peutTraiterRetour && estPharmacie && (
+          <button className={onglet === 'demandes-retour' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('demandes-retour')}>
+            Demandes de retour{demandesRetourEnAttente.length > 0 ? ` (${demandesRetourEnAttente.length})` : ''}
+          </button>
+        )}
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
@@ -1189,7 +1254,7 @@ export function OrdersPage() {
                   <th>Client</th>
                   <th>Montant</th>
                   <th>Statut</th>
-                  {(peutEncaisser || peutGererStatut || peutTraiterRenvoi || peutTraiterRetour) && <th>Actions</th>}
+                  {(peutEncaisser || peutGererStatut || peutTraiterRenvoi || peutTraiterRetour || peutDemanderRetour) && <th>Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -1215,7 +1280,7 @@ export function OrdersPage() {
                         </span>
                       )}
                     </td>
-                    {(peutEncaisser || peutGererStatut || peutTraiterRenvoi || peutTraiterRetour) && (
+                    {(peutEncaisser || peutGererStatut || peutTraiterRenvoi || peutTraiterRetour || peutDemanderRetour) && (
                       <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
                         {peutEncaisserCetteCommande(o) && o.status === 'en_attente' && (
                           <button
@@ -1256,14 +1321,14 @@ export function OrdersPage() {
                             Annuler
                           </button>
                         )}
-                        {peutTraiterRetour && !o.has_return && ['validee', 'livree'].includes(o.status) && (
+                        {(peutTraiterRetour || peutDemanderRetour) && !o.has_return && ['validee', 'livree'].includes(o.status) && (
                           <button
                             className="btn"
                             style={{ padding: '5px 10px', fontSize: 13 }}
                             disabled={chargementRetourCommande}
                             onClick={() => ouvrirRetour(o)}
                           >
-                            Retour
+                            {peutTraiterRetour ? 'Retour' : 'Demander un retour'}
                           </button>
                         )}
                       </td>
@@ -1315,6 +1380,76 @@ export function OrdersPage() {
                         : '—'}
                     </td>
                     <td>{r.recorded_by_name}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </>
+      )}
+
+      {onglet === 'demandes-retour' && peutTraiterRetour && estPharmacie && (
+        <>
+          <div className="barre-outils">
+            <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{demandesRetour.length} demande(s)</span>
+          </div>
+
+          {chargementDemandesRetour ? (
+            <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+          ) : demandesRetour.length === 0 ? (
+            <p className="etat-vide">Aucune demande de retour pour le moment.</p>
+          ) : (
+            <table className="registre">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Commande</th>
+                  <th>Client</th>
+                  <th>Motif</th>
+                  <th>Remboursement</th>
+                  <th>Demandé par</th>
+                  <th>Statut</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {demandesRetour.map((d) => (
+                  <tr key={d.id}>
+                    <td>{new Date(d.created_at).toLocaleDateString('fr-FR')}</td>
+                    <td className="chiffre">#{d.order_seq ?? d.order_id}</td>
+                    <td>{d.client_name || 'Client de passage'}</td>
+                    <td>{d.reason}</td>
+                    <td className="chiffre">
+                      {Math.round(d.refund_amount).toLocaleString('fr-FR')} FCFA ({LABEL_MOYEN_PAIEMENT[d.refund_method] || d.refund_method})
+                    </td>
+                    <td>{d.requested_by_name}</td>
+                    <td>
+                      <span className={`tampon ${d.status === 'validee' ? 'tampon-sarcelle' : d.status === 'refusee' ? 'tampon-brique' : 'tampon-laiton'}`}>
+                        {d.status === 'validee' ? 'Validée' : d.status === 'refusee' ? 'Refusée' : 'En attente'}
+                      </span>
+                    </td>
+                    <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      {d.status === 'en_attente' && (
+                        <>
+                          <button
+                            className="btn btn-principal"
+                            style={{ padding: '5px 10px', fontSize: 13 }}
+                            disabled={demandeEnCoursTraitement === d.id}
+                            onClick={() => approuverDemandeRetour(d)}
+                          >
+                            Valider
+                          </button>
+                          <button
+                            className="btn btn-brique"
+                            style={{ padding: '5px 10px', fontSize: 13 }}
+                            disabled={demandeEnCoursTraitement === d.id}
+                            onClick={() => refuserDemandeRetour(d)}
+                          >
+                            Refuser
+                          </button>
+                        </>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1411,7 +1546,9 @@ export function OrdersPage() {
                 <div className="actions-modale">
                   <button type="button" className="btn" onClick={fermerRetour}>Annuler</button>
                   <button type="submit" className="btn btn-principal" disabled={retourEnCours}>
-                    {retourEnCours ? 'Enregistrement…' : 'Enregistrer le retour'}
+                    {retourEnCours
+                      ? 'Enregistrement…'
+                      : peutTraiterRetour ? 'Enregistrer le retour' : 'Envoyer la demande'}
                   </button>
                 </div>
               </form>
