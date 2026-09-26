@@ -330,7 +330,7 @@ export function OrdersPage() {
   }, [onglet, warehouseId]);
 
   // Demandes de retour en attente de validation (pharmacie) — manager/gérant
-  // seulement.
+  // seulement. Affichées dans le même onglet "Retours", pas d'onglet séparé.
   const [demandesRetour, setDemandesRetour] = useState([]);
   const [chargementDemandesRetour, setChargementDemandesRetour] = useState(false);
   const [demandeEnCoursTraitement, setDemandeEnCoursTraitement] = useState(null);
@@ -345,7 +345,7 @@ export function OrdersPage() {
   }
 
   useEffect(() => {
-    if (onglet === 'demandes-retour' && peutTraiterRetour && estPharmacie) chargerDemandesRetour();
+    if (onglet === 'retours' && peutTraiterRetour && estPharmacie) chargerDemandesRetour();
   }, [onglet, warehouseId]);
 
   const demandesRetourEnAttente = demandesRetour.filter((d) => d.status === 'en_attente');
@@ -966,12 +966,7 @@ export function OrdersPage() {
         </button>
         {peutTraiterRetour && (
           <button className={onglet === 'retours' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('retours')}>
-            Retours
-          </button>
-        )}
-        {peutTraiterRetour && estPharmacie && (
-          <button className={onglet === 'demandes-retour' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('demandes-retour')}>
-            Demandes de retour{demandesRetourEnAttente.length > 0 ? ` (${demandesRetourEnAttente.length})` : ''}
+            Retours{estPharmacie && demandesRetourEnAttente.length > 0 ? ` (${demandesRetourEnAttente.length})` : ''}
           </button>
         )}
       </div>
@@ -1343,6 +1338,76 @@ export function OrdersPage() {
 
       {onglet === 'retours' && peutTraiterRetour && (
         <>
+          {estPharmacie && (
+            <>
+              <div className="barre-outils">
+                <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{demandesRetour.length} demande(s) de retour</span>
+              </div>
+
+              {chargementDemandesRetour ? (
+                <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+              ) : demandesRetour.length === 0 ? (
+                <p className="etat-vide">Aucune demande de retour pour le moment.</p>
+              ) : (
+                <table className="registre" style={{ marginBottom: 24 }}>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Commande</th>
+                      <th>Client</th>
+                      <th>Motif</th>
+                      <th>Remboursement</th>
+                      <th>Demandé par</th>
+                      <th>Statut</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {demandesRetour.map((d) => (
+                      <tr key={d.id}>
+                        <td>{new Date(d.created_at).toLocaleDateString('fr-FR')}</td>
+                        <td className="chiffre">#{d.order_seq ?? d.order_id}</td>
+                        <td>{d.client_name || 'Client de passage'}</td>
+                        <td>{d.reason}</td>
+                        <td className="chiffre">
+                          {Math.round(d.refund_amount).toLocaleString('fr-FR')} FCFA ({LABEL_MOYEN_PAIEMENT[d.refund_method] || d.refund_method})
+                        </td>
+                        <td>{d.requested_by_name}</td>
+                        <td>
+                          <span className={`tampon ${d.status === 'validee' ? 'tampon-sarcelle' : d.status === 'refusee' ? 'tampon-brique' : 'tampon-laiton'}`}>
+                            {d.status === 'validee' ? 'Validée' : d.status === 'refusee' ? 'Refusée' : 'En attente'}
+                          </span>
+                        </td>
+                        <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {d.status === 'en_attente' && (
+                            <>
+                              <button
+                                className="btn btn-principal"
+                                style={{ padding: '5px 10px', fontSize: 13 }}
+                                disabled={demandeEnCoursTraitement === d.id}
+                                onClick={() => approuverDemandeRetour(d)}
+                              >
+                                Valider
+                              </button>
+                              <button
+                                className="btn btn-brique"
+                                style={{ padding: '5px 10px', fontSize: 13 }}
+                                disabled={demandeEnCoursTraitement === d.id}
+                                onClick={() => refuserDemandeRetour(d)}
+                              >
+                                Refuser
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </>
+          )}
+
           <div className="barre-outils">
             <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{retours.length} retour(s)</span>
           </div>
@@ -1380,76 +1445,6 @@ export function OrdersPage() {
                         : '—'}
                     </td>
                     <td>{r.recorded_by_name}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </>
-      )}
-
-      {onglet === 'demandes-retour' && peutTraiterRetour && estPharmacie && (
-        <>
-          <div className="barre-outils">
-            <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{demandesRetour.length} demande(s)</span>
-          </div>
-
-          {chargementDemandesRetour ? (
-            <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
-          ) : demandesRetour.length === 0 ? (
-            <p className="etat-vide">Aucune demande de retour pour le moment.</p>
-          ) : (
-            <table className="registre">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Commande</th>
-                  <th>Client</th>
-                  <th>Motif</th>
-                  <th>Remboursement</th>
-                  <th>Demandé par</th>
-                  <th>Statut</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {demandesRetour.map((d) => (
-                  <tr key={d.id}>
-                    <td>{new Date(d.created_at).toLocaleDateString('fr-FR')}</td>
-                    <td className="chiffre">#{d.order_seq ?? d.order_id}</td>
-                    <td>{d.client_name || 'Client de passage'}</td>
-                    <td>{d.reason}</td>
-                    <td className="chiffre">
-                      {Math.round(d.refund_amount).toLocaleString('fr-FR')} FCFA ({LABEL_MOYEN_PAIEMENT[d.refund_method] || d.refund_method})
-                    </td>
-                    <td>{d.requested_by_name}</td>
-                    <td>
-                      <span className={`tampon ${d.status === 'validee' ? 'tampon-sarcelle' : d.status === 'refusee' ? 'tampon-brique' : 'tampon-laiton'}`}>
-                        {d.status === 'validee' ? 'Validée' : d.status === 'refusee' ? 'Refusée' : 'En attente'}
-                      </span>
-                    </td>
-                    <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {d.status === 'en_attente' && (
-                        <>
-                          <button
-                            className="btn btn-principal"
-                            style={{ padding: '5px 10px', fontSize: 13 }}
-                            disabled={demandeEnCoursTraitement === d.id}
-                            onClick={() => approuverDemandeRetour(d)}
-                          >
-                            Valider
-                          </button>
-                          <button
-                            className="btn btn-brique"
-                            style={{ padding: '5px 10px', fontSize: 13 }}
-                            disabled={demandeEnCoursTraitement === d.id}
-                            onClick={() => refuserDemandeRetour(d)}
-                          >
-                            Refuser
-                          </button>
-                        </>
-                      )}
-                    </td>
                   </tr>
                 ))}
               </tbody>
