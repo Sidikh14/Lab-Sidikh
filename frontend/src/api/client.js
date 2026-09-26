@@ -61,6 +61,30 @@ async function previewFile(path) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
+// Comme previewFile, mais pour envoyer un fichier (multipart/form-data) au
+// lieu d'en recevoir un — jamais de Content-Type manuel : le navigateur doit
+// fixer lui-même la boundary du multipart.
+async function requestFormData(path, formData) {
+  const token = getToken();
+  const response = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  });
+  const isJson = response.headers.get('content-type')?.includes('application/json');
+  const body = isJson ? await response.json() : null;
+
+  if (response.status === 401) {
+    signalerSessionExpiree();
+    throw new Error('Votre session a expiré. Veuillez vous reconnecter.');
+  }
+  if (!response.ok) {
+    const message = body?.error || `Erreur ${response.status}`;
+    throw new Error(message);
+  }
+  return body;
+}
+
 export const api = {
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
@@ -236,6 +260,16 @@ export const api = {
     request(`/admin/merchants/${id}/warehouse-limit`, { method: 'PATCH', body: JSON.stringify({ maxWarehouses }) }),
   deleteMerchant: (id) => request(`/admin/merchants/${id}`, { method: 'DELETE' }),
   getMerchantTeam: (id) => request(`/admin/merchants/${id}/users`),
+
+  // Import en masse de produits par l'owner, pour un commerçant choisi.
+  getMerchantWarehouses: (id) => request(`/admin/merchants/${id}/warehouses`),
+  downloadMerchantProductsTemplate: (id) => previewFile(`/admin/merchants/${id}/products-template`),
+  importMerchantProducts: (id, warehouseId, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('warehouseId', warehouseId);
+    return requestFormData(`/admin/merchants/${id}/products-import`, formData);
+  },
   setAdminUserStatus: (id, isActive) =>
     request(`/admin/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
   deleteAdminUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),

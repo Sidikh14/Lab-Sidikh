@@ -88,6 +88,13 @@ export function AdminPage() {
   const [valeurPlafond, setValeurPlafond] = useState('');
   const [enregistrementPlafond, setEnregistrementPlafond] = useState(false);
 
+  // Import de produits en masse depuis Excel, pour le commerçant déplié.
+  const [boutiquesImport, setBoutiquesImport] = useState([]);
+  const [boutiqueImportId, setBoutiqueImportId] = useState('');
+  const [fichierImport, setFichierImport] = useState(null);
+  const [importEnCours, setImportEnCours] = useState(false);
+  const [resultatImport, setResultatImport] = useState(null);
+
   async function charger() {
     setChargement(true);
     setErreur('');
@@ -120,9 +127,15 @@ export function AdminPage() {
     }
     setCommercantOuvert(id);
     setChargementEquipe(true);
+    setFichierImport(null);
+    setResultatImport(null);
+    setBoutiqueImportId('');
     try {
-      const data = await api.getMerchantTeam(id);
+      const [data, boutiques] = await Promise.all([api.getMerchantTeam(id), api.getMerchantWarehouses(id)]);
       setEquipe(data);
+      setBoutiquesImport(boutiques);
+      const actives = boutiques.filter((b) => b.is_active);
+      setBoutiqueImportId(actives[0]?.id || '');
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -213,6 +226,37 @@ export function AdminPage() {
       window.alert(`Mot de passe de ${membre.full_name} réinitialisé avec succès.`);
     } catch (err) {
       setErreur(err.message);
+    }
+  }
+
+  async function telechargerModeleImport(commercant) {
+    try {
+      await api.downloadMerchantProductsTemplate(commercant.id);
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
+  async function importerProduits(commercant) {
+    if (!fichierImport) {
+      setErreur('Choisissez un fichier Excel à importer.');
+      return;
+    }
+    if (!boutiqueImportId) {
+      setErreur('Choisissez la boutique où loger le stock initial.');
+      return;
+    }
+    setImportEnCours(true);
+    setResultatImport(null);
+    setErreur('');
+    try {
+      const resultat = await api.importMerchantProducts(commercant.id, boutiqueImportId, fichierImport);
+      setResultatImport(resultat);
+      setFichierImport(null);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setImportEnCours(false);
     }
   }
 
@@ -348,6 +392,65 @@ export function AdminPage() {
                         ))}
                       </div>
                     )}
+
+                    <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--trait)' }}>
+                      <p style={{ margin: '0 0 10px', fontWeight: 600, fontSize: 13 }}>Import de produits (Excel)</p>
+
+                      {boutiquesImport.length === 0 ? (
+                        <p style={{ color: 'var(--encre-douce)', fontSize: 13 }}>
+                          Ce commerçant n'a aucune boutique — créez-en une avant d'importer des produits.
+                        </p>
+                      ) : (
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <button type="button" className="btn" style={boutonPetit} onClick={() => telechargerModeleImport(c)}>
+                            Télécharger le modèle
+                          </button>
+
+                          <select
+                            className="champ"
+                            style={{ maxWidth: 200 }}
+                            value={boutiqueImportId}
+                            onChange={(e) => setBoutiqueImportId(e.target.value)}
+                          >
+                            {boutiquesImport.filter((b) => b.is_active).map((b) => (
+                              <option key={b.id} value={b.id}>{b.name}</option>
+                            ))}
+                          </select>
+
+                          <input
+                            type="file"
+                            accept=".xlsx,.xls"
+                            onChange={(e) => setFichierImport(e.target.files[0] || null)}
+                            style={{ fontSize: 13, maxWidth: 220 }}
+                          />
+
+                          <button
+                            type="button"
+                            className="btn btn-principal"
+                            style={boutonPetit}
+                            disabled={importEnCours || !fichierImport}
+                            onClick={() => importerProduits(c)}
+                          >
+                            {importEnCours ? 'Import…' : 'Importer'}
+                          </button>
+                        </div>
+                      )}
+
+                      {resultatImport && (
+                        <div style={{ marginTop: 10, fontSize: 13 }}>
+                          <p style={{ margin: 0 }}>
+                            {resultatImport.created} créé(s) · {resultatImport.updated} mis à jour · {resultatImport.errors.length} erreur(s)
+                          </p>
+                          {resultatImport.errors.length > 0 && (
+                            <ul style={{ margin: '6px 0 0', paddingLeft: 18, color: 'var(--danger)' }}>
+                              {resultatImport.errors.map((e, i) => (
+                                <li key={i}>Ligne {e.ligne} : {e.message}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
