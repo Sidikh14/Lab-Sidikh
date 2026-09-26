@@ -66,11 +66,50 @@ function IconOeil({ ouvert }) {
   );
 }
 
+function IconSecteurGrossiste() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3" y="10.5" width="7.5" height="7.5" rx="1" />
+      <rect x="13.5" y="10.5" width="7.5" height="7.5" rx="1" />
+      <rect x="8.25" y="3" width="7.5" height="7.5" rx="1" />
+    </svg>
+  );
+}
+
+function IconSecteurPharmacie() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3.5" y="3.5" width="17" height="17" rx="4.5" />
+      <path d="M12 8v8M8 12h8" />
+    </svg>
+  );
+}
+
+function IconSecteurElectromenager() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="5.5" y="2.5" width="13" height="19" rx="2.2" />
+      <path d="M5.5 10h13" />
+      <path d="M9 6.2h0.01M9 14.5h0.01" strokeLinecap="round" strokeWidth="2.4" />
+    </svg>
+  );
+}
+
+function IconSecteurTextile() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M7 3.5h10M7 20.5h10" strokeLinecap="round" />
+      <path d="M7 3.5c0 4.5 5.2 4.3 5.2 8.5S7 16.5 7 20.5" />
+      <path d="M17 3.5c0 4.5-5.2 4.3-5.2 8.5s5.2 4.5 5.2 8.5" />
+    </svg>
+  );
+}
+
 const SECTEURS_VITRINE = [
-  { nom: 'Grossiste', couleur: '#7C3AED', couleurClaire: 'rgba(124, 58, 237, 0.14)' },
-  { nom: 'Pharmacie', couleur: '#16A34A', couleurClaire: 'rgba(22, 163, 74, 0.14)' },
-  { nom: 'Électroménager', couleur: '#D9A404', couleurClaire: 'rgba(217, 164, 4, 0.18)' },
-  { nom: 'Textile', couleur: '#DC2626', couleurClaire: 'rgba(220, 38, 38, 0.14)' },
+  { nom: 'Grossiste', tagline: 'Distribution & gros volumes', couleur: '#A78BFA', couleurClaire: 'rgba(167, 139, 250, 0.16)', Icone: IconSecteurGrossiste },
+  { nom: 'Pharmacie', tagline: 'Lots & péremption', couleur: '#4ADE80', couleurClaire: 'rgba(74, 222, 128, 0.16)', Icone: IconSecteurPharmacie },
+  { nom: 'Électroménager', tagline: 'Références & garanties', couleur: '#FBBF24', couleurClaire: 'rgba(251, 191, 36, 0.16)', Icone: IconSecteurElectromenager },
+  { nom: 'Textile', tagline: 'Tailles & coloris', couleur: '#F87171', couleurClaire: 'rgba(248, 113, 113, 0.16)', Icone: IconSecteurTextile },
 ];
 
 export function LoginPage() {
@@ -106,48 +145,75 @@ export function LoginPage() {
     <div className="ecran-connexion-partage">
       <style>{`
         .secteurs-vitrine {
-          margin: 28px 0 8px;
+          margin: 30px 0 6px;
           position: relative;
           z-index: 1;
+          animation: secteurs-entree 0.6s ease-out both;
+          animation-delay: 0.15s;
+        }
+        @keyframes secteurs-entree {
+          from { opacity: 0; transform: translateY(8px); }
+          to { opacity: 1; transform: translateY(0); }
         }
         .secteurs-vitrine-titre {
           display: block;
-          font-size: 12.5px;
+          font-size: 13px;
           font-weight: 600;
-          letter-spacing: 0.04em;
-          text-transform: uppercase;
-          opacity: 0.72;
-          margin-bottom: 12px;
+          opacity: 0.7;
+          margin-bottom: 14px;
         }
-        .secteurs-liste {
-          display: flex;
-          flex-wrap: wrap;
+        .secteurs-grille {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
           gap: 10px;
         }
-        .secteur-badge {
-          display: inline-flex;
+        .secteur-carte {
+          display: flex;
           align-items: center;
-          gap: 8px;
-          padding: 8px 14px;
-          border-radius: 999px;
-          font-size: 13.5px;
-          font-weight: 600;
+          gap: 11px;
+          padding: 12px 13px;
+          border-radius: 14px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.09);
+          transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+        }
+        .secteur-carte:hover {
+          border-color: color-mix(in srgb, var(--secteur-couleur) 45%, transparent);
+          background: rgba(255, 255, 255, 0.08);
+          transform: translateY(-2px);
+        }
+        .secteur-carte-icone {
+          flex-shrink: 0;
+          width: 36px;
+          height: 36px;
+          border-radius: 10px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
           color: var(--secteur-couleur);
           background: var(--secteur-couleur-claire);
-          border: 1px solid color-mix(in srgb, var(--secteur-couleur) 55%, transparent);
-          backdrop-filter: blur(2px);
         }
-        .secteur-point {
-          width: 8px;
-          height: 8px;
-          border-radius: 50%;
-          background: var(--secteur-couleur);
-          box-shadow: 0 0 0 3px var(--secteur-couleur-claire);
-          flex-shrink: 0;
+        .secteur-carte-texte {
+          display: flex;
+          flex-direction: column;
+          gap: 1px;
+          min-width: 0;
+        }
+        .secteur-carte-texte strong {
+          font-size: 14px;
+          font-weight: 700;
+          line-height: 1.25;
+        }
+        .secteur-carte-texte span {
+          font-size: 11.5px;
+          opacity: 0.65;
+          line-height: 1.3;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         @media (max-width: 480px) {
-          .secteurs-liste { gap: 8px; }
-          .secteur-badge { padding: 7px 11px; font-size: 12.5px; }
+          .secteurs-grille { grid-template-columns: 1fr; }
         }
       `}</style>
       <div className="panneau-marque">
@@ -170,19 +236,21 @@ export function LoginPage() {
         </p>
 
         <div className="secteurs-vitrine">
-          <span className="secteurs-vitrine-titre">Adapté à votre secteur d'activité</span>
-          <div className="secteurs-liste">
-            {SECTEURS_VITRINE.map((secteur) => (
+          <span className="secteurs-vitrine-titre">Un espace pensé pour votre activité</span>
+          <div className="secteurs-grille">
+            {SECTEURS_VITRINE.map(({ nom, tagline, couleur, couleurClaire, Icone }) => (
               <div
-                key={secteur.nom}
-                className="secteur-badge"
-                style={{
-                  '--secteur-couleur': secteur.couleur,
-                  '--secteur-couleur-claire': secteur.couleurClaire,
-                }}
+                key={nom}
+                className="secteur-carte"
+                style={{ '--secteur-couleur': couleur, '--secteur-couleur-claire': couleurClaire }}
               >
-                <span className="secteur-point" aria-hidden="true" />
-                {secteur.nom}
+                <span className="secteur-carte-icone">
+                  <Icone />
+                </span>
+                <div className="secteur-carte-texte">
+                  <strong>{nom}</strong>
+                  <span>{tagline}</span>
+                </div>
               </div>
             ))}
           </div>
