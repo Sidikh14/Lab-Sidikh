@@ -34,6 +34,12 @@ export function SalariesPage() {
   const [methodePaiement, setMethodePaiement] = useState('especes');
   const [envoiEnCours, setEnvoiEnCours] = useState(false);
 
+  const [paiementSourceNet, setPaiementSourceNet] = useState(false);
+  const [employeBulletin, setEmployeBulletin] = useState(null);
+  const [primes, setPrimes] = useState([]);
+  const [bulletinCalcule, setBulletinCalcule] = useState(null);
+  const [chargementBulletin, setChargementBulletin] = useState(false);
+
   // Le mois par défaut/maximal vient du serveur (pas de la date de l'appareil
   // de l'utilisateur) : on ne peut jamais consulter/payer un mois tant que
   // le mois en cours n'est pas entièrement soldé.
@@ -87,10 +93,62 @@ export function SalariesPage() {
     }
   }
 
-  function ouvrirPaiement(emp) {
+  async function ouvrirPaiement(emp) {
     setEmployePaiement(emp);
-    setMontantPaiement(emp.monthly_salary || '');
     setMethodePaiement(emp.payment_method || 'especes');
+    // Si un bulletin a déjà été généré pour ce mois, on propose le net calculé
+    // plutôt que le brut — sinon on garde l'ancien comportement (brut libre).
+    try {
+      const bulletin = await api.getPayslip(emp.id, mois);
+      setMontantPaiement(bulletin.net_a_payer);
+      setPaiementSourceNet(true);
+    } catch {
+      setMontantPaiement(emp.monthly_salary || '');
+      setPaiementSourceNet(false);
+    }
+  }
+
+  async function ouvrirBulletin(emp) {
+    setEmployeBulletin(emp);
+    setBulletinCalcule(null);
+    setChargementBulletin(true);
+    try {
+      const existantes = await api.getSalaryBonuses(emp.id, mois);
+      setPrimes(existantes.length > 0 ? existantes.map((p) => ({ label: p.label, amount: p.amount })) : []);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setChargementBulletin(false);
+    }
+  }
+
+  function ajouterPrime() {
+    setPrimes((p) => [...p, { label: '', amount: '' }]);
+  }
+
+  function modifierPrime(index, champ, valeur) {
+    setPrimes((p) => p.map((prime, i) => (i === index ? { ...prime, [champ]: valeur } : prime)));
+  }
+
+  function retirerPrime(index) {
+    setPrimes((p) => p.filter((_, i) => i !== index));
+  }
+
+  async function genererBulletin(e) {
+    e.preventDefault();
+    setEnvoiEnCours(true);
+    setErreur('');
+    try {
+      const bonusesValides = primes
+        .filter((p) => p.label && Number(p.amount))
+        .map((p) => ({ label: p.label, amount: Number(p.amount) }));
+      const resultat = await api.generatePayslip(employeBulletin.id, { month: mois, bonuses: bonusesValides });
+      setBulletinCalcule(resultat);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnvoiEnCours(false);
+    }
   }
 
   async function confirmerPaiement(e) {
@@ -163,6 +221,9 @@ export function SalariesPage() {
                   )}
                 </div>
                 <button className="btn" onClick={() => ouvrirConfig(emp)}>Configurer</button>
+                <button className="btn" disabled={!emp.monthly_salary} onClick={() => ouvrirBulletin(emp)}>
+                  Bulletin
+                </button>
                 <button
                   className="btn btn-principal"
                   disabled={!emp.monthly_salary}
@@ -215,6 +276,73 @@ export function SalariesPage() {
         </div>
       )}
 
+      {employeBulletin && (
+        <div className="modale-fond" onClick={() => setEmployeBulletin(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Bulletin de paie — {employeBulletin.name}</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>{formatMois(mois)}</p>
+
+            {chargementBulletin ? (
+              <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+            ) : (
+              <form onSubmit={genererBulletin}>
+                <div className="champ-groupe">
+                  <label className="etiquette">Primes / indemnités du mois</label>
+                  {primes.map((prime, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                      <input
+                        type="text"
+                        className="champ"
+                        placeholder="Libellé (ex. prime de transport)"
+                        value={prime.label}
+                        onChange={(e) => modifierPrime(i, 'label', e.target.value)}
+                        style={{ flex: 2 }}
+                      />
+                      <input
+                        type="number"
+                        className="champ"
+                        placeholder="Montant"
+                        value={prime.amount}
+                        onChange={(e) => modifierPrime(i, 'amount', e.target.value)}
+                        style={{ flex: 1 }}
+                      />
+                      <button type="button" className="btn" onClick={() => retirerPrime(i)}>×</button>
+                    </div>
+                  ))}
+                  <button type="button" className="btn" onClick={ajouterPrime}>+ Ajouter une prime</button>
+                </div>
+
+                <button type="submit" className="btn btn-principal" disabled={envoiEnCours} style={{ marginTop: 12 }}>
+                  {envoiEnCours ? 'Calcul…' : 'Calculer et enregistrer le bulletin'}
+                </button>
+              </form>
+            )}
+
+            {bulletinCalcule && (
+              <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid var(--bordure, #e5e5e5)' }}>
+                <p className="carte-a-encaisser-client">Salaire brut : {Math.round(bulletinCalcule.gross_salary).toLocaleString('fr-FR')} FCFA</p>
+                <p className="carte-a-encaisser-client">Retenues (IPRES, IRPP, TRIMF…) : {Math.round(bulletinCalcule.gross_salary - bulletinCalcule.net_a_payer).toLocaleString('fr-FR')} FCFA</p>
+                <p className="carte-a-encaisser-client" style={{ fontWeight: 700 }}>
+                  Net à payer : {Math.round(bulletinCalcule.net_a_payer).toLocaleString('fr-FR')} FCFA
+                </p>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ marginTop: 10 }}
+                  onClick={() => api.previewPayslipPdf(employeBulletin.id, mois).catch((err) => setErreur(err.message))}
+                >
+                  Voir / imprimer le PDF
+                </button>
+              </div>
+            )}
+
+            <div className="actions-modale">
+              <button type="button" className="btn" onClick={() => setEmployeBulletin(null)}>Fermer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {employePaiement && (
         <div className="modale-fond" onClick={() => setEmployePaiement(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
@@ -222,6 +350,15 @@ export function SalariesPage() {
             <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
               {formatMois(mois)}
             </p>
+            {paiementSourceNet ? (
+              <p style={{ fontSize: 12, color: 'var(--succes, #1a7f37)', marginBottom: 12 }}>
+                Montant proposé : net calculé depuis le bulletin de paie généré.
+              </p>
+            ) : (
+              <p style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 12 }}>
+                Aucun bulletin généré pour ce mois — montant proposé = salaire brut. Génère le bulletin d'abord pour proposer le net.
+              </p>
+            )}
             <form onSubmit={confirmerPaiement}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="paiement-montant">Montant versé (FCFA)</label>

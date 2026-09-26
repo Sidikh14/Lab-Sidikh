@@ -303,6 +303,18 @@ export const api = {
   getSalaryAlert: () => request('/salaries/alert'),
   getSalaryMaxMonth: () => request('/salaries/max-month'),
 
+  // Paie / bulletins de salaire
+  getPayrollSettings: () => request('/payroll/settings'),
+  updatePayrollSettings: (data) =>
+    request('/payroll/settings', { method: 'PUT', body: JSON.stringify(data) }),
+  getSalaryBonuses: (userId, month) =>
+    request(`/payroll/${userId}/bonuses${month ? `?month=${month}` : ''}`),
+  generatePayslip: (userId, data) =>
+    request(`/payroll/${userId}/generate`, { method: 'POST', body: JSON.stringify(data) }),
+  getPayslip: (userId, month) => request(`/payroll/${userId}/${month}`),
+  previewPayslipPdf: (userId, month) => previewFile(`/payroll/${userId}/${month}/pdf`),
+  getMyPayslips: () => request('/payroll/mine'),
+
   getInventorySessions: (warehouseId) => request(`/inventory-sessions${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),
   createInventorySession: (warehouseId) => request('/inventory-sessions', { method: 'POST', body: JSON.stringify({ warehouseId }) }),

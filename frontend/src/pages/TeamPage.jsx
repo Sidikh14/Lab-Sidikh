@@ -164,9 +164,22 @@ export function TeamPage() {
             Salaires
           </button>
         )}
+        {estManager && (
+          <button className={onglet === 'reglages-paie' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('reglages-paie')}>
+            Réglages paie
+          </button>
+        )}
+        {!estManager && (
+          <button className={onglet === 'mes-bulletins' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('mes-bulletins')}>
+            Mes bulletins
+          </button>
+        )}
       </div>
 
-      {onglet === 'equipe' ? <EquipeTab /> : <SalairesTab />}
+      {onglet === 'equipe' && <EquipeTab />}
+      {onglet === 'salaires' && <SalairesTab />}
+      {onglet === 'reglages-paie' && <ReglagesPaieTab />}
+      {onglet === 'mes-bulletins' && <MesBulletinsTab />}
     </>
   );
 }
@@ -763,6 +776,12 @@ function SalairesTab() {
   const [methodePaiement, setMethodePaiement] = useState('especes');
   const [envoiEnCours, setEnvoiEnCours] = useState(false);
 
+  const [paiementSourceNet, setPaiementSourceNet] = useState(false);
+  const [employeBulletin, setEmployeBulletin] = useState(null);
+  const [primes, setPrimes] = useState([]);
+  const [bulletinCalcule, setBulletinCalcule] = useState(null);
+  const [chargementBulletin, setChargementBulletin] = useState(false);
+
   useEffect(() => {
     api
       .getSalaryMaxMonth()
@@ -813,10 +832,60 @@ function SalairesTab() {
     }
   }
 
-  function ouvrirPaiement(emp) {
+  async function ouvrirPaiement(emp) {
     setEmployePaiement(emp);
-    setMontantPaiement(emp.monthly_salary || '');
     setMethodePaiement(emp.payment_method || 'especes');
+    try {
+      const bulletin = await api.getPayslip(emp.id, mois);
+      setMontantPaiement(bulletin.net_a_payer);
+      setPaiementSourceNet(true);
+    } catch {
+      setMontantPaiement(emp.monthly_salary || '');
+      setPaiementSourceNet(false);
+    }
+  }
+
+  async function ouvrirBulletin(emp) {
+    setEmployeBulletin(emp);
+    setBulletinCalcule(null);
+    setChargementBulletin(true);
+    try {
+      const existantes = await api.getSalaryBonuses(emp.id, mois);
+      setPrimes(existantes.length > 0 ? existantes.map((p) => ({ label: p.label, amount: p.amount })) : []);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setChargementBulletin(false);
+    }
+  }
+
+  function ajouterPrime() {
+    setPrimes((p) => [...p, { label: '', amount: '' }]);
+  }
+
+  function modifierPrime(index, champ, valeur) {
+    setPrimes((p) => p.map((prime, i) => (i === index ? { ...prime, [champ]: valeur } : prime)));
+  }
+
+  function retirerPrime(index) {
+    setPrimes((p) => p.filter((_, i) => i !== index));
+  }
+
+  async function genererBulletin(e) {
+    e.preventDefault();
+    setEnvoiEnCours(true);
+    setErreur('');
+    try {
+      const bonusesValides = primes
+        .filter((p) => p.label && Number(p.amount))
+        .map((p) => ({ label: p.label, amount: Number(p.amount) }));
+      const resultat = await api.generatePayslip(employeBulletin.id, { month: mois, bonuses: bonusesValides });
+      setBulletinCalcule(resultat);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnvoiEnCours(false);
+    }
   }
 
   async function confirmerPaiement(e) {
@@ -885,6 +954,9 @@ function SalairesTab() {
                   )}
                 </div>
                 <button className="btn" onClick={() => ouvrirConfig(emp)}>Configurer</button>
+                <button className="btn" disabled={!emp.monthly_salary} onClick={() => ouvrirBulletin(emp)}>
+                  Bulletin
+                </button>
                 <button
                   className="btn btn-principal"
                   disabled={!emp.monthly_salary}
@@ -937,6 +1009,73 @@ function SalairesTab() {
         </div>
       )}
 
+      {employeBulletin && (
+        <div className="modale-fond" onClick={() => setEmployeBulletin(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Bulletin de paie — {employeBulletin.name}</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>{formatMois(mois)}</p>
+
+            {chargementBulletin ? (
+              <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+            ) : (
+              <form onSubmit={genererBulletin}>
+                <div className="champ-groupe">
+                  <label className="etiquette">Primes / indemnités du mois</label>
+                  {primes.map((prime, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                      <input
+                        type="text"
+                        className="champ"
+                        placeholder="Libellé (ex. prime de transport)"
+                        value={prime.label}
+                        onChange={(e) => modifierPrime(i, 'label', e.target.value)}
+                        style={{ flex: 2 }}
+                      />
+                      <input
+                        type="number"
+                        className="champ"
+                        placeholder="Montant"
+                        value={prime.amount}
+                        onChange={(e) => modifierPrime(i, 'amount', e.target.value)}
+                        style={{ flex: 1 }}
+                      />
+                      <button type="button" className="btn" onClick={() => retirerPrime(i)}>×</button>
+                    </div>
+                  ))}
+                  <button type="button" className="btn" onClick={ajouterPrime}>+ Ajouter une prime</button>
+                </div>
+
+                <button type="submit" className="btn btn-principal" disabled={envoiEnCours} style={{ marginTop: 12 }}>
+                  {envoiEnCours ? 'Calcul…' : 'Calculer et enregistrer le bulletin'}
+                </button>
+              </form>
+            )}
+
+            {bulletinCalcule && (
+              <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid var(--bordure, #e5e5e5)' }}>
+                <p className="carte-a-encaisser-client">Salaire brut : {Math.round(bulletinCalcule.gross_salary).toLocaleString('fr-FR')} FCFA</p>
+                <p className="carte-a-encaisser-client">Retenues (IPRES, IRPP, TRIMF…) : {Math.round(bulletinCalcule.gross_salary - bulletinCalcule.net_a_payer).toLocaleString('fr-FR')} FCFA</p>
+                <p className="carte-a-encaisser-client" style={{ fontWeight: 700 }}>
+                  Net à payer : {Math.round(bulletinCalcule.net_a_payer).toLocaleString('fr-FR')} FCFA
+                </p>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ marginTop: 10 }}
+                  onClick={() => api.previewPayslipPdf(employeBulletin.id, mois).catch((err) => setErreur(err.message))}
+                >
+                  Voir / imprimer le PDF
+                </button>
+              </div>
+            )}
+
+            <div className="actions-modale">
+              <button type="button" className="btn" onClick={() => setEmployeBulletin(null)}>Fermer</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {employePaiement && (
         <div className="modale-fond" onClick={() => setEmployePaiement(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
@@ -944,6 +1083,15 @@ function SalairesTab() {
             <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
               {formatMois(mois)}
             </p>
+            {paiementSourceNet ? (
+              <p style={{ fontSize: 12, color: 'var(--succes, #1a7f37)', marginBottom: 12 }}>
+                Montant proposé : net calculé depuis le bulletin de paie généré.
+              </p>
+            ) : (
+              <p style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 12 }}>
+                Aucun bulletin généré pour ce mois — montant proposé = salaire brut. Génère le bulletin d'abord pour proposer le net.
+              </p>
+            )}
             <form onSubmit={confirmerPaiement}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="paiement-montant">Montant versé (FCFA)</label>
@@ -985,6 +1133,274 @@ function SalairesTab() {
               </div>
             </form>
           </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function versPourcentage(valeurDecimale) {
+  return valeurDecimale === null || valeurDecimale === undefined ? '' : Number(valeurDecimale) * 100;
+}
+function versDecimal(valeurPourcentage) {
+  return valeurPourcentage === '' || valeurPourcentage === null ? 0 : Number(valeurPourcentage) / 100;
+}
+
+function ReglagesPaieTab() {
+  const [chargement, setChargement] = useState(true);
+  const [envoiEnCours, setEnvoiEnCours] = useState(false);
+  const [erreur, setErreur] = useState('');
+  const [succes, setSucces] = useState('');
+
+  const [abattementTaux, setAbattementTaux] = useState('');
+  const [abattementPlafond, setAbattementPlafond] = useState('');
+  const [ipresTauxSalarial, setIpresTauxSalarial] = useState('');
+  const [ipresTauxPatronal, setIpresTauxPatronal] = useState('');
+  const [ipresPlafondMensuel, setIpresPlafondMensuel] = useState('');
+  const [cssTauxSalarial, setCssTauxSalarial] = useState('');
+  const [cssTauxPatronal, setCssTauxPatronal] = useState('');
+  const [cssPlafondMensuel, setCssPlafondMensuel] = useState('');
+  const [cfceTaux, setCfceTaux] = useState('');
+  const [trenchesIrpp, setTranchesIrpp] = useState([]);
+  const [paliersTrimf, setPaliersTrimf] = useState([]);
+
+  useEffect(() => {
+    api
+      .getPayrollSettings()
+      .then((r) => {
+        setAbattementTaux(versPourcentage(r.abattement_taux));
+        setAbattementPlafond(r.abattement_plafond_annuel);
+        setIpresTauxSalarial(versPourcentage(r.ipres_taux_salarial));
+        setIpresTauxPatronal(versPourcentage(r.ipres_taux_patronal));
+        setIpresPlafondMensuel(r.ipres_plafond_mensuel ?? '');
+        setCssTauxSalarial(versPourcentage(r.css_taux_salarial));
+        setCssTauxPatronal(versPourcentage(r.css_taux_patronal));
+        setCssPlafondMensuel(r.css_plafond_mensuel ?? '');
+        setCfceTaux(versPourcentage(r.cfce_taux));
+        setTranchesIrpp(r.bareme_irpp.map((t) => ({ jusqua: t.jusqua ?? '', taux: t.taux * 100 })));
+        setPaliersTrimf(r.trimf_bareme.map((p) => ({ jusqua: p.jusqua ?? '', montant: p.montant })));
+      })
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargement(false));
+  }, []);
+
+  function modifierTranche(index, champ, valeur) {
+    setTranchesIrpp((liste) => liste.map((t, i) => (i === index ? { ...t, [champ]: valeur } : t)));
+  }
+  function ajouterTranche() {
+    setTranchesIrpp((liste) => [...liste, { jusqua: '', taux: 0 }]);
+  }
+  function retirerTranche(index) {
+    setTranchesIrpp((liste) => liste.filter((_, i) => i !== index));
+  }
+
+  function modifierPalier(index, champ, valeur) {
+    setPaliersTrimf((liste) => liste.map((p, i) => (i === index ? { ...p, [champ]: valeur } : p)));
+  }
+  function ajouterPalier() {
+    setPaliersTrimf((liste) => [...liste, { jusqua: '', montant: 0 }]);
+  }
+  function retirerPalier(index) {
+    setPaliersTrimf((liste) => liste.filter((_, i) => i !== index));
+  }
+
+  async function enregistrer(e) {
+    e.preventDefault();
+    setErreur('');
+    setSucces('');
+    setEnvoiEnCours(true);
+    try {
+      await api.updatePayrollSettings({
+        abattement_taux: versDecimal(abattementTaux),
+        abattement_plafond_annuel: Number(abattementPlafond) || 0,
+        ipres_taux_salarial: versDecimal(ipresTauxSalarial),
+        ipres_taux_patronal: versDecimal(ipresTauxPatronal),
+        ipres_plafond_mensuel: ipresPlafondMensuel === '' ? null : Number(ipresPlafondMensuel),
+        css_taux_salarial: versDecimal(cssTauxSalarial),
+        css_taux_patronal: versDecimal(cssTauxPatronal),
+        css_plafond_mensuel: cssPlafondMensuel === '' ? null : Number(cssPlafondMensuel),
+        cfce_taux: versDecimal(cfceTaux),
+        bareme_irpp: trenchesIrpp.map((t) => ({
+          jusqua: t.jusqua === '' ? null : Number(t.jusqua),
+          taux: versDecimal(t.taux),
+        })),
+        trimf_bareme: paliersTrimf.map((p) => ({
+          jusqua: p.jusqua === '' ? null : Number(p.jusqua),
+          montant: Number(p.montant) || 0,
+        })),
+      });
+      setSucces('Réglages enregistrés.');
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnvoiEnCours(false);
+    }
+  }
+
+  if (chargement) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
+
+  return (
+    <>
+      <p style={{ fontSize: 13, color: 'var(--encre-douce)', maxWidth: 640, marginBottom: 20 }}>
+        Ces taux et barèmes déterminent le calcul brut → net des bulletins de paie. Les valeurs de
+        départ sont indicatives — fais-les valider par un comptable ou sur impotsetdomaines.gouv.sn
+        avant de t'en servir pour payer réellement tes employés.
+      </p>
+
+      {erreur && <div className="erreur">{erreur}</div>}
+      {succes && <p style={{ color: 'var(--succes, #1a7f37)', fontSize: 13, marginBottom: 12 }}>{succes}</p>}
+
+      <form onSubmit={enregistrer}>
+        <h2 style={{ fontSize: 16, marginBottom: 10 }}>Abattement forfaitaire</h2>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 18 }}>
+          <div className="champ-groupe" style={{ flex: 1 }}>
+            <label className="etiquette">Taux (%)</label>
+            <input type="number" step="0.01" className="champ" value={abattementTaux} onChange={(e) => setAbattementTaux(e.target.value)} />
+          </div>
+          <div className="champ-groupe" style={{ flex: 1 }}>
+            <label className="etiquette">Plafond annuel (FCFA)</label>
+            <input type="number" className="champ" value={abattementPlafond} onChange={(e) => setAbattementPlafond(e.target.value)} />
+          </div>
+        </div>
+
+        <h2 style={{ fontSize: 16, marginBottom: 10 }}>IPRES (retraite)</h2>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 18 }}>
+          <div className="champ-groupe" style={{ flex: 1 }}>
+            <label className="etiquette">Part salariale (%)</label>
+            <input type="number" step="0.01" className="champ" value={ipresTauxSalarial} onChange={(e) => setIpresTauxSalarial(e.target.value)} />
+          </div>
+          <div className="champ-groupe" style={{ flex: 1 }}>
+            <label className="etiquette">Part patronale (%)</label>
+            <input type="number" step="0.01" className="champ" value={ipresTauxPatronal} onChange={(e) => setIpresTauxPatronal(e.target.value)} />
+          </div>
+          <div className="champ-groupe" style={{ flex: 1 }}>
+            <label className="etiquette">Plafond mensuel (FCFA, vide = aucun)</label>
+            <input type="number" className="champ" value={ipresPlafondMensuel} onChange={(e) => setIpresPlafondMensuel(e.target.value)} />
+          </div>
+        </div>
+
+        <h2 style={{ fontSize: 16, marginBottom: 10 }}>CSS (prestations familiales / AT)</h2>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 18 }}>
+          <div className="champ-groupe" style={{ flex: 1 }}>
+            <label className="etiquette">Part salariale (%)</label>
+            <input type="number" step="0.01" className="champ" value={cssTauxSalarial} onChange={(e) => setCssTauxSalarial(e.target.value)} />
+          </div>
+          <div className="champ-groupe" style={{ flex: 1 }}>
+            <label className="etiquette">Part patronale (%)</label>
+            <input type="number" step="0.01" className="champ" value={cssTauxPatronal} onChange={(e) => setCssTauxPatronal(e.target.value)} />
+          </div>
+          <div className="champ-groupe" style={{ flex: 1 }}>
+            <label className="etiquette">Plafond mensuel (FCFA, vide = aucun)</label>
+            <input type="number" className="champ" value={cssPlafondMensuel} onChange={(e) => setCssPlafondMensuel(e.target.value)} />
+          </div>
+        </div>
+
+        <h2 style={{ fontSize: 16, marginBottom: 10 }}>CFCE (patronal)</h2>
+        <div className="champ-groupe" style={{ maxWidth: 200, marginBottom: 18 }}>
+          <label className="etiquette">Taux (%)</label>
+          <input type="number" step="0.01" className="champ" value={cfceTaux} onChange={(e) => setCfceTaux(e.target.value)} />
+        </div>
+
+        <h2 style={{ fontSize: 16, marginBottom: 10 }}>Barème IRPP (tranches annuelles progressives)</h2>
+        {trenchesIrpp.map((t, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
+            <input
+              type="number"
+              className="champ"
+              placeholder="Jusqu'à (FCFA/an) — vide = illimité"
+              value={t.jusqua}
+              onChange={(e) => modifierTranche(i, 'jusqua', e.target.value)}
+              style={{ flex: 2 }}
+            />
+            <input
+              type="number"
+              step="0.01"
+              className="champ"
+              placeholder="Taux (%)"
+              value={t.taux}
+              onChange={(e) => modifierTranche(i, 'taux', e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <button type="button" className="btn" onClick={() => retirerTranche(i)}>×</button>
+          </div>
+        ))}
+        <button type="button" className="btn" onClick={ajouterTranche} style={{ marginBottom: 22 }}>+ Ajouter une tranche</button>
+
+        <h2 style={{ fontSize: 16, marginBottom: 10 }}>Barème TRIMF (paliers mensuels forfaitaires)</h2>
+        {paliersTrimf.map((p, i) => (
+          <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
+            <input
+              type="number"
+              className="champ"
+              placeholder="Jusqu'à (FCFA/mois) — vide = illimité"
+              value={p.jusqua}
+              onChange={(e) => modifierPalier(i, 'jusqua', e.target.value)}
+              style={{ flex: 2 }}
+            />
+            <input
+              type="number"
+              className="champ"
+              placeholder="Montant (FCFA)"
+              value={p.montant}
+              onChange={(e) => modifierPalier(i, 'montant', e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <button type="button" className="btn" onClick={() => retirerPalier(i)}>×</button>
+          </div>
+        ))}
+        <button type="button" className="btn" onClick={ajouterPalier} style={{ marginBottom: 22 }}>+ Ajouter un palier</button>
+
+        <div>
+          <button type="submit" className="btn btn-principal" disabled={envoiEnCours}>
+            {envoiEnCours ? 'Enregistrement…' : 'Enregistrer les réglages'}
+          </button>
+        </div>
+      </form>
+    </>
+  );
+}
+
+function MesBulletinsTab() {
+  const { user } = useAuth();
+  const [bulletins, setBulletins] = useState([]);
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState('');
+
+  useEffect(() => {
+    api
+      .getMyPayslips()
+      .then(setBulletins)
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargement(false));
+  }, []);
+
+  function voirPdf(mois) {
+    api.previewPayslipPdf(user.id, mois).catch((err) => setErreur(err.message));
+  }
+
+  return (
+    <>
+      {erreur && <div className="erreur">{erreur}</div>}
+
+      {chargement ? (
+        <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+      ) : bulletins.length === 0 ? (
+        <p className="etat-vide">Aucun bulletin disponible pour le moment.</p>
+      ) : (
+        <div className="liste-a-encaisser">
+          {bulletins.map((b) => (
+            <div key={b.month} className="carte-a-encaisser">
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p className="carte-a-encaisser-numero">{formatMois(b.month)}</p>
+                <p className="carte-a-encaisser-client">
+                  Net à payer : {Math.round(b.net_a_payer).toLocaleString('fr-FR')} FCFA
+                </p>
+              </div>
+              <button className="btn btn-principal" onClick={() => voirPdf(b.month)}>
+                Voir / imprimer
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </>
