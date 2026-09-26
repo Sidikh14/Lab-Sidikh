@@ -66,6 +66,13 @@ function IconOeil({ ouvert }) {
   );
 }
 
+const SECTEURS_VITRINE = [
+  { nom: 'Grossiste', couleur: '#7C3AED', couleurClaire: 'rgba(124, 58, 237, 0.14)' },
+  { nom: 'Pharmacie', couleur: '#16A34A', couleurClaire: 'rgba(22, 163, 74, 0.14)' },
+  { nom: 'Électroménager', couleur: '#D9A404', couleurClaire: 'rgba(217, 164, 4, 0.18)' },
+  { nom: 'Textile', couleur: '#DC2626', couleurClaire: 'rgba(220, 38, 38, 0.14)' },
+];
+
 export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -97,6 +104,52 @@ export function LoginPage() {
 
   return (
     <div className="ecran-connexion-partage">
+      <style>{`
+        .secteurs-vitrine {
+          margin: 28px 0 8px;
+          position: relative;
+          z-index: 1;
+        }
+        .secteurs-vitrine-titre {
+          display: block;
+          font-size: 12.5px;
+          font-weight: 600;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          opacity: 0.72;
+          margin-bottom: 12px;
+        }
+        .secteurs-liste {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+        }
+        .secteur-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 14px;
+          border-radius: 999px;
+          font-size: 13.5px;
+          font-weight: 600;
+          color: var(--secteur-couleur);
+          background: var(--secteur-couleur-claire);
+          border: 1px solid color-mix(in srgb, var(--secteur-couleur) 55%, transparent);
+          backdrop-filter: blur(2px);
+        }
+        .secteur-point {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: var(--secteur-couleur);
+          box-shadow: 0 0 0 3px var(--secteur-couleur-claire);
+          flex-shrink: 0;
+        }
+        @media (max-width: 480px) {
+          .secteurs-liste { gap: 8px; }
+          .secteur-badge { padding: 7px 11px; font-size: 12.5px; }
+        }
+      `}</style>
       <div className="panneau-marque">
         <div className="fond-motif" aria-hidden="true" />
         <div className="fond-halo" aria-hidden="true" />
@@ -115,6 +168,25 @@ export function LoginPage() {
           Pilotez votre stock, vos ventes, vos clients et vos fournisseurs
           depuis un espace unique, pensé pour aller vite.
         </p>
+
+        <div className="secteurs-vitrine">
+          <span className="secteurs-vitrine-titre">Adapté à votre secteur d'activité</span>
+          <div className="secteurs-liste">
+            {SECTEURS_VITRINE.map((secteur) => (
+              <div
+                key={secteur.nom}
+                className="secteur-badge"
+                style={{
+                  '--secteur-couleur': secteur.couleur,
+                  '--secteur-couleur-claire': secteur.couleurClaire,
+                }}
+              >
+                <span className="secteur-point" aria-hidden="true" />
+                {secteur.nom}
+              </div>
+            ))}
+          </div>
+        </div>
 
         <div className="cartes-flottantes">
           <div className="carte-flottante carte-flottante--1">
