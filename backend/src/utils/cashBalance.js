@@ -24,7 +24,8 @@ async function calculerMouvements(req, debutISO, finISO, warehouseId) {
   const encaissementsResult = await pool.query(
     `SELECT payment_method, COALESCE(SUM(total_amount), 0) AS total
      FROM orders
-     WHERE merchant_id = $1 AND validated_at >= $2 AND validated_at < $3 AND payment_method != 'a_credit'
+     WHERE merchant_id = $1 AND validated_at >= $2 AND validated_at < $3
+       AND payment_method NOT IN ('a_credit', 'tiers_payant')
        AND warehouse_id = $4
      GROUP BY payment_method`,
     paramsTs
@@ -35,6 +36,18 @@ async function calculerMouvements(req, debutISO, finISO, warehouseId) {
      FROM credit_payments
      WHERE merchant_id = $1 AND created_at >= $2 AND created_at < $3 AND warehouse_id = $4
      GROUP BY payment_method`,
+    paramsTs
+  );
+
+  // Reste à charge d'une vente en tiers payant : seul montant réellement
+  // encaissé côté client (la part assureur n'entre jamais en caisse — voir
+  // insurer_claims, réglée séparément via insurer_payments).
+  const copaiementsTiersPayantResult = await pool.query(
+    `SELECT icp.payment_method, COALESCE(SUM(icp.amount), 0) AS total
+     FROM insurer_copayments icp
+     JOIN orders o ON o.id = icp.order_id
+     WHERE icp.merchant_id = $1 AND icp.created_at >= $2 AND icp.created_at < $3 AND o.warehouse_id = $4
+     GROUP BY icp.payment_method`,
     paramsTs
   );
 
@@ -73,11 +86,12 @@ async function calculerMouvements(req, debutISO, finISO, warehouseId) {
 
   const parMethode = {};
   MOYENS_PAIEMENT.forEach((m) => {
-    parMethode[m] = { encaissements: 0, reglementsCredit: 0, achatsStock: 0, reglementsFournisseur: 0, sorties: 0, entreesManuelles: 0 };
+    parMethode[m] = { encaissements: 0, reglementsCredit: 0, copaiementsTiersPayant: 0, achatsStock: 0, reglementsFournisseur: 0, sorties: 0, entreesManuelles: 0 };
   });
 
   encaissementsResult.rows.forEach((r) => { if (parMethode[r.payment_method]) parMethode[r.payment_method].encaissements = Number(r.total); });
   reglementsCreditResult.rows.forEach((r) => { if (parMethode[r.payment_method]) parMethode[r.payment_method].reglementsCredit = Number(r.total); });
+  copaiementsTiersPayantResult.rows.forEach((r) => { if (parMethode[r.payment_method]) parMethode[r.payment_method].copaiementsTiersPayant = Number(r.total); });
   achatsStockResult.rows.forEach((r) => { if (r.payment_method && parMethode[r.payment_method]) parMethode[r.payment_method].achatsStock = Number(r.total); });
   reglementsFournisseurResult.rows.forEach((r) => { if (parMethode[r.payment_method]) parMethode[r.payment_method].reglementsFournisseur = Number(r.total); });
   sortiesResult.rows.forEach((r) => { if (parMethode[r.payment_method]) parMethode[r.payment_method].sorties = Number(r.total); });
@@ -85,7 +99,7 @@ async function calculerMouvements(req, debutISO, finISO, warehouseId) {
 
   MOYENS_PAIEMENT.forEach((m) => {
     const d = parMethode[m];
-    d.entrees = d.encaissements + d.reglementsCredit + d.entreesManuelles;
+    d.entrees = d.encaissements + d.reglementsCredit + d.copaiementsTiersPayant + d.entreesManuelles;
     d.sortiesTotal = d.achatsStock + d.reglementsFournisseur + d.sorties;
     d.theoretical = d.entrees - d.sortiesTotal;
   });
