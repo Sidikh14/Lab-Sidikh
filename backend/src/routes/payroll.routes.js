@@ -142,7 +142,7 @@ router.post('/:userId/generate', requireRole('manager'), async (req, res) => {
     const targetMonth = month || moisActuel();
 
     const employe = await client.query(
-      `SELECT u.id, u.full_name, es.monthly_salary
+      `SELECT u.id, u.full_name, es.monthly_salary, es.parts_fiscales
        FROM users u
        LEFT JOIN employee_salaries es ON es.user_id = u.id
        WHERE u.id = $1 AND u.merchant_id = $2`,
@@ -162,6 +162,7 @@ router.post('/:userId/generate', requireRole('manager'), async (req, res) => {
       baseSalary: employe.rows[0].monthly_salary,
       bonuses: listeBonus,
       settings: reglages,
+      partsFiscales: employe.rows[0].parts_fiscales,
     });
 
     await client.query('BEGIN');
@@ -291,6 +292,9 @@ function genererBulletinPDF(doc, bulletin) {
     mobile_money_details: bulletin.mobile_money_details,
     payment_terms: bulletin.payment_terms,
   };
+  const largeurPage = doc.page.width;
+  const xGauche = 50;
+  const xDroite = largeurPage - 50;
 
   let y = dessinerEntete(doc, {
     businessName: bulletin.business_name,
@@ -299,47 +303,99 @@ function genererBulletinPDF(doc, bulletin) {
     merchant,
   });
 
-  doc.fontSize(10).fillColor(COULEURS.encre).font('Helvetica-Bold').text(bulletin.full_name, 50, y);
-  doc.fontSize(9).fillColor(COULEURS.muted).font('Helvetica').text(bulletin.role, 50, y + 14);
-  y += 40;
+  // Bandeau identité employé, sur fond légèrement grisé, avec les infos clés
+  // (nom, poste, quotient familial) réparties sur la largeur.
+  const hauteurBandeau = 44;
+  doc.rect(xGauche, y, xDroite - xGauche, hauteurBandeau).fill(COULEURS.fondAlterne);
+  doc.fillColor(COULEURS.mutedClair).font('Helvetica').fontSize(7.5)
+    .text('SALARIÉ', xGauche + 14, y + 9, { characterSpacing: 0.5 });
+  doc.fillColor(COULEURS.encre).font('Helvetica-Bold').fontSize(12)
+    .text(bulletin.full_name, xGauche + 14, y + 20);
 
+  const xColonne2 = xGauche + (xDroite - xGauche) * 0.42;
+  doc.fillColor(COULEURS.mutedClair).font('Helvetica').fontSize(7.5)
+    .text('POSTE', xColonne2, y + 9, { characterSpacing: 0.5 });
+  doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(10)
+    .text(libelleRole(bulletin.role), xColonne2, y + 20);
+
+  const xColonne3 = xGauche + (xDroite - xGauche) * 0.74;
+  doc.fillColor(COULEURS.mutedClair).font('Helvetica').fontSize(7.5)
+    .text('QUOTIENT FAMILIAL', xColonne3, y + 9, { characterSpacing: 0.5 });
+  doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(10)
+    .text(`${formatMontant(bulletin.parts_fiscales).replace(/\s/g, '')} part(s)`, xColonne3, y + 20);
+
+  y += hauteurBandeau + 20;
+
+  // --- Section GAINS ---
   y = dessinerEnteteTableau(doc, y, [
-    { texte: 'Élément', x: 50, largeur: 300 },
-    { texte: 'Montant (FCFA)', x: 400, largeur: 145, aligner: 'right' },
+    { texte: 'Gains', x: xGauche, largeur: 300 },
+    { texte: 'Montant (FCFA)', x: xColonne3 - 30, largeur: 175, aligner: 'right' },
   ]);
 
-  function ligne(label, montant, gras = false) {
+  let indexLigne = 0;
+  function ligne(label, montant, { gras = false, indent = false } = {}) {
+    const fond = indexLigne % 2 === 1 ? COULEURS.fondAlterne : null;
+    if (fond) doc.rect(xGauche - 4, y - 3, xDroite - xGauche + 8, 17).fill(fond);
     doc.font(gras ? 'Helvetica-Bold' : 'Helvetica').fontSize(9.5).fillColor(COULEURS.encre);
-    doc.text(label, 50, y, { width: 300 });
-    doc.text(formatMontant(montant), 400, y, { width: 145, align: 'right' });
-    y += 18;
+    doc.text(label, xGauche + (indent ? 12 : 0), y, { width: 290 - (indent ? 12 : 0) });
+    doc.text(formatMontant(montant), xColonne3 - 30, y, { width: 175, align: 'right' });
+    y += 17;
+    indexLigne += 1;
   }
 
   ligne('Salaire de base', bulletin.base_salary);
-  (bulletin.bonuses_detail || []).forEach((b) => ligne(`Prime — ${b.label}`, b.amount));
-  ligne('Salaire brut', bulletin.gross_salary, true);
-  y += 6;
+  (bulletin.bonuses_detail || []).forEach((b) => ligne(`Prime — ${b.label}`, b.amount, { indent: true }));
+  y += 4;
   traitSeparateur(doc, y);
+  y += 10;
+  ligne('Salaire brut', bulletin.gross_salary, { gras: true });
   y += 14;
 
-  ligne('IPRES (retraite, part salariale)', -bulletin.ipres_salarial);
-  if (Number(bulletin.css_salarial) > 0) ligne('CSS (part salariale)', -bulletin.css_salarial);
+  // --- Section RETENUES ---
+  indexLigne = 0;
+  y = dessinerEnteteTableau(doc, y, [
+    { texte: 'Retenues salariales', x: xGauche, largeur: 300 },
+    { texte: 'Montant (FCFA)', x: xColonne3 - 30, largeur: 175, aligner: 'right' },
+  ]);
+
+  ligne('IPRES (retraite)', bulletin.ipres_salarial);
+  if (Number(bulletin.css_salarial) > 0) ligne('CSS', bulletin.css_salarial);
   ligne('Revenu imposable', bulletin.revenu_imposable);
-  ligne('Impôt sur le revenu (IRPP)', -bulletin.irpp);
-  ligne('TRIMF', -bulletin.trimf);
-  y += 6;
-  traitSeparateur(doc, y);
+  ligne('Impôt sur le revenu (IRPP)', bulletin.irpp);
+  ligne('TRIMF', bulletin.trimf);
+  y += 10;
+
+  // --- Encart NET À PAYER, mis en évidence ---
+  const hauteurNet = 40;
+  doc.roundedRect(xGauche, y, xDroite - xGauche, hauteurNet, 6).fill(COULEURS.encre);
+  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(12.5)
+    .text('NET À PAYER', xGauche + 16, y + 13);
+  doc.fontSize(14).text(`${formatMontant(bulletin.net_a_payer)} FCFA`, xGauche, y + 11, { width: xDroite - xGauche - 16, align: 'right' });
+  y += hauteurNet + 24;
+
+  // --- Charges patronales, informatif, distinct visuellement ---
+  doc.fillColor(COULEURS.muted).font('Helvetica-Bold').fontSize(8)
+    .text('CHARGES PATRONALES (INFORMATIF — NON DÉDUITES DU NET)', xGauche, y, { characterSpacing: 0.5 });
   y += 14;
-
-  ligne('Net à payer', bulletin.net_a_payer, true);
-  y += 30;
-
-  doc.fontSize(8).fillColor(COULEURS.mutedClair).font('Helvetica').text(
-    `Charges patronales (informatif, non déduites du net) — IPRES : ${formatMontant(bulletin.ipres_patronal)} FCFA · CSS : ${formatMontant(bulletin.css_patronal)} FCFA · CFCE : ${formatMontant(bulletin.cfce)} FCFA · Coût total employeur : ${formatMontant(bulletin.cout_total_employeur)} FCFA`,
-    50, y, { width: doc.page.width - 100 }
-  );
+  const charges = [
+    ['IPRES patronal', bulletin.ipres_patronal],
+    ['CSS patronal', bulletin.css_patronal],
+    ['CFCE', bulletin.cfce],
+    ['Coût total employeur', bulletin.cout_total_employeur],
+  ];
+  const largeurCase = (xDroite - xGauche) / charges.length;
+  charges.forEach(([label, montant], i) => {
+    const x = xGauche + i * largeurCase;
+    doc.fillColor(COULEURS.mutedClair).font('Helvetica').fontSize(7.5).text(label.toUpperCase(), x, y, { width: largeurCase - 8, characterSpacing: 0.3 });
+    doc.fillColor(COULEURS.muted).font('Helvetica-Bold').fontSize(10).text(`${formatMontant(montant)} FCFA`, x, y + 11, { width: largeurCase - 8 });
+  });
 
   dessinerPiedDePage(doc, merchant);
+}
+
+function libelleRole(role) {
+  const LABELS = { gerant: 'Gérant', vendeur: 'Vendeur', caissier: 'Caissier', vendeur_caissier: 'Vendeur / Caissier', manager: 'Manager' };
+  return LABELS[role] || role;
 }
 
 module.exports = router;

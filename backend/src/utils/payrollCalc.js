@@ -35,9 +35,12 @@ function chercherPalier(valeur, paliers) {
 }
 
 // baseSalary, bonuses : nombres (FCFA/mois). settings : ligne payroll_settings.
+// partsFiscales : quotient familial (1 = célibataire sans enfant à charge ;
+// généralement +0.5 par enfant selon la situation déclarée par l'employé).
 // Retourne un objet plat prêt à être stocké tel quel dans `payslips` (mêmes
 // noms de colonnes) et utilisé pour l'affichage/le PDF.
-function calculerBulletin({ baseSalary, bonuses = [], settings }) {
+function calculerBulletin({ baseSalary, bonuses = [], settings, partsFiscales = 1 }) {
+  const parts = Number(partsFiscales) > 0 ? Number(partsFiscales) : 1;
   const base = Number(baseSalary) || 0;
   const bonusesTotal = bonuses.reduce((somme, b) => somme + Number(b.amount || 0), 0);
   const brut = base + bonusesTotal;
@@ -65,7 +68,11 @@ function calculerBulletin({ baseSalary, bonuses = [], settings }) {
   const revenuImposableAnnuel = Math.max(0, brutAnnuel - abattementAnnuel);
   const revenuImposable = revenuImposableAnnuel / 12;
 
-  const irppAnnuel = appliquerBaremeProgressif(revenuImposableAnnuel, settings.bareme_irpp);
+  // Quotient familial : on applique le barème à une seule "part" du revenu,
+  // puis on multiplie l'impôt obtenu par le nombre de parts — méthode
+  // standard (sans plafonnement des effets du quotient familial, non géré ici).
+  const irppParPartAnnuel = appliquerBaremeProgressif(revenuImposableAnnuel / parts, settings.bareme_irpp);
+  const irppAnnuel = irppParPartAnnuel * parts;
   const irpp = irppAnnuel / 12;
 
   const trimf = chercherPalier(brut, settings.trimf_bareme);
@@ -80,6 +87,7 @@ function calculerBulletin({ baseSalary, bonuses = [], settings }) {
     bonuses_detail: bonuses.map((b) => ({ label: b.label, amount: round2(Number(b.amount) || 0) })),
     bonuses_total: round2(bonusesTotal),
     gross_salary: round2(brut),
+    parts_fiscales: parts,
     ipres_salarial: round2(ipresSalarial),
     css_salarial: round2(cssSalarial),
     revenu_imposable: round2(revenuImposable),

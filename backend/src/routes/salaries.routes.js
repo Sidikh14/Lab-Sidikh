@@ -52,16 +52,20 @@ router.get('/max-month', async (req, res) => {
 });
 
 // GET /salaries - liste des employés + salaire configuré + statut du mois en cours
+// + statut du bulletin de paie du mois (net_a_payer si généré) : permet au front
+// de verrouiller le paiement sur le montant du bulletin sans appel supplémentaire.
 router.get('/', async (req, res) => {
   try {
     const month = req.query.month || moisActuel();
     const { rows } = await pool.query(
       `SELECT u.id, u.full_name AS name, u.role,
-              es.monthly_salary, es.payment_method,
-              sp.amount AS paid_amount, sp.payment_method AS paid_method, sp.paid_at
+              es.monthly_salary, es.payment_method, es.parts_fiscales,
+              sp.amount AS paid_amount, sp.payment_method AS paid_method, sp.paid_at,
+              p.net_a_payer AS payslip_net, p.generated_at AS payslip_generated_at
        FROM users u
        LEFT JOIN employee_salaries es ON es.user_id = u.id
        LEFT JOIN salary_payments sp ON sp.user_id = u.id AND sp.month = $2
+       LEFT JOIN payslips p ON p.user_id = u.id AND p.month = $2
        WHERE u.merchant_id = $1 AND u.is_active = true AND u.role != 'manager' AND u.role != 'owner'
        ORDER BY u.full_name`,
       [req.user.merchantId, month]
@@ -73,21 +77,26 @@ router.get('/', async (req, res) => {
   }
 });
 
-// PUT /salaries/:userId - configurer le salaire d'un employé
+// PUT /salaries/:userId - configurer le salaire d'un employé (+ nombre de parts
+// fiscales, utilisé par le quotient familial dans le calcul de l'IRPP)
 router.put('/:userId', async (req, res) => {
   try {
-    const { monthlySalary, paymentMethod } = req.body;
+    const { monthlySalary, paymentMethod, partsFiscales } = req.body;
     if (!monthlySalary || monthlySalary <= 0) {
       return res.status(400).json({ error: 'Montant invalide' });
     }
     if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
       return res.status(400).json({ error: 'Méthode de paiement invalide' });
     }
+    const parts = partsFiscales ? Number(partsFiscales) : 1;
+    if (parts < 1) {
+      return res.status(400).json({ error: 'Le nombre de parts fiscales doit être au moins 1.' });
+    }
     await pool.query(
-      `INSERT INTO employee_salaries (user_id, monthly_salary, payment_method)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (user_id) DO UPDATE SET monthly_salary = $2, payment_method = $3, updated_at = now()`,
-      [req.params.userId, monthlySalary, paymentMethod]
+      `INSERT INTO employee_salaries (user_id, monthly_salary, payment_method, parts_fiscales)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (user_id) DO UPDATE SET monthly_salary = $2, payment_method = $3, parts_fiscales = $4, updated_at = now()`,
+      [req.params.userId, monthlySalary, paymentMethod, parts]
     );
     res.json({ success: true });
   } catch (err) {
@@ -96,15 +105,18 @@ router.put('/:userId', async (req, res) => {
   }
 });
 
-// POST /salaries/:userId/pay - marquer comme payé pour un mois donné
+// POST /salaries/:userId/pay - marquer comme payé pour un mois donné.
+// Le montant N'EST PLUS libre : s'il existe un bulletin de paie généré pour ce
+// mois, le montant versé est verrouillé sur son net_a_payer (le corps de la
+// requête ne peut pas le modifier) — évite de payer un montant différent de
+// celui calculé/imprimé sur le bulletin remis à l'employé.
 router.post('/:userId/pay', async (req, res) => {
   const client = await pool.connect();
   try {
     const { userId } = req.params;
-    const { month, amount, paymentMethod } = req.body;
+    const { month, paymentMethod } = req.body;
     const targetMonth = month || moisActuel();
 
-    if (!amount || amount <= 0) return res.status(400).json({ error: 'Montant invalide' });
     if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
       return res.status(400).json({ error: 'Méthode de paiement invalide' });
     }
@@ -113,6 +125,15 @@ router.post('/:userId/pay', async (req, res) => {
     if (targetMonth > maxMonth) {
       return res.status(400).json({ error: `Vous devez d'abord solder le mois en cours avant d'accéder à ${targetMonth}.` });
     }
+
+    const bulletin = await client.query(
+      `SELECT net_a_payer FROM payslips WHERE user_id = $1 AND month = $2`,
+      [userId, targetMonth]
+    );
+    if (bulletin.rows.length === 0) {
+      return res.status(400).json({ error: "Génère d'abord le bulletin de paie de ce mois avant de marquer le paiement." });
+    }
+    const amount = Number(bulletin.rows[0].net_a_payer);
 
     await client.query('BEGIN');
 
@@ -155,7 +176,7 @@ router.post('/:userId/pay', async (req, res) => {
 
     broadcast(req.user.merchantId, 'activity:created', {});
 
-    res.json({ success: true });
+    res.json({ success: true, amount });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error(err);

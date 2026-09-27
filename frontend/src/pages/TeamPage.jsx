@@ -770,13 +770,13 @@ function SalairesTab() {
   const [employeConfig, setEmployeConfig] = useState(null);
   const [salaireSaisi, setSalaireSaisi] = useState('');
   const [methodeSaisie, setMethodeSaisie] = useState('especes');
+  const [partsSaisies, setPartsSaisies] = useState(1);
 
   const [employePaiement, setEmployePaiement] = useState(null);
   const [montantPaiement, setMontantPaiement] = useState('');
   const [methodePaiement, setMethodePaiement] = useState('especes');
   const [envoiEnCours, setEnvoiEnCours] = useState(false);
 
-  const [paiementSourceNet, setPaiementSourceNet] = useState(false);
   const [employeBulletin, setEmployeBulletin] = useState(null);
   const [primes, setPrimes] = useState([]);
   const [bulletinCalcule, setBulletinCalcule] = useState(null);
@@ -809,6 +809,7 @@ function SalairesTab() {
     setEmployeConfig(emp);
     setSalaireSaisi(emp.monthly_salary || '');
     setMethodeSaisie(emp.payment_method || 'especes');
+    setPartsSaisies(emp.parts_fiscales || 1);
   }
 
   async function enregistrerConfig(e) {
@@ -822,6 +823,7 @@ function SalairesTab() {
       await api.setSalary(employeConfig.id, {
         monthlySalary: Number(salaireSaisi),
         paymentMethod: methodeSaisie,
+        partsFiscales: Number(partsSaisies) || 1,
       });
       setEmployeConfig(null);
       charger();
@@ -832,17 +834,10 @@ function SalairesTab() {
     }
   }
 
-  async function ouvrirPaiement(emp) {
+  function ouvrirPaiement(emp) {
     setEmployePaiement(emp);
     setMethodePaiement(emp.payment_method || 'especes');
-    try {
-      const bulletin = await api.getPayslip(emp.id, mois);
-      setMontantPaiement(bulletin.net_a_payer);
-      setPaiementSourceNet(true);
-    } catch {
-      setMontantPaiement(emp.monthly_salary || '');
-      setPaiementSourceNet(false);
-    }
+    setMontantPaiement(emp.payslip_net);
   }
 
   async function ouvrirBulletin(emp) {
@@ -881,6 +876,7 @@ function SalairesTab() {
         .map((p) => ({ label: p.label, amount: Number(p.amount) }));
       const resultat = await api.generatePayslip(employeBulletin.id, { month: mois, bonuses: bonusesValides });
       setBulletinCalcule(resultat);
+      charger();
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -890,15 +886,10 @@ function SalairesTab() {
 
   async function confirmerPaiement(e) {
     e.preventDefault();
-    if (!montantPaiement || Number(montantPaiement) <= 0) {
-      setErreur('Montant invalide.');
-      return;
-    }
     setEnvoiEnCours(true);
     try {
       await api.paySalary(employePaiement.id, {
         month: mois,
-        amount: Number(montantPaiement),
         paymentMethod: methodePaiement,
       });
       setEmployePaiement(null);
@@ -959,7 +950,7 @@ function SalairesTab() {
                 </button>
                 <button
                   className="btn btn-principal"
-                  disabled={!emp.monthly_salary}
+                  disabled={!emp.payslip_net}
                   onClick={() => ouvrirPaiement(emp)}
                 >
                   {paye ? 'Modifier le paiement' : 'Marquer comme payé'}
@@ -999,6 +990,21 @@ function SalairesTab() {
                     <option key={m.value} value={m.value}>{m.label}</option>
                   ))}
                 </select>
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="salaire-parts">Parts fiscales (quotient familial)</label>
+                <input
+                  id="salaire-parts"
+                  type="number"
+                  min="1"
+                  step="0.5"
+                  className="champ"
+                  value={partsSaisies}
+                  onChange={(e) => setPartsSaisies(e.target.value)}
+                />
+                <p style={{ fontSize: 12, color: 'var(--encre-douce)', marginTop: 4 }}>
+                  1 = célibataire sans enfant. Augmente selon la situation familiale déclarée par l'employé (mariage, enfants à charge…) — réduit l'impôt sur le revenu (IRPP) via le quotient familial.
+                </p>
               </div>
               <div className="actions-modale">
                 <button type="button" className="btn" onClick={() => setEmployeConfig(null)}>Annuler</button>
@@ -1083,26 +1089,19 @@ function SalairesTab() {
             <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
               {formatMois(mois)}
             </p>
-            {paiementSourceNet ? (
-              <p style={{ fontSize: 12, color: 'var(--succes, #1a7f37)', marginBottom: 12 }}>
-                Montant proposé : net calculé depuis le bulletin de paie généré.
-              </p>
-            ) : (
-              <p style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 12 }}>
-                Aucun bulletin généré pour ce mois — montant proposé = salaire brut. Génère le bulletin d'abord pour proposer le net.
-              </p>
-            )}
+            <p style={{ fontSize: 12, color: 'var(--succes, #1a7f37)', marginBottom: 12 }}>
+              Montant verrouillé sur le net du bulletin de paie généré.
+            </p>
             <form onSubmit={confirmerPaiement}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="paiement-montant">Montant versé (FCFA)</label>
                 <input
                   id="paiement-montant"
                   type="number"
-                  min="1"
                   className="champ"
                   value={montantPaiement}
-                  onChange={(e) => setMontantPaiement(e.target.value)}
-                  required
+                  readOnly
+                  disabled
                 />
               </div>
               <div className="champ-groupe">
