@@ -89,7 +89,7 @@ async function recupererMouvementsDetailles(req, method, from, to, cashier, ware
      WHERE o.merchant_id = $1 AND o.validated_at >= $2 AND o.validated_at < $3 AND o.warehouse_id = $4
        ${ts.idxMethode ? `AND o.payment_method = $${ts.idxMethode}` : ''}
        ${ts.idxCaissier ? `AND o.validated_by = $${ts.idxCaissier}` : ''}
-       ${tous ? "AND o.payment_method != 'a_credit'" : ''}
+       ${tous ? "AND o.payment_method NOT IN ('a_credit', 'tiers_payant')" : ''}
      ORDER BY o.validated_at`,
     ts.params
   );
@@ -104,6 +104,24 @@ async function recupererMouvementsDetailles(req, method, from, to, cashier, ware
        ${ts.idxMethode ? `AND cp.payment_method = $${ts.idxMethode}` : ''}
        ${ts.idxCaissier ? `AND cp.recorded_by = $${ts.idxCaissier}` : ''}
      ORDER BY cp.created_at`,
+    ts.params
+  );
+
+  // Reste à charge d'une vente en tiers payant : seul montant réellement
+  // encaissé côté client sur ce type de vente (la part assureur, elle,
+  // n'entre jamais en caisse — voir insurer_claims).
+  const copaiementsTiersPayant = await pool.query(
+    `SELECT icp.id, 'reglement_tiers_payant' AS type, icp.created_at AS date, icp.amount, icp.payment_method,
+            o.order_seq, o.created_at AS order_created_at, c.full_name AS client_name,
+            icp.user_id AS user_id, u.full_name AS user_name
+     FROM insurer_copayments icp
+     JOIN orders o ON o.id = icp.order_id
+     LEFT JOIN clients c ON c.id = o.client_id
+     LEFT JOIN users u ON u.id = icp.user_id
+     WHERE icp.merchant_id = $1 AND icp.created_at >= $2 AND icp.created_at < $3 AND o.warehouse_id = $4
+       ${ts.idxMethode ? `AND icp.payment_method = $${ts.idxMethode}` : ''}
+       ${ts.idxCaissier ? `AND icp.user_id = $${ts.idxCaissier}` : ''}
+     ORDER BY icp.created_at`,
     ts.params
   );
 
@@ -160,7 +178,7 @@ async function recupererMouvementsDetailles(req, method, from, to, cashier, ware
     dates.params
   );
 
-  const entrees = [...encaissements.rows, ...reglementsCredit.rows, ...entreesManuelles.rows].map((r) => ({ ...r, sens: 'entree' }));
+  const entrees = [...encaissements.rows, ...reglementsCredit.rows, ...copaiementsTiersPayant.rows, ...entreesManuelles.rows].map((r) => ({ ...r, sens: 'entree' }));
   const dehors = [...achatsStock.rows, ...reglementsFournisseur.rows, ...sorties.rows].map((r) => ({ ...r, sens: 'sortie' }));
 
   return [...entrees, ...dehors].sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -175,6 +193,7 @@ function formatOrderNumber(m) {
 function texteMouvement(m) {
   if (m.type === 'encaissement') return `Encaissement ${formatOrderNumber(m)}${m.client_name ? ` — ${m.client_name}` : ''}`;
   if (m.type === 'reglement_credit') return `Règlement créance${m.client_name ? ` — ${m.client_name}` : ''}`;
+  if (m.type === 'reglement_tiers_payant') return `Reste à charge tiers payant ${formatOrderNumber(m)}${m.client_name ? ` — ${m.client_name}` : ''}`;
   if (m.type === 'achat_stock') return `Achat stock — ${m.product_name}${m.supplier_name ? ` (${m.supplier_name})` : ''}`;
   if (m.type === 'reglement_fournisseur') return `Règlement fournisseur — ${m.supplier_name}`;
   if (m.type === 'sortie') return `Sortie de caisse — ${m.reason}`;

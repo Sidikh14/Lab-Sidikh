@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useOfflineSync } from '../offline/useOfflineSync';
@@ -10,6 +10,7 @@ const MOYENS_PAIEMENT = [
   { value: 'cheque', label: 'Chèque' },
   { value: 'virement', label: 'Virement' },
   { value: 'a_credit', label: 'À crédit' },
+  { value: 'tiers_payant', label: 'Tiers payant (mutuelle)' },
 ];
 
 const TYPES_REDUCTION = [
@@ -64,10 +65,22 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
   const [avanceActive, setAvanceActive] = useState(false);
   const [montantAvance, setMontantAvance] = useState('');
   const [moyenAvance, setMoyenAvance] = useState('especes');
+  const [moyenResteACharge, setMoyenResteACharge] = useState('especes');
+
+  // Mutuelle du client (tiers payant) — chargée une fois, pas incluse dans
+  // l'objet commande.
+  const [clientInfo, setClientInfo] = useState(null);
+  useEffect(() => {
+    if (commande.client_id) {
+      api.getClient(commande.client_id).then(setClientInfo).catch(() => {});
+    }
+  }, [commande.client_id]);
 
   const estManager = user?.role === 'manager';
   const estClientDePassage = !commande.client_id;
   const estACredit = moyenPaiement === 'a_credit';
+  const estTiersPayant = moyenPaiement === 'tiers_payant';
+  const clientAMutuelle = Boolean(clientInfo?.insurer_id && Number(clientInfo?.insurance_coverage_percent) > 0);
   const fraisLivraisonNombre = prevoirLivraison ? Number(fraisLivraison || 0) : 0;
   const montantReduction =
     estManager && reductionActive && valeurReduction
@@ -79,12 +92,20 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
         )
       : 0;
   const totalAPayer = Number(commande.total_amount) - montantReduction + fraisLivraisonNombre;
-  const monnaieARendre = Math.max(0, Number(montantRecu || 0) - totalAPayer);
+  const montantCouvertAssurance = estTiersPayant && clientAMutuelle
+    ? Math.min(totalAPayer, Math.round(totalAPayer * (Number(clientInfo.insurance_coverage_percent) / 100)))
+    : 0;
+  const montantResteACharge = estTiersPayant ? totalAPayer - montantCouvertAssurance : totalAPayer;
+  const monnaieARendre = Math.max(0, Number(montantRecu || 0) - montantResteACharge);
 
   async function handleEncaisser(e) {
     e.preventDefault();
     if (estACredit && !commande.client_id) {
       setErreur('Le paiement à crédit est réservé aux clients enregistrés.');
+      return;
+    }
+    if (estTiersPayant && !clientAMutuelle) {
+      setErreur("Ce client n'a pas de mutuelle/tiers payant configuré sur sa fiche.");
       return;
     }
     if (prevoirLivraison && (fraisLivraison !== '' && (Number.isNaN(Number(fraisLivraison)) || Number(fraisLivraison) < 0))) {
@@ -105,8 +126,8 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
         return;
       }
     }
-    if (!estACredit && Number(montantRecu) < totalAPayer) {
-      setErreur('Le montant reçu est inférieur au total à payer.');
+    if (!estACredit && Number(montantRecu) < montantResteACharge) {
+      setErreur(estTiersPayant ? 'Le montant reçu est inférieur au reste à charge du client.' : 'Le montant reçu est inférieur au total à payer.');
       return;
     }
     if (estACredit && avanceActive) {
@@ -124,7 +145,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
     try {
       const resultat = await recordPayment(commande.id, {
         paymentMethod: moyenPaiement,
-        amountReceived: estACredit ? 0 : Number(montantRecu),
+        amountReceived: estACredit ? 0 : estTiersPayant ? (montantResteACharge > 0 ? Number(montantRecu) : 0) : Number(montantRecu),
         needsDelivery: prevoirLivraison,
         deliveryFee: fraisLivraisonNombre,
         deliveryAddress: prevoirLivraison ? adresseLivraison.trim() : '',
@@ -134,6 +155,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
         ...(estACredit && avanceActive
           ? { advanceAmount: Number(montantAvance), advancePaymentMethod: moyenAvance }
           : {}),
+        ...(estTiersPayant && montantResteACharge > 0 ? { copaymentMethod: moyenResteACharge } : {}),
       });
       if (resultat?.offline) {
         // Pas de réseau : l'encaissement est en file d'attente, on ne peut
@@ -393,7 +415,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
           <div className="champ-groupe">
             <label className="etiquette" htmlFor="e-moyen">Moyen de paiement</label>
             <select id="e-moyen" className="champ" value={moyenPaiement} onChange={(e) => setMoyenPaiement(e.target.value)}>
-              {MOYENS_PAIEMENT.map((m) => (
+              {MOYENS_PAIEMENT.filter((m) => m.value !== 'tiers_payant' || clientAMutuelle).map((m) => (
                 <option key={m.value} value={m.value}>
                   {m.label}{m.value === 'a_credit' && estClientDePassage ? ' (client de passage → demande requise)' : ''}
                 </option>
@@ -401,7 +423,53 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
             </select>
           </div>
 
-          {estACredit ? (
+          {estTiersPayant ? (
+            <div
+              style={{
+                background: 'var(--fond)', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)',
+                padding: '10px 14px', marginBottom: 12,
+              }}
+            >
+              <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 10 }}>
+                <strong>{clientInfo?.insurer_name}</strong> prend en charge {Number(clientInfo?.insurance_coverage_percent)}% :
+                {' '}<strong className="chiffre">{Math.round(montantCouvertAssurance).toLocaleString('fr-FR')} FCFA</strong> à leur charge,
+                {' '}<strong className="chiffre">{Math.round(montantResteACharge).toLocaleString('fr-FR')} FCFA</strong> à la charge du client.
+              </p>
+
+              {montantResteACharge > 0 ? (
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <div style={{ flex: '1 1 140px' }}>
+                    <label className="etiquette" htmlFor="e-moyen-reste">Moyen de paiement du reste à charge</label>
+                    <select
+                      id="e-moyen-reste"
+                      className="champ"
+                      value={moyenResteACharge}
+                      onChange={(e) => setMoyenResteACharge(e.target.value)}
+                    >
+                      {MOYENS_PAIEMENT.filter((m) => m.value !== 'a_credit' && m.value !== 'tiers_payant').map((m) => (
+                        <option key={m.value} value={m.value}>{m.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ flex: '1 1 140px' }}>
+                    <label className="etiquette" htmlFor="e-recu-reste">Montant reçu (FCFA)</label>
+                    <input
+                      id="e-recu-reste"
+                      type="number"
+                      className="champ"
+                      value={montantRecu}
+                      onChange={(e) => setMontantRecu(e.target.value)}
+                    />
+                  </div>
+                  <p style={{ fontSize: 13, width: '100%', margin: 0 }}>
+                    Monnaie à rendre : <strong className="chiffre">{Math.round(monnaieARendre).toLocaleString('fr-FR')} FCFA</strong>
+                  </p>
+                </div>
+              ) : (
+                <p style={{ fontSize: 13, margin: 0 }}>Entièrement pris en charge — aucun encaissement requis.</p>
+              )}
+            </div>
+          ) : estACredit ? (
             <div
               style={{
                 background: 'var(--fond)', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)',

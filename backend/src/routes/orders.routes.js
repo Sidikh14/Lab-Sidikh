@@ -11,7 +11,7 @@ const { consumeFEFO } = require('../utils/lots');
 
 const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
 const SEUIL_ALERTE_PEREMPTION_JOURS = 30; // Pharmacie : lot bientôt périmé, vente réservée au pharmacien responsable
-const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement', 'a_credit'];
+const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement', 'a_credit', 'tiers_payant'];
 const TYPES_REDUCTION = ['remise', 'rabais', 'ristourne', 'escompte'];
 const MODES_REDUCTION = ['pourcentage', 'montant'];
 // Reliquat (commande client en attente sur rupture de stock) : réservé à
@@ -583,6 +583,7 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
   const {
     paymentMethod, amountReceived, needsDelivery, deliveryFee, deliveryAddress,
     discountType, discountMode, discountValue, advanceAmount, advancePaymentMethod,
+    copaymentMethod,
   } = req.body;
 
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
@@ -611,6 +612,7 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
   }
 
   const estACredit = paymentMethod === 'a_credit';
+  const estTiersPayant = paymentMethod === 'tiers_payant';
 
   // Avance versée directement par le client au moment de la vente à
   // crédit (optionnelle) : réduit immédiatement la créance et impacte la
@@ -676,6 +678,25 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
       return res.status(400).json({ error: 'La vente à crédit n\'est autorisée que pour un client déjà enregistré.' });
     }
 
+    // Tiers payant : le client doit être enregistré ET avoir une mutuelle
+    // avec un % de prise en charge configuré sur sa fiche.
+    let mutuelleClient = null;
+    if (estTiersPayant) {
+      if (!order.client_id) {
+        return res.status(400).json({ error: "La vente en tiers payant n'est autorisée que pour un client déjà enregistré." });
+      }
+      const clientResult = await pool.query(
+        `SELECT c.insurer_id, c.insurance_coverage_percent, i.name AS insurer_name
+         FROM clients c LEFT JOIN insurers i ON i.id = c.insurer_id
+         WHERE c.id = $1 AND c.merchant_id = $2`,
+        [order.client_id, req.user.merchantId]
+      );
+      mutuelleClient = clientResult.rows[0];
+      if (!mutuelleClient || !mutuelleClient.insurer_id || !Number(mutuelleClient.insurance_coverage_percent)) {
+        return res.status(400).json({ error: "Ce client n'a pas de mutuelle/tiers payant configuré sur sa fiche." });
+      }
+    }
+
     // Réduction calculée sur le total avant frais de livraison, jamais
     // au-delà du total (le total ne peut pas devenir négatif).
     let montantReduction = 0;
@@ -690,18 +711,43 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
     // Montant total réellement dû, réduction déduite et frais de livraison inclus.
     const montantDu = Number(order.total_amount) - montantReduction + fraisLivraison;
 
+    // Répartition automatique tiers payant : l'assureur couvre son %, le
+    // client règle immédiatement le reste (comme un paiement normal, mais
+    // sur un montant réduit).
+    let montantCouvertAssurance = 0;
+    let montantResteACharge = 0;
+    if (estTiersPayant) {
+      montantCouvertAssurance = Math.min(montantDu, Math.round(montantDu * (Number(mutuelleClient.insurance_coverage_percent) / 100)));
+      montantResteACharge = montantDu - montantCouvertAssurance;
+
+      if (montantResteACharge > 0) {
+        const MOYENS_PAIEMENT_CONCRETS_TP = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
+        if (!MOYENS_PAIEMENT_CONCRETS_TP.includes(copaymentMethod)) {
+          return res.status(400).json({ error: 'Le moyen de paiement du reste à charge est requis.' });
+        }
+        if (typeof amountReceived !== 'number' || amountReceived < montantResteACharge) {
+          return res.status(400).json({ error: 'Le montant reçu est inférieur au reste à charge du client.' });
+        }
+      }
+    }
+
     if (aAvance && advanceAmount > montantDu) {
       return res.status(400).json({ error: "L'avance ne peut pas dépasser le montant total de la facture." });
     }
 
-    if (!estACredit && amountReceived < montantDu) {
+    if (!estACredit && !estTiersPayant && amountReceived < montantDu) {
       return res.status(400).json({ error: 'Le montant reçu est inférieur au total à payer.' });
     }
 
-    // À crédit : rien n'est reçu maintenant, le montant total (livraison
-    // incluse) devient une créance sur le client, réglable plus tard.
-    const montantRecuFinal = estACredit ? 0 : amountReceived;
-    const changeGiven = estACredit ? 0 : Math.round(amountReceived - montantDu);
+    // À crédit ou tiers payant : rien (ou seulement le reste à charge) n'est
+    // reçu directement au moyen de paiement générique — le détail réel
+    // entre en caisse via credit_payments / insurer_copayments plus bas.
+    const montantRecuFinal = estACredit ? 0 : estTiersPayant ? (montantResteACharge > 0 ? amountReceived : 0) : amountReceived;
+    const changeGiven = estACredit
+      ? 0
+      : estTiersPayant
+        ? (montantResteACharge > 0 ? Math.round(amountReceived - montantResteACharge) : 0)
+        : Math.round(amountReceived - montantDu);
     // Pas de livraison prévue (case décochée) : la commande est directement
     // marquée comme livrée dès l'encaissement, qu'il s'agisse d'un client de
     // passage ou d'un client enregistré qui repart avec sa commande.
@@ -791,6 +837,29 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
         userId: req.user.id,
         action: 'order_credit_advance',
         description: `a encaissé une avance de ${formatMontant(advanceAmount)} sur la commande ${formatOrderNumber(orderMisAJour)}`,
+      });
+    }
+
+    if (estTiersPayant) {
+      await pool.query(
+        `INSERT INTO insurer_claims (merchant_id, insurer_id, client_id, order_id, amount)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [req.user.merchantId, mutuelleClient.insurer_id, order.client_id, order.id, montantCouvertAssurance]
+      );
+
+      if (montantResteACharge > 0) {
+        await pool.query(
+          `INSERT INTO insurer_copayments (merchant_id, order_id, user_id, amount, payment_method)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [req.user.merchantId, order.id, req.user.id, montantResteACharge, copaymentMethod]
+        );
+      }
+
+      await logActivity({
+        merchantId: req.user.merchantId,
+        userId: req.user.id,
+        action: 'order_tiers_payant_sale',
+        description: `a enregistré la commande ${formatOrderNumber(orderMisAJour)} en tiers payant (${mutuelleClient.insurer_name} : ${formatMontant(montantCouvertAssurance)}, client : ${formatMontant(montantResteACharge)})`,
       });
     }
 
@@ -1386,7 +1455,7 @@ async function getOrderReceiptDetail(merchantId, id) {
 }
 
 const MOYENS_PAIEMENT_LABEL = {
-  especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement', a_credit: 'À crédit',
+  especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement', a_credit: 'À crédit', tiers_payant: 'Tiers payant',
 };
 
 const LABEL_STATUT_PDF = {

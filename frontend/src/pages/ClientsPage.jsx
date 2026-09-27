@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/StatusBadge';
+import { useAuth } from '../context/AuthContext';
 
 function IconClient() {
   return (
@@ -44,11 +45,23 @@ const FILTRES_CREANCE = [
 ];
 
 export function ClientsPage() {
+  const { merchant } = useAuth();
+  const estPharmacie = merchant?.sector === 'pharmacie';
+
   const [clients, setClients] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouveauClient, setNouveauClient] = useState({ fullName: '', phone: '', email: '' });
+  const [nouveauClient, setNouveauClient] = useState({ fullName: '', phone: '', email: '', insurerId: '', insuranceCoveragePercent: '' });
+
+  // Mutuelles/tiers payant — pharmacie uniquement.
+  const [mutuelles, setMutuelles] = useState([]);
+  useEffect(() => {
+    if (estPharmacie) {
+      api.getInsurers().then(setMutuelles).catch((err) => setErreur(err.message));
+    }
+  }, [estPharmacie]);
+
 
   const [clientSelectionne, setClientSelectionne] = useState(null);
   const [detailChargement, setDetailChargement] = useState(false);
@@ -122,9 +135,15 @@ export function ClientsPage() {
       return;
     }
     try {
-      await api.createClient(nouveauClient);
+      await api.createClient({
+        ...nouveauClient,
+        insurerId: nouveauClient.insurerId || null,
+        insuranceCoveragePercent: nouveauClient.insurerId && nouveauClient.insuranceCoveragePercent !== ''
+          ? Number(nouveauClient.insuranceCoveragePercent)
+          : null,
+      });
       setModaleOuverte(false);
-      setNouveauClient({ fullName: '', phone: '', email: '' });
+      setNouveauClient({ fullName: '', phone: '', email: '', insurerId: '', insuranceCoveragePercent: '' });
       charger();
     } catch (err) {
       setErreur(err.message);
@@ -161,6 +180,8 @@ export function ClientsPage() {
       phone: client.phone || '',
       email: client.email || '',
       address: client.address || '',
+      insurerId: client.insurer_id || '',
+      insuranceCoveragePercent: client.insurance_coverage_percent ?? '',
     });
   }
 
@@ -172,7 +193,13 @@ export function ClientsPage() {
     }
     setEnregistrementEdition(true);
     try {
-      await api.updateClient(clientSelectionne.id, clientEnEdition);
+      await api.updateClient(clientSelectionne.id, {
+        ...clientEnEdition,
+        insurerId: clientEnEdition.insurerId || null,
+        insuranceCoveragePercent: clientEnEdition.insurerId && clientEnEdition.insuranceCoveragePercent !== ''
+          ? Number(clientEnEdition.insuranceCoveragePercent)
+          : null,
+      });
       setClientEnEdition(null);
       await rafraichirFiche(clientSelectionne.id);
     } catch (err) {
@@ -353,6 +380,39 @@ export function ClientsPage() {
                   onChange={(e) => setNouveauClient({ ...nouveauClient, email: e.target.value })}
                 />
               </div>
+              {estPharmacie && (
+                <>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="c-insurer">Mutuelle / tiers payant</label>
+                    <select
+                      id="c-insurer"
+                      className="champ"
+                      value={nouveauClient.insurerId}
+                      onChange={(e) => setNouveauClient({ ...nouveauClient, insurerId: e.target.value })}
+                    >
+                      <option value="">Aucune (client sans mutuelle)</option>
+                      {mutuelles.map((m) => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {nouveauClient.insurerId && (
+                    <div className="champ-groupe">
+                      <label className="etiquette" htmlFor="c-coverage">% pris en charge par la mutuelle</label>
+                      <input
+                        id="c-coverage"
+                        type="number"
+                        min="0"
+                        max="100"
+                        className="champ"
+                        value={nouveauClient.insuranceCoveragePercent}
+                        onChange={(e) => setNouveauClient({ ...nouveauClient, insuranceCoveragePercent: e.target.value })}
+                        placeholder="Ex : 70"
+                      />
+                    </div>
+                  )}
+                </>
+              )}
               <div className="actions-modale">
                 <button type="button" className="btn" onClick={() => setModaleOuverte(false)}>
                   Annuler

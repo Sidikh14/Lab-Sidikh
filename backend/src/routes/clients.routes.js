@@ -29,8 +29,12 @@ const SOUS_REQUETE_CREANCE = `
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, full_name, phone, email, address, created_at, (${SOUS_REQUETE_CREANCE}) AS balance_due
-       FROM clients WHERE merchant_id = $1 ORDER BY full_name`,
+      `SELECT c.id, c.full_name, c.phone, c.email, c.address, c.created_at,
+              c.insurer_id, c.insurance_coverage_percent, i.name AS insurer_name,
+              (${SOUS_REQUETE_CREANCE.replace(/clients\.id/g, 'c.id')}) AS balance_due
+       FROM clients c
+       LEFT JOIN insurers i ON i.id = c.insurer_id
+       WHERE c.merchant_id = $1 ORDER BY c.full_name`,
       [req.user.merchantId]
     );
     res.json(result.rows);
@@ -44,8 +48,11 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const clientResult = await pool.query(
-      `SELECT id, full_name, phone, email, address, created_at, (${SOUS_REQUETE_CREANCE}) AS balance_due
-       FROM clients WHERE id = $1 AND merchant_id = $2`,
+      `SELECT clients.id, full_name, phone, email, address, clients.created_at,
+              insurer_id, insurance_coverage_percent, i.name AS insurer_name,
+              (${SOUS_REQUETE_CREANCE}) AS balance_due
+       FROM clients LEFT JOIN insurers i ON i.id = clients.insurer_id
+       WHERE clients.id = $1 AND merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
     const client = clientResult.rows[0];
@@ -379,17 +386,23 @@ router.get('/:id/unpaid-invoices-pdf', requireRole('manager', 'gerant', 'caissie
 
 // POST /clients — tous les rôles peuvent créer une fiche client (utile au comptoir)
 router.post('/', async (req, res) => {
-  const { fullName, phone, email, address } = req.body;
+  const { fullName, phone, email, address, insurerId, insuranceCoveragePercent } = req.body;
 
   if (!fullName) {
     return res.status(400).json({ error: 'Le nom du client est requis.' });
   }
+  if (insuranceCoveragePercent !== undefined && insuranceCoveragePercent !== null) {
+    const pourcentage = Number(insuranceCoveragePercent);
+    if (Number.isNaN(pourcentage) || pourcentage < 0 || pourcentage > 100) {
+      return res.status(400).json({ error: 'Le pourcentage de prise en charge doit être entre 0 et 100.' });
+    }
+  }
 
   try {
     const result = await pool.query(
-      `INSERT INTO clients (merchant_id, full_name, phone, email, address)
-       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [req.user.merchantId, fullName, phone || null, email || null, address || null]
+      `INSERT INTO clients (merchant_id, full_name, phone, email, address, insurer_id, insurance_coverage_percent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [req.user.merchantId, fullName, phone || null, email || null, address || null, insurerId || null, insuranceCoveragePercent ?? null]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
@@ -402,7 +415,14 @@ router.post('/', async (req, res) => {
 // numéro pour pouvoir lui envoyer des relances via WhatsApp). Ouvert à tous
 // les rôles, comme la création, pour rester pratique au comptoir.
 router.patch('/:id', async (req, res) => {
-  const { fullName, phone, email, address } = req.body;
+  const { fullName, phone, email, address, insurerId, insuranceCoveragePercent } = req.body;
+
+  if (insuranceCoveragePercent !== undefined && insuranceCoveragePercent !== null) {
+    const pourcentage = Number(insuranceCoveragePercent);
+    if (Number.isNaN(pourcentage) || pourcentage < 0 || pourcentage > 100) {
+      return res.status(400).json({ error: 'Le pourcentage de prise en charge doit être entre 0 et 100.' });
+    }
+  }
 
   try {
     const result = await pool.query(
@@ -410,10 +430,12 @@ router.patch('/:id', async (req, res) => {
          full_name = COALESCE($1, full_name),
          phone = COALESCE($2, phone),
          email = COALESCE($3, email),
-         address = COALESCE($4, address)
-       WHERE id = $5 AND merchant_id = $6
+         address = COALESCE($4, address),
+         insurer_id = $5,
+         insurance_coverage_percent = $6
+       WHERE id = $7 AND merchant_id = $8
        RETURNING *`,
-      [fullName, phone, email, address, req.params.id, req.user.merchantId]
+      [fullName, phone, email, address, insurerId || null, insuranceCoveragePercent ?? null, req.params.id, req.user.merchantId]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Client introuvable.' });

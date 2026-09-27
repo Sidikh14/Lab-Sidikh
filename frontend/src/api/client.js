@@ -231,6 +231,15 @@ export const api = {
   deleteSupplier: (id) => request(`/suppliers/${id}`, { method: 'DELETE' }),
   downloadSupplierPurchasesPdf: (from, to) => previewFile(`/suppliers/purchases/pdf?from=${from}&to=${to}`),
 
+  getInsurers: () => request('/insurers'),
+  getInsurer: (id) => request(`/insurers/${id}`),
+  createInsurer: (data) =>
+    request('/insurers', { method: 'POST', body: JSON.stringify(data) }),
+  createInsurerPayment: (id, data) =>
+    request(`/insurers/${id}/payments`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteInsurer: (id) => request(`/insurers/${id}`, { method: 'DELETE' }),
+  downloadInsurerStatementPdf: (id, month) => previewFile(`/insurers/${id}/statement-pdf?month=${month}`),
+
   getPurchaseOrders: (warehouseId) => request(`/purchase-orders${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   getPurchaseOrder: (id) => request(`/purchase-orders/${id}`),
   createPurchaseOrder: (data) =>
@@ -302,18 +311,6 @@ export const api = {
     request(`/salaries/${userId}/pay`, { method: 'POST', body: JSON.stringify(data) }),
   getSalaryAlert: () => request('/salaries/alert'),
   getSalaryMaxMonth: () => request('/salaries/max-month'),
-
-  // Paie / bulletins de salaire
-  getPayrollSettings: () => request('/payroll/settings'),
-  updatePayrollSettings: (data) =>
-    request('/payroll/settings', { method: 'PUT', body: JSON.stringify(data) }),
-  getSalaryBonuses: (userId, month) =>
-    request(`/payroll/${userId}/bonuses${month ? `?month=${month}` : ''}`),
-  generatePayslip: (userId, data) =>
-    request(`/payroll/${userId}/generate`, { method: 'POST', body: JSON.stringify(data) }),
-  getPayslip: (userId, month) => request(`/payroll/${userId}/${month}`),
-  previewPayslipPdf: (userId, month) => previewFile(`/payroll/${userId}/${month}/pdf`),
-  getMyPayslips: () => request('/payroll/mine'),
 
   getInventorySessions: (warehouseId) => request(`/inventory-sessions${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),
