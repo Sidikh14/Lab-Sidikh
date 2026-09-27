@@ -571,14 +571,11 @@ export function OrdersPage() {
 
   const produitsCaisse = useMemo(() => {
     const recherche = rechercheCaisse.trim().toLowerCase();
-    // Un produit "à activer" (jamais reçu en stock) ne doit pas apparaître
-    // à la caisse — seuls les produits activés sont vendables.
-    const activesUniquement = products.filter((p) => p.status !== 'a_activer');
     const filtres = recherche
-      ? activesUniquement.filter(
+      ? products.filter(
           (p) => p.name.toLowerCase().includes(recherche) || codeInterne(p).toLowerCase().includes(recherche)
         )
-      : activesUniquement;
+      : products;
     return filtres;
   }, [products, rechercheCaisse]);
 

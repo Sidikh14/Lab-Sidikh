@@ -75,7 +75,6 @@ router.get('/pdf', async (req, res) => {
          p.name, p.sku, ps.quantity_in_stock,
          p.unit_price, p.quantity_alert_threshold,
          CASE
-           WHEN NOT p.is_activated THEN 'À activer'
            WHEN ps.quantity_in_stock = 0 THEN 'Rupture'
            WHEN ps.quantity_in_stock <= p.quantity_alert_threshold THEN 'Faible'
            ELSE 'En stock'
@@ -154,9 +153,8 @@ router.get('/', async (req, res) => {
          p.id, p.name, p.sku, p.unit_price,
          COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock,
          p.quantity_alert_threshold, p.is_weighted, p.tva_applicable, c.name AS category, p.category_id,
-         p.is_activated, p.is_vital, p.requires_prescription, p.requires_cold_chain,
+         p.is_vital, p.requires_prescription, p.requires_cold_chain,
          CASE
-           WHEN NOT p.is_activated THEN 'a_activer'
            WHEN COALESCE(ps.quantity_in_stock, 0) = 0 THEN 'rupture'
            WHEN ps.quantity_in_stock <= p.quantity_alert_threshold THEN 'faible'
            ELSE 'en_stock'
@@ -165,7 +163,7 @@ router.get('/', async (req, res) => {
        LEFT JOIN categories c ON c.id = p.category_id
        LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $2
        WHERE p.merchant_id = $1 AND p.is_active = TRUE
-       ORDER BY p.is_activated ASC, p.name`,
+       ORDER BY p.name`,
       [req.user.merchantId, warehouseId]
     );
 
@@ -202,13 +200,10 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
 
     await client.query('BEGIN');
 
-    // Secteur pharmacie : un produit créé sans stock initial n'est pas
-    // "activé" tant qu'aucune entrée de stock ne lui a été faite, pour ne
-    // pas l'afficher en rupture avant même d'avoir reçu de la marchandise.
-    // Les autres secteurs ne sont pas concernés (is_activated reste TRUE).
-    const isActivated = req.user.sector === 'pharmacie'
-      ? Number(quantityInStock) > 0
-      : true;
+    // L'anti-rupture-immédiate (statut "À activer" tant qu'aucune entrée de
+    // stock n'a été faite) a été retirée pour tous les secteurs — un produit
+    // est désormais toujours considéré comme activé dès sa création.
+    const isActivated = true;
 
     const result = await client.query(
       `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, cost_price, quantity_alert_threshold, is_weighted, tva_applicable, attributes, is_activated, is_vital, requires_prescription, requires_cold_chain)

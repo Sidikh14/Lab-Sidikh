@@ -19,7 +19,6 @@ const FILTRES_STATUT = [
   { value: 'en_stock', label: 'En stock' },
   { value: 'faible', label: 'Faible' },
   { value: 'rupture', label: 'Rupture' },
-  { value: 'a_activer', label: 'À activer' },
 ];
 
 function IconBoite() {
@@ -352,9 +351,7 @@ export function StockPage() {
           (p.sku || '').toLowerCase().includes(recherche.toLowerCase());
         const correspondStatut = filtreStatut === 'tous' || p.status === filtreStatut;
         return correspondRecherche && correspondStatut;
-      })
-      // Produits activés (stock déjà entré au moins une fois) en premier, "À activer" en dernier.
-      .sort((a, b) => (a.status === 'a_activer') - (b.status === 'a_activer'));
+      });
   }, [products, recherche, filtreStatut]);
 
   // Liaisons de substitution (princeps <-> génériques) du produit en cours
