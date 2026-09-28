@@ -291,7 +291,7 @@ export function SalariesPage() {
                 </select>
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="salaire-parts">Parts fiscales</label>
+                <label className="etiquette" htmlFor="salaire-parts">Parts fiscales (quotient familial)</label>
                 <input
                   id="salaire-parts"
                   type="number"
@@ -301,6 +301,9 @@ export function SalariesPage() {
                   value={partsSaisies}
                   onChange={(e) => setPartsSaisies(e.target.value)}
                 />
+                <p style={{ fontSize: 12, color: 'var(--encre-douce)', marginTop: 4 }}>
+                  1 = célibataire sans enfant. Augmente selon la situation familiale déclarée par l'employé (mariage, enfants à charge…) — réduit l'impôt sur le revenu (IRPP) via le quotient familial.
+                </p>
               </div>
               <div className="champ-groupe">
                 <label className="etiquette">Primes / indemnités mensuelles (reprises chaque mois)</label>
