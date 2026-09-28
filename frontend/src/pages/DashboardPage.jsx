@@ -118,6 +118,7 @@ export function DashboardPage() {
   const [demandesCredit, setDemandesCredit] = useState([]);
   const [demandesRetour, setDemandesRetour] = useState([]);
   const [chiffreAffaires, setChiffreAffaires] = useState(null);
+  const [benefice, setBenefice] = useState(null);
   const [venteParBoutique, setVenteParBoutique] = useState(null);
   const [alerteSalaires, setAlerteSalaires] = useState(null);
   const [lotsBientotPerimes, setLotsBientotPerimes] = useState([]);
@@ -224,6 +225,7 @@ export function DashboardPage() {
     }
     if (estManager) {
       api.getRevenue().then(setChiffreAffaires).catch((err) => setErreur(err.message));
+      api.getProfit().then(setBenefice).catch((err) => setErreur(err.message));
       api.getSalaryAlert().then(setAlerteSalaires).catch((err) => setErreur(err.message));
     }
     if (estPharmacie && vueEquipe) {
@@ -750,7 +752,19 @@ export function DashboardPage() {
                   <span className="etiquette">Chiffre d'affaires total</span>
                   <span className="valeur">{Math.round(chiffreAffaires.total).toLocaleString('fr-FR')} FCFA</span>
                 </div>
+                {benefice && (
+                  <div className="stat">
+                    <span className="stat-icone"><IconValeur /></span>
+                    <span className="etiquette">Bénéfice total</span>
+                    <span className="valeur">{Math.round(benefice.total).toLocaleString('fr-FR')} FCFA</span>
+                  </div>
+                )}
               </div>
+              {benefice && benefice.itemsSansCout > 0 && (
+                <p style={{ fontSize: 13, color: 'var(--texte-doux, #6b7280)', marginTop: -8, marginBottom: 20 }}>
+                  {benefice.itemsSansCout} ligne(s) de vente n'ont pas de prix d'achat : le bénéfice est surestimé tant que les prix d'achat ne sont pas renseignés sur les produits.
+                </p>
+              )}
 
               {chiffreAffaires.byMonth.length > 0 && (
                 <>
@@ -760,6 +774,11 @@ export function DashboardPage() {
                       <div key={m.month} className="carte-resume-membre">
                         <div style={{ minWidth: 0 }}>
                           <p className="carte-resume-membre-nom">{formatMois(m.month)}</p>
+                          {benefice && (
+                            <p style={{ fontSize: 12, margin: 0, opacity: 0.75 }}>
+                              Bénéfice : {Math.round(benefice.byMonth.find((b) => b.month === m.month)?.total || 0).toLocaleString('fr-FR')} FCFA
+                            </p>
+                          )}
                         </div>
                         <p className="carte-resume-membre-total">{Math.round(m.total).toLocaleString('fr-FR')} FCFA</p>
                       </div>

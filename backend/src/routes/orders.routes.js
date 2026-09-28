@@ -256,7 +256,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
       }
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.unit_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
+        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -384,9 +384,9 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
 
     for (const resolved of resolvedItems) {
       const orderItemResult = await client.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity]
+        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity, unit_cost)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity, Number(resolved.product.cost_price) || 0]
       );
       const orderItemId = orderItemResult.rows[0].id;
 
@@ -1156,7 +1156,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       }
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.unit_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
+        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -1254,9 +1254,9 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
 
     for (const resolved of resolvedItems) {
       const orderItemResult = await client.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity]
+        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity, unit_cost)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity, Number(resolved.product.cost_price) || 0]
       );
       const orderItemId = orderItemResult.rows[0].id;
 

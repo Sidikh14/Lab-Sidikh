@@ -138,6 +138,56 @@ router.get('/revenue', requireRole('manager'), async (req, res) => {
   }
 });
 
+// GET /activity/profit — bénéfice brut total et par mois (manager uniquement,
+// comme le chiffre d'affaires). Même base que /revenue (commandes encaissées).
+// Bénéfice d'une commande = somme des lignes (prix de vente - coût d'achat
+// figé au moment de la vente) - la réduction commerciale éventuelle. Pour les
+// anciennes lignes sans coût figé (unit_cost null), on retombe sur le prix
+// d'achat actuel du produit. Les frais de livraison et la TVA ne comptent pas.
+router.get('/profit', requireRole('manager'), async (req, res) => {
+  try {
+    const parMoisResult = await pool.query(
+      `WITH marge_commande AS (
+         SELECT o.id, o.validated_at, COALESCE(o.discount_amount, 0) AS remise,
+                COALESCE(SUM(oi.line_total - oi.quantity * COALESCE(oi.unit_cost, p.cost_price, 0)), 0) AS marge_brute
+         FROM orders o
+         LEFT JOIN order_items oi ON oi.order_id = o.id
+         LEFT JOIN products p ON p.id = oi.product_id
+         WHERE o.merchant_id = $1 AND o.validated_at IS NOT NULL
+         GROUP BY o.id
+       )
+       SELECT to_char(date_trunc('month', validated_at), 'YYYY-MM') AS month,
+              COALESCE(SUM(marge_brute - remise), 0) AS total
+       FROM marge_commande
+       GROUP BY 1
+       ORDER BY 1 DESC`,
+      [req.user.merchantId]
+    );
+
+    // Lignes vendues sans prix d'achat renseigné : leur marge est surestimée
+    // (coût compté à 0), on le signale au tableau de bord.
+    const sansCoutResult = await pool.query(
+      `SELECT COUNT(*) AS n
+       FROM order_items oi
+       JOIN orders o ON o.id = oi.order_id
+       LEFT JOIN products p ON p.id = oi.product_id
+       WHERE o.merchant_id = $1 AND o.validated_at IS NOT NULL
+         AND COALESCE(oi.unit_cost, p.cost_price, 0) = 0`,
+      [req.user.merchantId]
+    );
+
+    const byMonth = parMoisResult.rows.map((r) => ({ month: r.month, total: Number(r.total) }));
+    res.json({
+      total: byMonth.reduce((somme, m) => somme + m.total, 0),
+      byMonth,
+      itemsSansCout: Number(sansCoutResult.rows[0].n),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du calcul du bénéfice.' });
+  }
+});
+
 // GET /activity/revenue-by-warehouse — ventes encaissées groupées par
 // boutique. Contrairement à /revenue (chiffre d'affaires global, manager
 // uniquement), cette route est ouverte au gérant, mais SEULEMENT pour sa
