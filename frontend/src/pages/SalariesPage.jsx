@@ -18,6 +18,12 @@ function formatMois(moisStr) {
   return `${NOMS_MOIS[Number(mois) - 1]} ${annee}`;
 }
 
+function moisPrecedent(moisStr) {
+  const [annee, mois] = moisStr.split('-').map(Number);
+  const d = new Date(annee, mois - 2, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 export function SalariesPage() {
   const [mois, setMois] = useState(null);
   const [moisMax, setMoisMax] = useState(null);
@@ -114,7 +120,39 @@ export function SalariesPage() {
     setChargementBulletin(true);
     try {
       const existantes = await api.getSalaryBonuses(emp.id, mois);
-      setPrimes(existantes.length > 0 ? existantes.map((p) => ({ label: p.label, amount: p.amount })) : []);
+      if (existantes.length > 0) {
+        setPrimes(existantes.map((p) => ({ label: p.label, amount: p.amount })));
+      } else {
+        // Rien de saisi pour ce mois : on reprend les primes/indemnités du
+        // dernier mois où il y en avait (recherche sur 6 mois max). Si le mois
+        // courant a déjà un bulletin généré sans prime, on ne reprend rien.
+        let reprises = [];
+        let dejaGenere = false;
+        try {
+          await api.getPayslip(emp.id, mois);
+          dejaGenere = true;
+        } catch {
+          dejaGenere = false;
+        }
+        if (!dejaGenere) {
+          let m = mois;
+          for (let i = 0; i < 6; i += 1) {
+            m = moisPrecedent(m);
+            const precedentes = await api.getSalaryBonuses(emp.id, m);
+            if (precedentes.length > 0) {
+              reprises = precedentes.map((p) => ({ label: p.label, amount: p.amount }));
+              break;
+            }
+            try {
+              await api.getPayslip(emp.id, m);
+              break; // bulletin émis sans prime : la série s'arrête là
+            } catch {
+              // pas de bulletin ce mois-là : on remonte encore
+            }
+          }
+        }
+        setPrimes(reprises);
+      }
     } catch (err) {
       setErreur(err.message);
     } finally {
