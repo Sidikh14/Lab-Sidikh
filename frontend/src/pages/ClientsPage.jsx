@@ -687,6 +687,39 @@ function ClientsTab() {
                   onChange={(e) => setClientEnEdition({ ...clientEnEdition, address: e.target.value })}
                 />
               </div>
+              {estPharmacie && (
+                <>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="ce-insurer">Mutuelle / tiers payant</label>
+                    <select
+                      id="ce-insurer"
+                      className="champ"
+                      value={clientEnEdition.insurerId}
+                      onChange={(e) => setClientEnEdition({ ...clientEnEdition, insurerId: e.target.value })}
+                    >
+                      <option value="">Aucune (client sans mutuelle)</option>
+                      {mutuelles.map((m) => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {clientEnEdition.insurerId && (
+                    <div className="champ-groupe">
+                      <label className="etiquette" htmlFor="ce-coverage">% pris en charge par la mutuelle</label>
+                      <input
+                        id="ce-coverage"
+                        type="number"
+                        min="0"
+                        max="100"
+                        className="champ"
+                        value={clientEnEdition.insuranceCoveragePercent}
+                        onChange={(e) => setClientEnEdition({ ...clientEnEdition, insuranceCoveragePercent: e.target.value })}
+                        placeholder="Ex : 70"
+                      />
+                    </div>
+                  )}
+                </>
+              )}
               <div className="actions-modale">
                 <button type="button" className="btn" onClick={() => setClientEnEdition(null)}>Annuler</button>
                 <button type="submit" className="btn btn-principal" disabled={enregistrementEdition}>
