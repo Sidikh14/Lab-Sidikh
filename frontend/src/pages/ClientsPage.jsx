@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { StatusBadge } from '../components/StatusBadge';
 import { useAuth } from '../context/AuthContext';
+import { useLiveEvent } from '../offline/liveEvents';
 
 function IconClient() {
   return (
@@ -38,13 +39,51 @@ function IconDossier() {
   );
 }
 
+function IconMutuelle() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M12 21s-7-4.5-9.5-9C.5 8 2 4 6 4c2 0 3.5 1 4 2.5C10.5 5 12 4 14 4c4 0 5.5 4 3.5 8-2.5 4.5-9.5 9-9.5 9z" />
+    </svg>
+  );
+}
+
+function IconReglement() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="6" width="20" height="13" rx="2" />
+      <path d="M2 10h20" />
+      <path d="M6 15h4" />
+    </svg>
+  );
+}
+
+function IconCorbeille() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 7h16" />
+      <path d="M9 7V4h6v3" />
+      <path d="M6 7l1 13h10l1-13" />
+    </svg>
+  );
+}
+
+function IconTelecharger() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v12" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M4 21h16" />
+    </svg>
+  );
+}
+
 const FILTRES_CREANCE = [
   { value: 'tous', label: 'Tous' },
   { value: 'creance', label: 'Avec créance' },
   { value: 'a_jour', label: 'À jour' },
 ];
 
-export function ClientsPage() {
+function ClientsTab() {
   const { merchant } = useAuth();
   const estPharmacie = merchant?.sector === 'pharmacie';
 
@@ -243,8 +282,7 @@ export function ClientsPage() {
 
   return (
     <>
-      <div className="entete-page">
-        <h1>Clients</h1>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
         <button
           className="btn btn-principal"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
@@ -659,6 +697,408 @@ export function ClientsPage() {
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+function MutuellesTab() {
+  const [mutuelles, setMutuelles] = useState([]);
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState('');
+  const [modaleOuverte, setModaleOuverte] = useState(false);
+  const [nouveau, setNouveau] = useState({ name: '', phone: '', email: '', address: '' });
+
+  const [mutuelleSelectionnee, setMutuelleSelectionnee] = useState(null);
+  const [detailMutuelle, setDetailMutuelle] = useState(null);
+  const [montantReglement, setMontantReglement] = useState('');
+  const [moyenReglement, setMoyenReglement] = useState('especes');
+  const [enregistrementReglement, setEnregistrementReglement] = useState(false);
+
+  const [mois, setMois] = useState(() => new Date().toISOString().slice(0, 7));
+  const [exportEnCours, setExportEnCours] = useState(false);
+
+  const [recherche, setRecherche] = useState('');
+  const [filtreCreance, setFiltreCreance] = useState('tous');
+
+  function charger() {
+    setChargement(true);
+    api
+      .getInsurers()
+      .then(setMutuelles)
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargement(false));
+  }
+
+  useEffect(charger, []);
+  useLiveEvent('activity:created', () => charger());
+
+  const mutuellesFiltrees = useMemo(() => {
+    return mutuelles.filter((m) => {
+      const correspondRecherche =
+        m.name.toLowerCase().includes(recherche.toLowerCase()) ||
+        (m.phone || '').toLowerCase().includes(recherche.toLowerCase());
+      const correspondCreance =
+        filtreCreance === 'tous' ||
+        (filtreCreance === 'creance' && Number(m.debt) > 0) ||
+        (filtreCreance === 'a_jour' && Number(m.debt) <= 0);
+      return correspondRecherche && correspondCreance;
+    });
+  }, [mutuelles, recherche, filtreCreance]);
+
+  async function handleCreate(e) {
+    e.preventDefault();
+    if (!nouveau.name) {
+      setErreur('Le nom de la mutuelle est requis.');
+      return;
+    }
+    try {
+      await api.createInsurer(nouveau);
+      setModaleOuverte(false);
+      setNouveau({ name: '', phone: '', email: '', address: '' });
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
+  async function handleSupprimer(mutuelle) {
+    if (!window.confirm(`Retirer "${mutuelle.name}" de la liste des mutuelles ?`)) return;
+    try {
+      await api.deleteInsurer(mutuelle.id);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
+  function ouvrirDetail(mutuelle) {
+    setMutuelleSelectionnee(mutuelle);
+    setMontantReglement('');
+    setMoyenReglement('especes');
+    api
+      .getInsurer(mutuelle.id)
+      .then(setDetailMutuelle)
+      .catch((err) => setErreur(err.message));
+  }
+
+  async function handleEnregistrerReglement(e) {
+    e.preventDefault();
+    if (!Number(montantReglement) || Number(montantReglement) <= 0) {
+      setErreur('Montant de règlement invalide.');
+      return;
+    }
+    setEnregistrementReglement(true);
+    try {
+      await api.createInsurerPayment(mutuelleSelectionnee.id, { amount: Number(montantReglement), paymentMethod: moyenReglement });
+      const detail = await api.getInsurer(mutuelleSelectionnee.id);
+      setDetailMutuelle(detail);
+      setMontantReglement('');
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnregistrementReglement(false);
+    }
+  }
+
+  async function handleExporterEtat() {
+    if (!mois) {
+      setErreur('Choisissez un mois.');
+      return;
+    }
+    setExportEnCours(true);
+    try {
+      await api.downloadInsurerStatementPdf(mutuelleSelectionnee.id, mois);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setExportEnCours(false);
+    }
+  }
+
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        <button
+          className="btn btn-principal"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
+          onClick={() => setModaleOuverte(true)}
+        >
+          <IconPlus />
+          Nouvelle mutuelle
+        </button>
+      </div>
+
+      {erreur && <div className="erreur">{erreur}</div>}
+
+      <div className="barre-filtres">
+        <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
+          <span className="champ-icone"><IconRecherche /></span>
+          <input
+            type="text"
+            className="champ champ--avec-icone"
+            placeholder="Rechercher par nom ou téléphone…"
+            value={recherche}
+            onChange={(e) => setRecherche(e.target.value)}
+          />
+        </div>
+        <div
+          className="filtre-pilules"
+          style={{ display: 'flex', gap: 4, padding: 4, background: 'var(--fond-alterne, rgba(0,0,0,0.03))', borderRadius: 999, border: '1px solid var(--trait)' }}
+        >
+          {FILTRES_CREANCE.map((f) => {
+            const actif = filtreCreance === f.value;
+            return (
+              <button
+                key={f.value}
+                type="button"
+                onClick={() => setFiltreCreance(f.value)}
+                style={{
+                  border: 'none', cursor: 'pointer', padding: '7px 16px', borderRadius: 999, fontSize: 13,
+                  fontWeight: actif ? 600 : 500, color: actif ? '#fff' : 'var(--encre-douce)',
+                  background: actif ? 'var(--accent)' : 'transparent',
+                  boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
+                  transition: 'background 0.15s ease, color 0.15s ease', whiteSpace: 'nowrap',
+                }}
+              >
+                {f.label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {chargement ? (
+        <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+      ) : mutuellesFiltrees.length === 0 ? (
+        <p className="etat-vide">
+          {mutuelles.length === 0 ? 'Aucune mutuelle enregistrée pour le moment.' : 'Aucune mutuelle ne correspond à ces filtres.'}
+        </p>
+      ) : (
+        <div className="grille-cartes">
+          {mutuellesFiltrees.map((m) => {
+            const aCreance = Number(m.debt) > 0;
+            return (
+              <div key={m.id} className="carte-entite">
+                <div className="carte-entite-entete">
+                  <span className="carte-entite-icone"><IconMutuelle /></span>
+                  {aCreance && <span className="tampon tampon-brique">Créance</span>}
+                </div>
+                <p className="carte-entite-nom">{m.name}</p>
+                <p className="carte-entite-detail">{m.phone || m.email || 'Aucun contact enregistré'}</p>
+                <p className="carte-entite-metrique" style={aCreance ? { color: 'var(--danger)' } : undefined}>
+                  {Math.round(Number(m.debt) || 0).toLocaleString('fr-FR')} FCFA
+                </p>
+                <p className="carte-entite-souslegende">{aCreance ? 'Doit être réglée' : 'Aucune créance'}</p>
+                <div className="carte-entite-actions">
+                  <button
+                    className="btn"
+                    style={{ flex: 1, justifyContent: 'center', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    onClick={() => ouvrirDetail(m)}
+                  >
+                    <IconReglement />
+                    Détail / Règlement
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ padding: '7px 10px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                    onClick={() => handleSupprimer(m)}
+                    title="Retirer cette mutuelle"
+                  >
+                    <IconCorbeille />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {modaleOuverte && (
+        <div className="modale-fond" onClick={() => setModaleOuverte(false)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Ajouter une mutuelle</h2>
+            <form onSubmit={handleCreate}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="m-name">Nom</label>
+                <input
+                  id="m-name"
+                  className="champ"
+                  value={nouveau.name}
+                  onChange={(e) => setNouveau({ ...nouveau, name: e.target.value })}
+                  placeholder="IPM Santé Plus"
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="m-phone">Téléphone</label>
+                <input
+                  id="m-phone"
+                  className="champ"
+                  value={nouveau.phone}
+                  onChange={(e) => setNouveau({ ...nouveau, phone: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="m-email">Email</label>
+                <input
+                  id="m-email"
+                  type="email"
+                  className="champ"
+                  value={nouveau.email}
+                  onChange={(e) => setNouveau({ ...nouveau, email: e.target.value })}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="m-address">Adresse</label>
+                <input
+                  id="m-address"
+                  className="champ"
+                  value={nouveau.address}
+                  onChange={(e) => setNouveau({ ...nouveau, address: e.target.value })}
+                />
+              </div>
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={() => setModaleOuverte(false)}>
+                  Annuler
+                </button>
+                <button type="submit" className="btn btn-principal">
+                  Ajouter
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {mutuelleSelectionnee && (
+        <div className="modale-fond" onClick={() => { setMutuelleSelectionnee(null); setDetailMutuelle(null); }}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>{mutuelleSelectionnee.name}</h2>
+            {!detailMutuelle ? (
+              <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+            ) : (
+              <>
+                <p style={{ fontSize: 15, marginBottom: 16 }}>
+                  Créance actuelle : <strong className="chiffre">{Math.round(detailMutuelle.debt).toLocaleString('fr-FR')} FCFA</strong>
+                </p>
+
+                <form onSubmit={handleEnregistrerReglement}>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="mr-montant">Montant du règlement reçu (FCFA)</label>
+                    <input
+                      id="mr-montant"
+                      type="number"
+                      className="champ"
+                      value={montantReglement}
+                      onChange={(e) => setMontantReglement(e.target.value)}
+                    />
+                  </div>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="mr-moyen">Moyen de paiement</label>
+                    <select
+                      id="mr-moyen"
+                      className="champ"
+                      value={moyenReglement}
+                      onChange={(e) => setMoyenReglement(e.target.value)}
+                    >
+                      <option value="especes">Espèces</option>
+                      <option value="wave">Wave</option>
+                      <option value="orange_money">Orange Money</option>
+                      <option value="cheque">Chèque</option>
+                      <option value="virement">Virement</option>
+                    </select>
+                  </div>
+                  <div className="actions-modale">
+                    <button type="button" className="btn" onClick={() => { setMutuelleSelectionnee(null); setDetailMutuelle(null); }}>
+                      Fermer
+                    </button>
+                    <button type="submit" className="btn btn-principal" disabled={enregistrementReglement}>
+                      {enregistrementReglement ? 'Enregistrement…' : 'Enregistrer le règlement'}
+                    </button>
+                  </div>
+                </form>
+
+                <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--trait)' }}>
+                  <p style={{ margin: '0 0 10px', fontWeight: 600, fontSize: 13 }}>État mensuel (à transmettre pour remboursement)</p>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <input
+                      type="month"
+                      className="champ"
+                      style={{ width: 160 }}
+                      value={mois}
+                      onChange={(e) => setMois(e.target.value)}
+                    />
+                    <button
+                      className="btn"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+                      onClick={handleExporterEtat}
+                      disabled={exportEnCours}
+                    >
+                      <IconTelecharger />
+                      {exportEnCours ? 'Génération…' : 'Télécharger le PDF'}
+                    </button>
+                  </div>
+                </div>
+
+                {detailMutuelle.claims.length > 0 && (
+                  <>
+                    <h3 style={{ fontSize: 14, marginTop: 20, marginBottom: 8 }}>Prises en charge récentes</h3>
+                    <div style={{ maxHeight: 140, overflowY: 'auto' }}>
+                      {detailMutuelle.claims.map((c) => (
+                        <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, color: 'var(--encre-douce)' }}>
+                          <span>{new Date(c.created_at).toLocaleDateString('fr-FR')} — #{c.order_seq} · {c.client_name}</span>
+                          <span className="chiffre">{Math.round(c.amount).toLocaleString('fr-FR')} FCFA</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {detailMutuelle.payments.length > 0 && (
+                  <>
+                    <h3 style={{ fontSize: 14, marginTop: 20, marginBottom: 8 }}>Historique des règlements reçus</h3>
+                    <div style={{ maxHeight: 140, overflowY: 'auto' }}>
+                      {detailMutuelle.payments.map((p) => (
+                        <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, color: 'var(--encre-douce)' }}>
+                          <span>{new Date(p.paid_at).toLocaleDateString('fr-FR')} — {p.user_name}{p.notes ? ` (${p.notes})` : ''}</span>
+                          <span className="chiffre">{Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+export function ClientsPage() {
+  const { merchant } = useAuth();
+  const estPharmacie = merchant?.sector === 'pharmacie';
+  const [onglet, setOnglet] = useState('clients');
+
+  return (
+    <>
+      <div className="entete-page">
+        <h1>Clients</h1>
+      </div>
+
+      {estPharmacie && (
+        <div className="onglets" style={{ marginBottom: 20 }}>
+          <button className={onglet === 'clients' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('clients')}>
+            Clients
+          </button>
+          <button className={onglet === 'mutuelles' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('mutuelles')}>
+            Mutuelles / Tiers payant
+          </button>
+        </div>
+      )}
+
+      {estPharmacie && onglet === 'mutuelles' ? <MutuellesTab /> : <ClientsTab />}
     </>
   );
 }

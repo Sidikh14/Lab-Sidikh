@@ -930,7 +930,7 @@ router.patch('/:id/return-to-seller', requireRole('manager', 'caissier', 'vendeu
     // vendeurs) : c'est lui qui doit la corriger ou l'annuler.
     if (order.created_by) {
       getNomUtilisateur(req.user.id).then((nomExpediteur) => {
-        creerAlerte({
+        return creerAlerte({
           merchantId: req.user.merchantId,
           type: 'commande_renvoyee_vendeur',
           titre: 'Vente renvoyée pour correction',
