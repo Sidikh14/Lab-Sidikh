@@ -48,11 +48,11 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const clientResult = await pool.query(
-      `SELECT clients.id, full_name, phone, email, address, clients.created_at,
-              insurer_id, insurance_coverage_percent, i.name AS insurer_name,
+      `SELECT clients.id, clients.full_name, clients.phone, clients.email, clients.address, clients.created_at,
+              clients.insurer_id, clients.insurance_coverage_percent, i.name AS insurer_name,
               (${SOUS_REQUETE_CREANCE}) AS balance_due
        FROM clients LEFT JOIN insurers i ON i.id = clients.insurer_id
-       WHERE clients.id = $1 AND merchant_id = $2`,
+       WHERE clients.id = $1 AND clients.merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
     const client = clientResult.rows[0];
