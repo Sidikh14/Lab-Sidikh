@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useOfflineSync } from '../offline/useOfflineSync';
@@ -99,6 +99,30 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
     : 0;
   const montantResteACharge = estTiersPayant ? totalAPayer - montantCouvertAssurance : totalAPayer;
   const monnaieARendre = Math.max(0, Number(montantRecu || 0) - montantResteACharge);
+
+  // Client assuré : le tiers payant est sélectionné d'office dès que la
+  // fiche client est chargée (une seule fois — le caissier peut ensuite
+  // choisir un autre moyen de paiement s'il le souhaite).
+  const tiersPayantAutoApplique = useRef(false);
+  useEffect(() => {
+    if (clientAMutuelle && !tiersPayantAutoApplique.current) {
+      tiersPayantAutoApplique.current = true;
+      setMoyenPaiement('tiers_payant');
+    }
+  }, [clientAMutuelle]);
+
+  // Le montant reçu suit le reste à charge en tiers payant (au lieu de
+  // rester sur le total de la facture), et revient au total si on quitte
+  // le tiers payant.
+  const etaitTiersPayant = useRef(false);
+  useEffect(() => {
+    if (estTiersPayant) {
+      setMontantRecu(String(montantResteACharge));
+    } else if (etaitTiersPayant.current) {
+      setMontantRecu(String(totalAPayer));
+    }
+    etaitTiersPayant.current = estTiersPayant;
+  }, [estTiersPayant, montantResteACharge, totalAPayer]);
 
   async function handleEncaisser(e) {
     e.preventDefault();
@@ -369,10 +393,27 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
               <span className="chiffre">- {Math.round(montantReduction).toLocaleString('fr-FR')}</span>
             </div>
           )}
-          <div className="ticket-total-ligne ticket-total-ligne--principal">
-            <span>Total à payer</span>
-            <span className="chiffre">{Math.round(totalAPayer).toLocaleString('fr-FR')} FCFA</span>
-          </div>
+          {estTiersPayant && clientAMutuelle ? (
+            <>
+              <div className="ticket-total-ligne">
+                <span>Total facture</span>
+                <span className="chiffre">{Math.round(totalAPayer).toLocaleString('fr-FR')} FCFA</span>
+              </div>
+              <div className="ticket-total-ligne">
+                <span>Part {clientInfo?.insurer_name || 'assurance'} ({Number(clientInfo?.insurance_coverage_percent)}%)</span>
+                <span className="chiffre">- {Math.round(montantCouvertAssurance).toLocaleString('fr-FR')} FCFA</span>
+              </div>
+              <div className="ticket-total-ligne ticket-total-ligne--principal">
+                <span>Reste à charge client</span>
+                <span className="chiffre">{Math.round(montantResteACharge).toLocaleString('fr-FR')} FCFA</span>
+              </div>
+            </>
+          ) : (
+            <div className="ticket-total-ligne ticket-total-ligne--principal">
+              <span>Total à payer</span>
+              <span className="chiffre">{Math.round(totalAPayer).toLocaleString('fr-FR')} FCFA</span>
+            </div>
+          )}
         </div>
 
         <div
