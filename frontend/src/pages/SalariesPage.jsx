@@ -18,12 +18,6 @@ function formatMois(moisStr) {
   return `${NOMS_MOIS[Number(mois) - 1]} ${annee}`;
 }
 
-function moisPrecedent(moisStr) {
-  const [annee, mois] = moisStr.split('-').map(Number);
-  const d = new Date(annee, mois - 2, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
 export function SalariesPage() {
   const [mois, setMois] = useState(null);
   const [moisMax, setMoisMax] = useState(null);
@@ -34,6 +28,8 @@ export function SalariesPage() {
   const [employeConfig, setEmployeConfig] = useState(null);
   const [salaireSaisi, setSalaireSaisi] = useState('');
   const [methodeSaisie, setMethodeSaisie] = useState('especes');
+  const [partsSaisies, setPartsSaisies] = useState('1');
+  const [primesConfig, setPrimesConfig] = useState([]);
 
   const [employePaiement, setEmployePaiement] = useState(null);
   const [montantPaiement, setMontantPaiement] = useState('');
@@ -76,6 +72,8 @@ export function SalariesPage() {
     setEmployeConfig(emp);
     setSalaireSaisi(emp.monthly_salary || '');
     setMethodeSaisie(emp.payment_method || 'especes');
+    setPartsSaisies(String(emp.parts_fiscales || 1));
+    setPrimesConfig(Array.isArray(emp.recurring_bonuses) ? emp.recurring_bonuses.map((p) => ({ label: p.label, amount: p.amount })) : []);
   }
 
   async function enregistrerConfig(e) {
@@ -89,6 +87,10 @@ export function SalariesPage() {
       await api.setSalary(employeConfig.id, {
         monthlySalary: Number(salaireSaisi),
         paymentMethod: methodeSaisie,
+        partsFiscales: Number(partsSaisies) || 1,
+        recurringBonuses: primesConfig
+          .filter((p) => p.label && Number(p.amount))
+          .map((p) => ({ label: p.label, amount: Number(p.amount) })),
       });
       setEmployeConfig(null);
       charger();
@@ -123,10 +125,9 @@ export function SalariesPage() {
       if (existantes.length > 0) {
         setPrimes(existantes.map((p) => ({ label: p.label, amount: p.amount })));
       } else {
-        // Rien de saisi pour ce mois : on reprend les primes/indemnités du
-        // dernier mois où il y en avait (recherche sur 6 mois max). Si le mois
-        // courant a déjà un bulletin généré sans prime, on ne reprend rien.
-        let reprises = [];
+        // Rien de saisi pour ce mois : on reprend les primes/indemnités
+        // configurées pour l'employé (bouton Configurer), sauf si un bulletin
+        // existe déjà pour ce mois.
         let dejaGenere = false;
         try {
           await api.getPayslip(emp.id, mois);
@@ -134,24 +135,8 @@ export function SalariesPage() {
         } catch {
           dejaGenere = false;
         }
-        if (!dejaGenere) {
-          let m = mois;
-          for (let i = 0; i < 6; i += 1) {
-            m = moisPrecedent(m);
-            const precedentes = await api.getSalaryBonuses(emp.id, m);
-            if (precedentes.length > 0) {
-              reprises = precedentes.map((p) => ({ label: p.label, amount: p.amount }));
-              break;
-            }
-            try {
-              await api.getPayslip(emp.id, m);
-              break; // bulletin émis sans prime : la série s'arrête là
-            } catch {
-              // pas de bulletin ce mois-là : on remonte encore
-            }
-          }
-        }
-        setPrimes(reprises);
+        const config = Array.isArray(emp.recurring_bonuses) ? emp.recurring_bonuses : [];
+        setPrimes(dejaGenere ? [] : config.map((p) => ({ label: p.label, amount: p.amount })));
       }
     } catch (err) {
       setErreur(err.message);
@@ -304,6 +289,41 @@ export function SalariesPage() {
                     <option key={m.value} value={m.value}>{m.label}</option>
                   ))}
                 </select>
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="salaire-parts">Parts fiscales</label>
+                <input
+                  id="salaire-parts"
+                  type="number"
+                  min="1"
+                  step="0.5"
+                  className="champ"
+                  value={partsSaisies}
+                  onChange={(e) => setPartsSaisies(e.target.value)}
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette">Primes / indemnités mensuelles (reprises chaque mois)</label>
+                {primesConfig.map((prime, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                    <input
+                      type="text"
+                      className="champ"
+                      placeholder="Libellé (ex. prime de transport)"
+                      value={prime.label}
+                      onChange={(e) => setPrimesConfig((l) => l.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                    />
+                    <input
+                      type="number"
+                      className="champ"
+                      placeholder="Montant"
+                      value={prime.amount}
+                      onChange={(e) => setPrimesConfig((l) => l.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))}
+                    />
+                    <button type="button" className="btn" onClick={() => setPrimesConfig((l) => l.filter((_, j) => j !== i))}>×</button>
+                  </div>
+                ))}
+                <button type="button" className="btn" onClick={() => setPrimesConfig((l) => [...l, { label: '', amount: '' }])}>+ Ajouter une prime</button>
               </div>
               <div className="actions-modale">
                 <button type="button" className="btn" onClick={() => setEmployeConfig(null)}>Annuler</button>
