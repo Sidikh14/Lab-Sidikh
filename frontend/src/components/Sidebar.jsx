@@ -165,9 +165,11 @@ export function Sidebar({ ouvert = false, onFermer }) {
   const autorises = modulesAutorises(user);
   // "Fournisseurs" héberge aussi l'onglet Achats depuis la fusion des pages
   // (20/09) : le lien reste visible si le membre a l'un OU l'autre module.
-  const liens = TOUS_LES_LIENS.map((lien) =>
-    lien.to === '/stock' ? { ...lien, label: `${secteurConfig.libelleProduit}s` } : lien
-  ).filter((lien) =>
+  const liens = TOUS_LES_LIENS.map((lien) => {
+    if (lien.to === '/stock') return { ...lien, label: `${secteurConfig.libelleProduit}s` };
+    if (lien.to === '/clients') return { ...lien, label: `${secteurConfig.libelleClient}s` };
+    return lien;
+  }).filter((lien) =>
     lien.module === 'fournisseurs' ? autorises.includes('fournisseurs') || autorises.includes('achats') : autorises.includes(lien.module)
   );
   const voitEquipe = ['manager', 'gerant'].includes(user?.role);

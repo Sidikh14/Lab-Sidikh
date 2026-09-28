@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { StatusBadge } from '../components/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useLiveEvent } from '../offline/liveEvents';
+import { getSecteurConfig } from '../config/sectorConfig';
 
 function IconClient() {
   return (
@@ -86,8 +87,8 @@ const FILTRES_CREANCE = [
 function ClientsTab() {
   const { merchant } = useAuth();
   const estPharmacie = merchant?.sector === 'pharmacie';
-  // Vocabulaire : en pharmacie on parle de patients, pas de clients.
-  const mot = estPharmacie ? 'patient' : 'client';
+  // Vocabulaire selon le secteur (sectorConfig.libelleClient : Patient en pharmacie).
+  const mot = getSecteurConfig(merchant?.sector).libelleClient.toLowerCase();
 
   const [clients, setClients] = useState([]);
   const [chargement, setChargement] = useState(true);
@@ -1146,18 +1147,19 @@ function MutuellesTab() {
 export function ClientsPage() {
   const { merchant } = useAuth();
   const estPharmacie = merchant?.sector === 'pharmacie';
+  const libelleClients = `${getSecteurConfig(merchant?.sector).libelleClient}s`;
   const [onglet, setOnglet] = useState('clients');
 
   return (
     <>
       <div className="entete-page">
-        <h1>{estPharmacie ? 'Patients' : 'Clients'}</h1>
+        <h1>{libelleClients}</h1>
       </div>
 
       {estPharmacie && (
         <div className="onglets" style={{ marginBottom: 20 }}>
           <button className={onglet === 'clients' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('clients')}>
-            {estPharmacie ? 'Patients' : 'Clients'}
+            {libelleClients}
           </button>
           <button className={onglet === 'mutuelles' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('mutuelles')}>
             Mutuelles / Tiers payant

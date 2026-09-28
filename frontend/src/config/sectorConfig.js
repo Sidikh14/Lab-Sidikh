@@ -14,6 +14,7 @@ export const SECTEURS = {
     theme: null,
     libelleProduit: 'Produit',
     libelleBoutique: 'Boutique',
+    libelleClient: 'Client',
     champsProduitSup: [],
   },
   pharmacie: {
@@ -26,6 +27,7 @@ export const SECTEURS = {
     },
     libelleProduit: 'Médicament',
     libelleBoutique: 'Pharmacie',
+    libelleClient: 'Patient',
     // Pas de champsProduitSup pour la péremption/lot ici : depuis l'ajout
     // du suivi par lot (product_lots, FEFO), la date de péremption et le
     // numéro de lot se saisissent PAR LOT à chaque entrée de stock (modale
@@ -44,6 +46,7 @@ export const SECTEURS = {
     },
     libelleProduit: 'Article',
     libelleBoutique: 'Boutique',
+    libelleClient: 'Client',
     champsProduitSup: [
       { key: 'garantieMois', label: 'Garantie (mois)', type: 'number' },
       { key: 'numeroSerie', label: 'Numéro de série', type: 'text' },
@@ -59,6 +62,7 @@ export const SECTEURS = {
     },
     libelleProduit: 'Article',
     libelleBoutique: 'Boutique',
+    libelleClient: 'Client',
     champsProduitSup: [
       { key: 'couleur', label: 'Couleur', type: 'text' },
       { key: 'metrage', label: 'Métrage (m)', type: 'number' },

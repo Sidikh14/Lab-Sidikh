@@ -68,7 +68,7 @@ router.get('/', async (req, res) => {
 // POST /prescriptions — créer une ordonnance, à lier ensuite à une vente
 // (voir orders_routes.js : prescriptionId dans le body de POST/PUT /orders).
 router.post('/', async (req, res) => {
-  const { patientName, patientPhone, clientId, doctorName, prescriptionDate, insurerName, insurerMemberNumber, coverageRate, warehouseId: warehouseIdInput, isRenewable, validUntil, items } = req.body;
+  const { patientName, patientPhone, clientId, doctorName, prescriptionDate, insurerId, insurerMemberNumber, coverageRate, warehouseId: warehouseIdInput, isRenewable, validUntil, items } = req.body;
   if ((!patientName && !clientId) || !prescriptionDate) {
     return res.status(400).json({ error: 'Le nom du patient et la date de prescription sont requis.' });
   }
@@ -99,10 +99,34 @@ router.post('/', async (req, res) => {
     }
   }
 
+  if (insurerId && (coverageRate === undefined || coverageRate === null || coverageRate === '')) {
+    return res.status(400).json({ error: 'Le taux de prise en charge est requis quand une mutuelle est sélectionnée.' });
+  }
+  if (coverageRate !== undefined && coverageRate !== null && coverageRate !== '') {
+    const taux = Number(coverageRate);
+    if (!Number.isFinite(taux) || taux < 0 || taux > 100) {
+      return res.status(400).json({ error: 'Le taux de prise en charge doit être compris entre 0 et 100.' });
+    }
+  }
+
   const dbClient = await pool.connect();
   try {
     const warehouseId = await resolveWarehouseId(req, dbClient, warehouseIdInput);
     await dbClient.query('BEGIN');
+
+    // Mutuelle choisie sur la liste déroulante (tiers payant) : elle doit
+    // appartenir au commerçant. Son nom sert à l'affichage sur l'ordonnance
+    // (colonne insurer_name, inchangée) ; son id sera aussi appliqué à la
+    // fiche du patient plus bas, pour piloter le tiers payant en caisse.
+    let assureurChoisi = null;
+    if (insurerId) {
+      const assureurResult = await dbClient.query(
+        `SELECT id, name FROM insurers WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+        [insurerId, req.user.merchantId]
+      );
+      if (assureurResult.rows.length === 0) throw { status: 404, message: 'Mutuelle introuvable.' };
+      assureurChoisi = assureurResult.rows[0];
+    }
 
     if (renouvelable) {
       const ids = lignes.map((l) => l.productId);
@@ -149,9 +173,18 @@ router.post('/', async (req, res) => {
     const result = await dbClient.query(
       `INSERT INTO prescriptions (merchant_id, warehouse_id, patient_name, doctor_name, prescription_date, insurer_name, insurer_member_number, coverage_rate, created_by, is_renewable, valid_until, client_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-      [req.user.merchantId, warehouseId, nomPatient, doctorName || null, prescriptionDate, insurerName || null, insurerMemberNumber || null, coverageRate || null, req.user.id, renouvelable, renouvelable ? (validUntil || null) : null, clientIdFinal]
+      [req.user.merchantId, warehouseId, nomPatient, doctorName || null, prescriptionDate, assureurChoisi ? assureurChoisi.name : null, insurerMemberNumber || null, coverageRate || null, req.user.id, renouvelable, renouvelable ? (validUntil || null) : null, clientIdFinal]
     );
     const ordonnance = result.rows[0];
+
+    // La mutuelle et le taux saisis sur l'ordonnance pilotent le tiers
+    // payant en caisse pour ce patient : on les applique à sa fiche client.
+    if (assureurChoisi) {
+      await dbClient.query(
+        `UPDATE clients SET insurer_id = $1, insurance_coverage_percent = $2 WHERE id = $3 AND merchant_id = $4`,
+        [assureurChoisi.id, Number(coverageRate), clientIdFinal, req.user.merchantId]
+      );
+    }
 
     for (const l of lignes) {
       await dbClient.query(

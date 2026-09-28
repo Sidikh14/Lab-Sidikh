@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useOfflineSync } from '../offline/useOfflineSync';
+import { getSecteurConfig } from '../config/sectorConfig';
 
 const MOYENS_PAIEMENT = [
   { value: 'especes', label: 'Espèces' },
@@ -42,7 +43,7 @@ function DetailFacture({ commande }) {
 }
 
 export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned }) {
-  const { user } = useAuth();
+  const { user, merchant } = useAuth();
   const { isOnline, recordPayment } = useOfflineSync(api);
   const [moyenPaiement, setMoyenPaiement] = useState('especes');
   const [montantRecu, setMontantRecu] = useState(String(commande.total_amount));
@@ -365,7 +366,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
           </p>
         )}
         <p style={{ fontSize: 14, color: 'var(--encre-douce)', marginBottom: 8 }}>
-          {commande.client_name || 'Client de passage'}
+          {commande.client_name || (`${getSecteurConfig(merchant?.sector).libelleClient} de passage`)}
         </p>
 
         <DetailFacture commande={commande} />

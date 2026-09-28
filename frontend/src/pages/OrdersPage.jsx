@@ -190,6 +190,7 @@ function codeInterne(produit) {
 export function OrdersPage() {
   const { user, merchant } = useAuth();
   const secteurConfig = getSecteurConfig(merchant?.sector);
+  const libelleClient = secteurConfig.libelleClient;
   const peutCreer = PEUT_CREER.includes(user.role);
   const peutEncaisser = PEUT_ENCAISSER.includes(user.role);
   // Le gérant n'a le droit d'encaisser QUE les ventes qu'il a lui-même
@@ -249,11 +250,12 @@ export function OrdersPage() {
   const [tvaApplicable, setTvaApplicable] = useState(false);
   const [prescriptionId, setPrescriptionId] = useState('');
   const [ordonnanceModaleOuverte, setOrdonnanceModaleOuverte] = useState(false);
-  const [nouvelleOrdonnance, setNouvelleOrdonnance] = useState({ patientName: '', patientPhone: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerName: '', insurerMemberNumber: '', coverageRate: '' });
+  const [nouvelleOrdonnance, setNouvelleOrdonnance] = useState({ patientName: '', patientPhone: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerId: '', insurerMemberNumber: '', coverageRate: '' });
   const [creationOrdonnanceEnCours, setCreationOrdonnanceEnCours] = useState(false);
   // Ordonnance renouvelable/chronique : liste des ordonnances en cours (avec
   // quantités délivrées) et champs de création d'une nouvelle.
   const [ordonnancesRenouvelables, setOrdonnancesRenouvelables] = useState([]);
+  const [assureursDisponibles, setAssureursDisponibles] = useState([]);
   const [ordonnanceClientId, setOrdonnanceClientId] = useState('');
   const [ordonnanceRenouvelable, setOrdonnanceRenouvelable] = useState(false);
   const [ordonnanceValidite, setOrdonnanceValidite] = useState('');
@@ -706,7 +708,7 @@ export function OrdersPage() {
 
   function confirmerReliquat() {
     if (!clientId) {
-      setErreur(`Sélectionnez un ${estPharmacie ? 'patient' : 'client'} enregistré avant de créer une commande en attente.`);
+      setErreur(`Sélectionnez un ${libelleClient.toLowerCase()} enregistré avant de créer une commande en attente.`);
       return;
     }
     const quantite = Number(quantiteReliquat);
@@ -814,7 +816,19 @@ export function OrdersPage() {
     api.getPrescriptions(estManager ? warehouseId : undefined, true)
       .then(setOrdonnancesRenouvelables)
       .catch(() => setOrdonnancesRenouvelables([]));
+    api.getInsurers().then(setAssureursDisponibles).catch(() => setAssureursDisponibles([]));
   }, [ordonnanceModaleOuverte]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sélectionner une mutuelle/assurance sur l'ordonnance propose son taux de
+  // prise en charge par défaut, modifiable ensuite (utile si ce patient a un
+  // taux différent du taux habituel de la mutuelle).
+  useEffect(() => {
+    if (!nouvelleOrdonnance.insurerId) return;
+    const assureur = assureursDisponibles.find((a) => a.id === nouvelleOrdonnance.insurerId);
+    if (assureur && assureur.default_coverage_percent != null && !nouvelleOrdonnance.coverageRate) {
+      setNouvelleOrdonnance((p) => ({ ...p, coverageRate: String(assureur.default_coverage_percent) }));
+    }
+  }, [nouvelleOrdonnance.insurerId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function creerOrdonnance(e) {
     e.preventDefault();
@@ -842,6 +856,7 @@ export function OrdersPage() {
     try {
       const ordonnance = await api.createPrescription({
         ...nouvelleOrdonnance,
+        insurerId: nouvelleOrdonnance.insurerId || undefined,
         coverageRate: nouvelleOrdonnance.coverageRate ? Number(nouvelleOrdonnance.coverageRate) : undefined,
         warehouseId: estManager ? warehouseId : undefined,
         clientId: ordonnanceClientId || undefined,
@@ -859,7 +874,7 @@ export function OrdersPage() {
       setOrdonnanceValidite('');
       setQuantitesPrescrites({});
       setOrdonnanceModaleOuverte(false);
-      setNouvelleOrdonnance({ patientName: '', patientPhone: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerName: '', insurerMemberNumber: '', coverageRate: '' });
+      setNouvelleOrdonnance({ patientName: '', patientPhone: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerId: '', insurerMemberNumber: '', coverageRate: '' });
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -1151,9 +1166,9 @@ export function OrdersPage() {
               </div>
             )}
             <div className="champ-groupe">
-              <label className="etiquette" htmlFor="c-client">{estPharmacie ? 'Patient' : 'Client'}</label>
+              <label className="etiquette" htmlFor="c-client">{libelleClient}</label>
               <select id="c-client" className="champ" value={clientId} onChange={(e) => setClientId(e.target.value)}>
-                <option value="">{estPharmacie ? 'Patient de passage' : 'Client de passage'}</option>
+                <option value="">{libelleClient} de passage</option>
                 {clients.map((c) => (
                   <option key={c.id} value={c.id}>{c.full_name}</option>
                 ))}
@@ -1260,7 +1275,7 @@ export function OrdersPage() {
               <input
                 type="text"
                 className="champ champ--avec-icone"
-                placeholder={estPharmacie ? 'Rechercher par n° de commande ou patient…' : 'Rechercher par n° de commande ou client…'}
+                placeholder={`Rechercher par n° de commande ou ${libelleClient.toLowerCase()}…`}
                 value={rechercheHistorique}
                 onChange={(e) => setRechercheHistorique(e.target.value)}
               />
@@ -1293,7 +1308,7 @@ export function OrdersPage() {
               <thead>
                 <tr>
                   <th>N° commande</th>
-                  <th>{estPharmacie ? 'Patient' : 'Client'}</th>
+                  <th>{libelleClient}</th>
                   <th>Montant</th>
                   <th>Statut</th>
                   {(peutEncaisser || peutGererStatut || peutTraiterRenvoi || peutTraiterRetour || peutDemanderRetour) && <th>Actions</th>}
@@ -1312,7 +1327,7 @@ export function OrdersPage() {
                     onClick={() => ouvrirDetailHistorique(o)}
                   >
                     <td className="chiffre">{o.order_number}</td>
-                    <td>{o.client_name || (estPharmacie ? 'Patient de passage' : 'Client de passage')}</td>
+                    <td>{o.client_name || `${libelleClient} de passage`}</td>
                     <td className="chiffre">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
                     <td>
                       <StatusBadge status={o.status} />
@@ -1401,7 +1416,7 @@ export function OrdersPage() {
                     <tr>
                       <th>Date</th>
                       <th>Commande</th>
-                      <th>{estPharmacie ? 'Patient' : 'Client'}</th>
+                      <th>{libelleClient}</th>
                       <th>Motif</th>
                       <th>Remboursement</th>
                       <th>Demandé par</th>
@@ -1414,7 +1429,7 @@ export function OrdersPage() {
                       <tr key={d.id}>
                         <td>{new Date(d.created_at).toLocaleDateString('fr-FR')}</td>
                         <td className="chiffre">#{d.order_seq ?? d.order_id}</td>
-                        <td>{d.client_name || (estPharmacie ? 'Patient de passage' : 'Client de passage')}</td>
+                        <td>{d.client_name || `${libelleClient} de passage`}</td>
                         <td>{d.reason}</td>
                         <td className="chiffre">
                           {Math.round(d.refund_amount).toLocaleString('fr-FR')} FCFA ({LABEL_MOYEN_PAIEMENT[d.refund_method] || d.refund_method})
@@ -1471,7 +1486,7 @@ export function OrdersPage() {
                   <th>Commande</th>
                   <th>Produit</th>
                   <th>Qté</th>
-                  <th>{estPharmacie ? 'Patient' : 'Client'}</th>
+                  <th>{libelleClient}</th>
                   <th>Motif</th>
                   <th>Remboursement</th>
                   <th>Enregistré par</th>
@@ -1484,7 +1499,7 @@ export function OrdersPage() {
                     <td className="chiffre">#{r.order_id}</td>
                     <td>{r.product_name}</td>
                     <td className="chiffre">{r.quantity}</td>
-                    <td>{r.client_name || (estPharmacie ? 'Patient de passage' : 'Client de passage')}</td>
+                    <td>{r.client_name || `${libelleClient} de passage`}</td>
                     <td>{r.reason}</td>
                     <td className="chiffre">
                       {r.refund_amount
@@ -1509,7 +1524,7 @@ export function OrdersPage() {
               <form onSubmit={soumettreRetour}>
                 <h2>Retour — {retourCommande.order_number}</h2>
                 <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-                  {retourCommande.client_name || (estPharmacie ? 'Patient de passage' : 'Client de passage')}
+                  {retourCommande.client_name || `${libelleClient} de passage`}
                 </p>
 
                 <table className="registre" style={{ marginBottom: 16 }}>
@@ -1792,14 +1807,21 @@ export function OrdersPage() {
                 />
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="ord-mutuelle">Mutuelle / assurance</label>
-                <input
+                <label className="etiquette" htmlFor="ord-mutuelle">Mutuelle / assurance (tiers payant)</label>
+                <select
                   id="ord-mutuelle"
                   className="champ"
-                  placeholder="Facultatif"
-                  value={nouvelleOrdonnance.insurerName}
-                  onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, insurerName: e.target.value }))}
-                />
+                  value={nouvelleOrdonnance.insurerId}
+                  onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, insurerId: e.target.value }))}
+                >
+                  <option value="">Aucune (patient sans mutuelle)</option>
+                  {assureursDisponibles.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+                <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '4px 0 0' }}>
+                  Cette mutuelle et le taux ci-dessous seront enregistrés sur la fiche du {libelleClient.toLowerCase()} pour le tiers payant en caisse.
+                </p>
               </div>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="ord-numadherent">N° d'adhérent</label>
@@ -1819,7 +1841,8 @@ export function OrdersPage() {
                   min="0"
                   max="100"
                   className="champ"
-                  placeholder="Facultatif"
+                  placeholder={nouvelleOrdonnance.insurerId ? 'Ex : 80' : 'Facultatif'}
+                  required={Boolean(nouvelleOrdonnance.insurerId)}
                   value={nouvelleOrdonnance.coverageRate}
                   onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, coverageRate: e.target.value }))}
                 />
@@ -1924,7 +1947,7 @@ export function OrdersPage() {
                 </p>
                 {!clientId && (
                   <p style={{ fontSize: 12, color: 'var(--danger, #B84A3E)', marginBottom: 10 }}>
-                    Sélectionnez d'abord {estPharmacie ? 'un patient' : 'un client'} enregistré dans le ticket.
+                    Sélectionnez d'abord un {libelleClient.toLowerCase()} enregistré dans le ticket.
                   </p>
                 )}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1976,7 +1999,7 @@ export function OrdersPage() {
                   </p>
                 )}
                 <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-                  {detailCommande.client_name || (estPharmacie ? 'Patient de passage' : 'Client de passage')} · <StatusBadge status={detailCommande.status} />
+                  {detailCommande.client_name || `${libelleClient} de passage`} · <StatusBadge status={detailCommande.status} />
                 </p>
                 <table className="registre" style={{ marginBottom: 16 }}>
                   <thead>
