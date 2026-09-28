@@ -249,11 +249,12 @@ export function OrdersPage() {
   const [tvaApplicable, setTvaApplicable] = useState(false);
   const [prescriptionId, setPrescriptionId] = useState('');
   const [ordonnanceModaleOuverte, setOrdonnanceModaleOuverte] = useState(false);
-  const [nouvelleOrdonnance, setNouvelleOrdonnance] = useState({ patientName: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerName: '', insurerMemberNumber: '', coverageRate: '' });
+  const [nouvelleOrdonnance, setNouvelleOrdonnance] = useState({ patientName: '', patientPhone: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerName: '', insurerMemberNumber: '', coverageRate: '' });
   const [creationOrdonnanceEnCours, setCreationOrdonnanceEnCours] = useState(false);
   // Ordonnance renouvelable/chronique : liste des ordonnances en cours (avec
   // quantités délivrées) et champs de création d'une nouvelle.
   const [ordonnancesRenouvelables, setOrdonnancesRenouvelables] = useState([]);
+  const [ordonnanceClientId, setOrdonnanceClientId] = useState('');
   const [ordonnanceRenouvelable, setOrdonnanceRenouvelable] = useState(false);
   const [ordonnanceValidite, setOrdonnanceValidite] = useState('');
   const [quantitesPrescrites, setQuantitesPrescrites] = useState({});
@@ -705,7 +706,7 @@ export function OrdersPage() {
 
   function confirmerReliquat() {
     if (!clientId) {
-      setErreur('Sélectionnez un client enregistré avant de créer une commande en attente.');
+      setErreur(`Sélectionnez un ${estPharmacie ? 'patient' : 'client'} enregistré avant de créer une commande en attente.`);
       return;
     }
     const quantite = Number(quantiteReliquat);
@@ -800,6 +801,14 @@ export function OrdersPage() {
   }, [necessiteOrdonnance]);
 
   useEffect(() => {
+    if (!ordonnanceModaleOuverte || !clientId) return;
+    const patient = clients.find((c) => c.id === clientId);
+    if (!patient) return;
+    setOrdonnanceClientId(patient.id);
+    setNouvelleOrdonnance((p) => ({ ...p, patientName: patient.full_name, patientPhone: patient.phone || '' }));
+  }, [ordonnanceModaleOuverte]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (!ordonnanceModaleOuverte) return;
     if (estManager && !warehouseId) return;
     api.getPrescriptions(estManager ? warehouseId : undefined, true)
@@ -835,16 +844,22 @@ export function OrdersPage() {
         ...nouvelleOrdonnance,
         coverageRate: nouvelleOrdonnance.coverageRate ? Number(nouvelleOrdonnance.coverageRate) : undefined,
         warehouseId: estManager ? warehouseId : undefined,
+        clientId: ordonnanceClientId || undefined,
         ...(ordonnanceRenouvelable
           ? { isRenewable: true, validUntil: ordonnanceValidite || undefined, items: lignesPrescrites }
           : {}),
       });
       setPrescriptionId(ordonnance.id);
+      // Le patient est créé/retrouvé côté serveur : on le rattache au ticket
+      // s'il n'y en a pas déjà un, et on rafraîchit la liste des patients.
+      if (ordonnance.client_id && !clientId) setClientId(ordonnance.client_id);
+      api.getClients().then(setClients).catch(() => {});
+      setOrdonnanceClientId('');
       setOrdonnanceRenouvelable(false);
       setOrdonnanceValidite('');
       setQuantitesPrescrites({});
       setOrdonnanceModaleOuverte(false);
-      setNouvelleOrdonnance({ patientName: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerName: '', insurerMemberNumber: '', coverageRate: '' });
+      setNouvelleOrdonnance({ patientName: '', patientPhone: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerName: '', insurerMemberNumber: '', coverageRate: '' });
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -1136,9 +1151,9 @@ export function OrdersPage() {
               </div>
             )}
             <div className="champ-groupe">
-              <label className="etiquette" htmlFor="c-client">Client</label>
+              <label className="etiquette" htmlFor="c-client">{estPharmacie ? 'Patient' : 'Client'}</label>
               <select id="c-client" className="champ" value={clientId} onChange={(e) => setClientId(e.target.value)}>
-                <option value="">Client de passage</option>
+                <option value="">{estPharmacie ? 'Patient de passage' : 'Client de passage'}</option>
                 {clients.map((c) => (
                   <option key={c.id} value={c.id}>{c.full_name}</option>
                 ))}
@@ -1245,7 +1260,7 @@ export function OrdersPage() {
               <input
                 type="text"
                 className="champ champ--avec-icone"
-                placeholder="Rechercher par n° de commande ou client…"
+                placeholder={estPharmacie ? 'Rechercher par n° de commande ou patient…' : 'Rechercher par n° de commande ou client…'}
                 value={rechercheHistorique}
                 onChange={(e) => setRechercheHistorique(e.target.value)}
               />
@@ -1278,7 +1293,7 @@ export function OrdersPage() {
               <thead>
                 <tr>
                   <th>N° commande</th>
-                  <th>Client</th>
+                  <th>{estPharmacie ? 'Patient' : 'Client'}</th>
                   <th>Montant</th>
                   <th>Statut</th>
                   {(peutEncaisser || peutGererStatut || peutTraiterRenvoi || peutTraiterRetour || peutDemanderRetour) && <th>Actions</th>}
@@ -1297,7 +1312,7 @@ export function OrdersPage() {
                     onClick={() => ouvrirDetailHistorique(o)}
                   >
                     <td className="chiffre">{o.order_number}</td>
-                    <td>{o.client_name || 'Client de passage'}</td>
+                    <td>{o.client_name || (estPharmacie ? 'Patient de passage' : 'Client de passage')}</td>
                     <td className="chiffre">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
                     <td>
                       <StatusBadge status={o.status} />
@@ -1386,7 +1401,7 @@ export function OrdersPage() {
                     <tr>
                       <th>Date</th>
                       <th>Commande</th>
-                      <th>Client</th>
+                      <th>{estPharmacie ? 'Patient' : 'Client'}</th>
                       <th>Motif</th>
                       <th>Remboursement</th>
                       <th>Demandé par</th>
@@ -1399,7 +1414,7 @@ export function OrdersPage() {
                       <tr key={d.id}>
                         <td>{new Date(d.created_at).toLocaleDateString('fr-FR')}</td>
                         <td className="chiffre">#{d.order_seq ?? d.order_id}</td>
-                        <td>{d.client_name || 'Client de passage'}</td>
+                        <td>{d.client_name || (estPharmacie ? 'Patient de passage' : 'Client de passage')}</td>
                         <td>{d.reason}</td>
                         <td className="chiffre">
                           {Math.round(d.refund_amount).toLocaleString('fr-FR')} FCFA ({LABEL_MOYEN_PAIEMENT[d.refund_method] || d.refund_method})
@@ -1456,7 +1471,7 @@ export function OrdersPage() {
                   <th>Commande</th>
                   <th>Produit</th>
                   <th>Qté</th>
-                  <th>Client</th>
+                  <th>{estPharmacie ? 'Patient' : 'Client'}</th>
                   <th>Motif</th>
                   <th>Remboursement</th>
                   <th>Enregistré par</th>
@@ -1469,7 +1484,7 @@ export function OrdersPage() {
                     <td className="chiffre">#{r.order_id}</td>
                     <td>{r.product_name}</td>
                     <td className="chiffre">{r.quantity}</td>
-                    <td>{r.client_name || 'Client de passage'}</td>
+                    <td>{r.client_name || (estPharmacie ? 'Patient de passage' : 'Client de passage')}</td>
                     <td>{r.reason}</td>
                     <td className="chiffre">
                       {r.refund_amount
@@ -1494,7 +1509,7 @@ export function OrdersPage() {
               <form onSubmit={soumettreRetour}>
                 <h2>Retour — {retourCommande.order_number}</h2>
                 <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-                  {retourCommande.client_name || 'Client de passage'}
+                  {retourCommande.client_name || (estPharmacie ? 'Patient de passage' : 'Client de passage')}
                 </p>
 
                 <table className="registre" style={{ marginBottom: 16 }}>
@@ -1685,7 +1700,7 @@ export function OrdersPage() {
                           type="button"
                           className={prescriptionId === o.id ? 'btn' : 'btn btn-principal'}
                           disabled={o.expired}
-                          onClick={() => { setPrescriptionId(o.id); setOrdonnanceModaleOuverte(false); }}
+                          onClick={() => { setPrescriptionId(o.id); if (o.client_id && !clientId) setClientId(o.client_id); setOrdonnanceModaleOuverte(false); }}
                         >
                           {prescriptionId === o.id ? 'Liée' : 'Utiliser'}
                         </button>
@@ -1711,15 +1726,51 @@ export function OrdersPage() {
             )}
             <form onSubmit={creerOrdonnance}>
               <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ord-patient-existant">Patient</label>
+                <select
+                  id="ord-patient-existant"
+                  className="champ"
+                  value={ordonnanceClientId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    const patient = clients.find((c) => c.id === id);
+                    setOrdonnanceClientId(id);
+                    setNouvelleOrdonnance((p) => ({
+                      ...p,
+                      patientName: patient ? patient.full_name : '',
+                      patientPhone: patient ? (patient.phone || '') : '',
+                    }));
+                  }}
+                >
+                  <option value="">Nouveau patient</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>{c.full_name}{c.phone ? ` — ${c.phone}` : ''}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="champ-groupe">
                 <label className="etiquette" htmlFor="ord-patient">Nom du patient *</label>
                 <input
                   id="ord-patient"
                   className="champ"
                   value={nouvelleOrdonnance.patientName}
+                  disabled={Boolean(ordonnanceClientId)}
                   onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, patientName: e.target.value }))}
                   autoFocus
                 />
               </div>
+              {!ordonnanceClientId && (
+                <div className="champ-groupe">
+                  <label className="etiquette" htmlFor="ord-tel">Téléphone du patient</label>
+                  <input
+                    id="ord-tel"
+                    className="champ"
+                    placeholder="77 123 45 67"
+                    value={nouvelleOrdonnance.patientPhone}
+                    onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, patientPhone: e.target.value }))}
+                  />
+                </div>
+              )}
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="ord-medecin">Médecin prescripteur</label>
                 <input
@@ -1873,7 +1924,7 @@ export function OrdersPage() {
                 </p>
                 {!clientId && (
                   <p style={{ fontSize: 12, color: 'var(--danger, #B84A3E)', marginBottom: 10 }}>
-                    Sélectionnez d'abord un client enregistré dans le ticket.
+                    Sélectionnez d'abord {estPharmacie ? 'un patient' : 'un client'} enregistré dans le ticket.
                   </p>
                 )}
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1925,7 +1976,7 @@ export function OrdersPage() {
                   </p>
                 )}
                 <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-                  {detailCommande.client_name || 'Client de passage'} · <StatusBadge status={detailCommande.status} />
+                  {detailCommande.client_name || (estPharmacie ? 'Patient de passage' : 'Client de passage')} · <StatusBadge status={detailCommande.status} />
                 </p>
                 <table className="registre" style={{ marginBottom: 16 }}>
                   <thead>

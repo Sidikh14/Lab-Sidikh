@@ -68,8 +68,8 @@ router.get('/', async (req, res) => {
 // POST /prescriptions — créer une ordonnance, à lier ensuite à une vente
 // (voir orders_routes.js : prescriptionId dans le body de POST/PUT /orders).
 router.post('/', async (req, res) => {
-  const { patientName, doctorName, prescriptionDate, insurerName, insurerMemberNumber, coverageRate, warehouseId: warehouseIdInput, isRenewable, validUntil, items } = req.body;
-  if (!patientName || !prescriptionDate) {
+  const { patientName, patientPhone, clientId, doctorName, prescriptionDate, insurerName, insurerMemberNumber, coverageRate, warehouseId: warehouseIdInput, isRenewable, validUntil, items } = req.body;
+  if ((!patientName && !clientId) || !prescriptionDate) {
     return res.status(400).json({ error: 'Le nom du patient et la date de prescription sont requis.' });
   }
 
@@ -115,10 +115,41 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Dossier patient : l'ordonnance est rattachée à une fiche client. Si un
+    // client existant est fourni on l'utilise ; sinon on réutilise celui qui a
+    // le même téléphone, et à défaut on crée la fiche (nom + téléphone).
+    let clientIdFinal = null;
+    let nomPatient = patientName;
+    if (clientId) {
+      const clientResult = await dbClient.query(
+        `SELECT id, full_name FROM clients WHERE id = $1 AND merchant_id = $2`,
+        [clientId, req.user.merchantId]
+      );
+      if (clientResult.rows.length === 0) throw { status: 404, message: 'Patient introuvable.' };
+      clientIdFinal = clientResult.rows[0].id;
+      nomPatient = nomPatient || clientResult.rows[0].full_name;
+    } else {
+      const telephone = patientPhone ? String(patientPhone).trim() : '';
+      if (telephone) {
+        const existant = await dbClient.query(
+          `SELECT id FROM clients WHERE merchant_id = $1 AND phone = $2 LIMIT 1`,
+          [req.user.merchantId, telephone]
+        );
+        if (existant.rows[0]) clientIdFinal = existant.rows[0].id;
+      }
+      if (!clientIdFinal) {
+        const nouveau = await dbClient.query(
+          `INSERT INTO clients (merchant_id, full_name, phone) VALUES ($1, $2, $3) RETURNING id`,
+          [req.user.merchantId, nomPatient, telephone || null]
+        );
+        clientIdFinal = nouveau.rows[0].id;
+      }
+    }
+
     const result = await dbClient.query(
-      `INSERT INTO prescriptions (merchant_id, warehouse_id, patient_name, doctor_name, prescription_date, insurer_name, insurer_member_number, coverage_rate, created_by, is_renewable, valid_until)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-      [req.user.merchantId, warehouseId, patientName, doctorName || null, prescriptionDate, insurerName || null, insurerMemberNumber || null, coverageRate || null, req.user.id, renouvelable, renouvelable ? (validUntil || null) : null]
+      `INSERT INTO prescriptions (merchant_id, warehouse_id, patient_name, doctor_name, prescription_date, insurer_name, insurer_member_number, coverage_rate, created_by, is_renewable, valid_until, client_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      [req.user.merchantId, warehouseId, nomPatient, doctorName || null, prescriptionDate, insurerName || null, insurerMemberNumber || null, coverageRate || null, req.user.id, renouvelable, renouvelable ? (validUntil || null) : null, clientIdFinal]
     );
     const ordonnance = result.rows[0];
 

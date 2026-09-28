@@ -75,7 +75,47 @@ router.get('/:id', async (req, res) => {
       [req.params.id, req.user.merchantId]
     );
 
-    res.json({ ...client, orderHistory: ordersResult.rows, creditPayments: reglementsResult.rows });
+    // Dossier patient (pharmacie) : ordonnances rattachées à cette fiche, avec
+    // pour les renouvelables la quantité prescrite / délivrée par produit.
+    // Isolé dans son propre try/catch : une base pas encore migrée ne doit
+    // jamais empêcher d'ouvrir la fiche.
+    let prescriptions = [];
+    if (req.user.sector === 'pharmacie') {
+      try {
+        const prescriptionsResult = await pool.query(
+          `SELECT p.id, p.doctor_name, p.prescription_date, p.is_renewable, p.valid_until,
+                  (p.valid_until IS NOT NULL AND p.valid_until < CURRENT_DATE) AS expired,
+                  CASE WHEN p.is_renewable THEN COALESCE((
+                    SELECT json_agg(json_build_object(
+                             'productId', pi.product_id,
+                             'productName', pr.name,
+                             'prescribed', pi.quantity_prescribed,
+                             'delivered', COALESCE(d.qty, 0)
+                           ) ORDER BY pr.name)
+                    FROM prescription_items pi
+                    JOIN products pr ON pr.id = pi.product_id
+                    LEFT JOIN LATERAL (
+                      SELECT SUM(oi.quantity) AS qty
+                      FROM order_items oi
+                      JOIN orders o ON o.id = oi.order_id
+                      WHERE o.prescription_id = pi.prescription_id
+                        AND oi.product_id = pi.product_id
+                        AND o.status <> 'annulee'
+                    ) d ON true
+                    WHERE pi.prescription_id = p.id
+                  ), '[]'::json) ELSE NULL END AS items
+           FROM prescriptions p
+           WHERE p.client_id = $1 AND p.merchant_id = $2
+           ORDER BY p.created_at DESC`,
+          [req.params.id, req.user.merchantId]
+        );
+        prescriptions = prescriptionsResult.rows;
+      } catch (errPrescriptions) {
+        console.error('Ordonnances du patient non chargées :', errPrescriptions.message);
+      }
+    }
+
+    res.json({ ...client, orderHistory: ordersResult.rows, creditPayments: reglementsResult.rows, prescriptions });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération du client.' });

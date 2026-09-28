@@ -86,6 +86,8 @@ const FILTRES_CREANCE = [
 function ClientsTab() {
   const { merchant } = useAuth();
   const estPharmacie = merchant?.sector === 'pharmacie';
+  // Vocabulaire : en pharmacie on parle de patients, pas de clients.
+  const mot = estPharmacie ? 'patient' : 'client';
 
   const [clients, setClients] = useState([]);
   const [chargement, setChargement] = useState(true);
@@ -170,7 +172,7 @@ function ClientsTab() {
   async function handleCreate(e) {
     e.preventDefault();
     if (!nouveauClient.fullName) {
-      setErreur('Le nom du client est requis.');
+      setErreur(`Le nom du ${mot} est requis.`);
       return;
     }
     try {
@@ -227,7 +229,7 @@ function ClientsTab() {
   async function handleEnregistrerEdition(e) {
     e.preventDefault();
     if (!clientEnEdition.fullName) {
-      setDetailErreur('Le nom du client est requis.');
+      setDetailErreur(`Le nom du ${mot} est requis.`);
       return;
     }
     setEnregistrementEdition(true);
@@ -289,7 +291,7 @@ function ClientsTab() {
           onClick={() => setModaleOuverte(true)}
         >
           <IconPlus />
-          Nouveau client
+          Nouveau {mot}
         </button>
       </div>
 
@@ -349,7 +351,7 @@ function ClientsTab() {
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
       ) : clientsFiltres.length === 0 ? (
         <p className="etat-vide">
-          {clients.length === 0 ? 'Aucun client enregistré. Ajoutez votre premier client.' : 'Aucun client ne correspond à ces filtres.'}
+          {clients.length === 0 ? `Aucun ${mot} enregistré. Ajoutez votre premier ${mot}.` : `Aucun ${mot} ne correspond à ces filtres.`}
         </p>
       ) : (
         <div className="grille-cartes">
@@ -387,7 +389,7 @@ function ClientsTab() {
       {modaleOuverte && (
         <div className="modale-fond" onClick={() => setModaleOuverte(false)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Ajouter un client</h2>
+            <h2>Ajouter un {mot}</h2>
             <form onSubmit={handleCreate}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="c-name">Nom complet</label>
@@ -428,7 +430,7 @@ function ClientsTab() {
                       value={nouveauClient.insurerId}
                       onChange={(e) => setNouveauClient({ ...nouveauClient, insurerId: e.target.value })}
                     >
-                      <option value="">Aucune (client sans mutuelle)</option>
+                      <option value="">Aucune ({mot} sans mutuelle)</option>
                       {mutuelles.map((m) => (
                         <option key={m.id} value={m.id}>{m.name}</option>
                       ))}
@@ -571,14 +573,46 @@ function ClientsTab() {
                       {telechargementFacturesEnCours ? 'Préparation…' : 'Télécharger les factures impayées'}
                     </button>
                     {!clientSelectionne.phone && (
-                      <span style={{ fontSize: 12, color: 'var(--encre-douce)' }}>Aucun numéro de téléphone enregistré pour ce client</span>
+                      <span style={{ fontSize: 12, color: 'var(--encre-douce)' }}>Aucun numéro de téléphone enregistré pour ce {mot}</span>
                     )}
                   </div>
                 )}
 
+                {estPharmacie && (clientSelectionne.prescriptions || []).length > 0 && (
+                  <>
+                    <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Ordonnances</p>
+                    <div style={{ marginBottom: 20 }}>
+                      {clientSelectionne.prescriptions.map((o) => (
+                        <div key={o.id} style={{ padding: '10px 12px', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', marginBottom: 8 }}>
+                          <p style={{ fontSize: 13, margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                            <strong>Ordonnance du {new Date(o.prescription_date).toLocaleDateString('fr-FR')}</strong>
+                            {o.doctor_name && <span style={{ color: 'var(--encre-douce)' }}>Dr {o.doctor_name}</span>}
+                            {o.is_renewable && <span className="tampon">Renouvelable</span>}
+                            {o.expired && <span className="tampon tampon-brique">Expirée</span>}
+                          </p>
+                          {o.is_renewable && o.valid_until && (
+                            <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '0 0 4px' }}>
+                              Valable jusqu'au {new Date(o.valid_until).toLocaleDateString('fr-FR')}
+                            </p>
+                          )}
+                          {(o.items || []).map((it) => {
+                            const reste = Math.max(0, Number(it.prescribed) - Number(it.delivered));
+                            return (
+                              <p key={it.productId} style={{ fontSize: 13, margin: '1px 0' }}>
+                                {it.productName} : délivré <span className="chiffre">{Number(it.delivered)}</span> / <span className="chiffre">{Number(it.prescribed)}</span>
+                                {' '}— <strong style={{ color: reste === 0 ? 'var(--brique, #b45309)' : undefined }}>reste {reste}</strong>
+                              </p>
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
                 <p style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>Historique d'achats</p>
                 {(clientSelectionne.orderHistory || []).length === 0 ? (
-                  <p className="etat-vide" style={{ padding: '20px 4px' }}>Aucun achat enregistré pour ce client.</p>
+                  <p className="etat-vide" style={{ padding: '20px 4px' }}>Aucun achat enregistré pour ce {mot}.</p>
                 ) : (
                   <table className="registre">
                     <thead>
@@ -647,7 +681,7 @@ function ClientsTab() {
       {clientEnEdition && (
         <div className="modale-fond" onClick={() => setClientEnEdition(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Modifier le client</h2>
+            <h2>Modifier le {mot}</h2>
             <form onSubmit={handleEnregistrerEdition}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="ce-name">Nom complet</label>
@@ -697,7 +731,7 @@ function ClientsTab() {
                       value={clientEnEdition.insurerId}
                       onChange={(e) => setClientEnEdition({ ...clientEnEdition, insurerId: e.target.value })}
                     >
-                      <option value="">Aucune (client sans mutuelle)</option>
+                      <option value="">Aucune ({mot} sans mutuelle)</option>
                       {mutuelles.map((m) => (
                         <option key={m.id} value={m.id}>{m.name}</option>
                       ))}
@@ -1117,13 +1151,13 @@ export function ClientsPage() {
   return (
     <>
       <div className="entete-page">
-        <h1>Clients</h1>
+        <h1>{estPharmacie ? 'Patients' : 'Clients'}</h1>
       </div>
 
       {estPharmacie && (
         <div className="onglets" style={{ marginBottom: 20 }}>
           <button className={onglet === 'clients' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('clients')}>
-            Clients
+            {estPharmacie ? 'Patients' : 'Clients'}
           </button>
           <button className={onglet === 'mutuelles' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('mutuelles')}>
             Mutuelles / Tiers payant
