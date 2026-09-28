@@ -163,7 +163,13 @@ export const api = {
     request(`/clients/${id}/whatsapp-statement`, { method: 'POST' }),
   downloadClientUnpaidInvoicesPdf: (id) => previewFile(`/clients/${id}/unpaid-invoices-pdf`),
 
-  getPrescriptions: (warehouseId) => request(`/prescriptions${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
+  getPrescriptions: (warehouseId, renewableOnly) => {
+    const params = new URLSearchParams();
+    if (warehouseId) params.set('warehouseId', warehouseId);
+    if (renewableOnly) params.set('renewable', 'true');
+    const qs = params.toString();
+    return request(`/prescriptions${qs ? `?${qs}` : ''}`);
+  },
   createPrescription: (data) =>
     request('/prescriptions', { method: 'POST', body: JSON.stringify(data) }),
 

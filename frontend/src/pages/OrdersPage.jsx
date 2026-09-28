@@ -251,6 +251,12 @@ export function OrdersPage() {
   const [ordonnanceModaleOuverte, setOrdonnanceModaleOuverte] = useState(false);
   const [nouvelleOrdonnance, setNouvelleOrdonnance] = useState({ patientName: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerName: '', insurerMemberNumber: '', coverageRate: '' });
   const [creationOrdonnanceEnCours, setCreationOrdonnanceEnCours] = useState(false);
+  // Ordonnance renouvelable/chronique : liste des ordonnances en cours (avec
+  // quantités délivrées) et champs de création d'une nouvelle.
+  const [ordonnancesRenouvelables, setOrdonnancesRenouvelables] = useState([]);
+  const [ordonnanceRenouvelable, setOrdonnanceRenouvelable] = useState(false);
+  const [ordonnanceValidite, setOrdonnanceValidite] = useState('');
+  const [quantitesPrescrites, setQuantitesPrescrites] = useState({});
   const [venteEnCours, setVenteEnCours] = useState(false);
   const [confirmationVente, setConfirmationVente] = useState(null);
   const [choixConditionnement, setChoixConditionnement] = useState(null);
@@ -793,11 +799,34 @@ export function OrdersPage() {
     if (!necessiteOrdonnance) setPrescriptionId('');
   }, [necessiteOrdonnance]);
 
+  useEffect(() => {
+    if (!ordonnanceModaleOuverte) return;
+    if (estManager && !warehouseId) return;
+    api.getPrescriptions(estManager ? warehouseId : undefined, true)
+      .then(setOrdonnancesRenouvelables)
+      .catch(() => setOrdonnancesRenouvelables([]));
+  }, [ordonnanceModaleOuverte]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function creerOrdonnance(e) {
     e.preventDefault();
     if (!nouvelleOrdonnance.patientName || !nouvelleOrdonnance.prescriptionDate) {
       setErreur('Le nom du patient et la date de prescription sont requis.');
       return;
+    }
+    const lignesPrescrites = [];
+    if (ordonnanceRenouvelable) {
+      const vus = new Set();
+      lignesPanier.forEach((l) => {
+        const q = Number(quantitesPrescrites[l.productId]);
+        if (q > 0 && !vus.has(l.productId)) {
+          vus.add(l.productId);
+          lignesPrescrites.push({ productId: l.productId, quantity: q });
+        }
+      });
+      if (lignesPrescrites.length === 0) {
+        setErreur('Indiquez la quantité totale prescrite pour au moins un produit.');
+        return;
+      }
     }
     setCreationOrdonnanceEnCours(true);
     setErreur('');
@@ -806,8 +835,14 @@ export function OrdersPage() {
         ...nouvelleOrdonnance,
         coverageRate: nouvelleOrdonnance.coverageRate ? Number(nouvelleOrdonnance.coverageRate) : undefined,
         warehouseId: estManager ? warehouseId : undefined,
+        ...(ordonnanceRenouvelable
+          ? { isRenewable: true, validUntil: ordonnanceValidite || undefined, items: lignesPrescrites }
+          : {}),
       });
       setPrescriptionId(ordonnance.id);
+      setOrdonnanceRenouvelable(false);
+      setOrdonnanceValidite('');
+      setQuantitesPrescrites({});
       setOrdonnanceModaleOuverte(false);
       setNouvelleOrdonnance({ patientName: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerName: '', insurerMemberNumber: '', coverageRate: '' });
     } catch (err) {
@@ -1635,6 +1670,45 @@ export function OrdersPage() {
         <div className="modale-fond" onClick={() => setOrdonnanceModaleOuverte(false)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
             <h2>Lier une ordonnance</h2>
+            {ordonnancesRenouvelables.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <p className="etiquette" style={{ marginBottom: 6 }}>Ordonnances renouvelables en cours</p>
+                <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)' }}>
+                  {ordonnancesRenouvelables.map((o) => (
+                    <div key={o.id} style={{ padding: '10px 12px', borderBottom: '1px solid var(--trait)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                        <strong style={{ fontSize: 14 }}>
+                          {o.patient_name}
+                          {o.expired && <span className="tampon tampon-brique" style={{ marginLeft: 6 }}>Expirée</span>}
+                        </strong>
+                        <button
+                          type="button"
+                          className={prescriptionId === o.id ? 'btn' : 'btn btn-principal'}
+                          disabled={o.expired}
+                          onClick={() => { setPrescriptionId(o.id); setOrdonnanceModaleOuverte(false); }}
+                        >
+                          {prescriptionId === o.id ? 'Liée' : 'Utiliser'}
+                        </button>
+                      </div>
+                      <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '2px 0 4px' }}>
+                        {o.doctor_name ? `Dr ${o.doctor_name} · ` : ''}du {new Date(o.prescription_date).toLocaleDateString('fr-FR')}
+                        {o.valid_until ? ` · valable jusqu'au ${new Date(o.valid_until).toLocaleDateString('fr-FR')}` : ''}
+                      </p>
+                      {(o.items || []).map((it) => {
+                        const reste = Math.max(0, Number(it.prescribed) - Number(it.delivered));
+                        return (
+                          <p key={it.productId} style={{ fontSize: 13, margin: '1px 0' }}>
+                            {it.productName} : délivré <span className="chiffre">{Number(it.delivered)}</span> / <span className="chiffre">{Number(it.prescribed)}</span>
+                            {' '}— <strong style={{ color: reste === 0 ? 'var(--brique, #b45309)' : undefined }}>reste {reste}</strong>
+                          </p>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+                <p className="etiquette" style={{ margin: '14px 0 6px' }}>Ou nouvelle ordonnance</p>
+              </div>
+            )}
             <form onSubmit={creerOrdonnance}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="ord-patient">Nom du patient *</label>
@@ -1699,6 +1773,52 @@ export function OrdersPage() {
                   onChange={(e) => setNouvelleOrdonnance((p) => ({ ...p, coverageRate: e.target.value }))}
                 />
               </div>
+              <div className="champ-groupe">
+                <label className="case-a-cocher" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={ordonnanceRenouvelable}
+                    onChange={(e) => setOrdonnanceRenouvelable(e.target.checked)}
+                  />
+                  <span style={{ fontSize: 14 }}>Ordonnance renouvelable / chronique (suivi des quantités délivrées)</span>
+                </label>
+              </div>
+              {ordonnanceRenouvelable && (
+                <div style={{ background: 'var(--fond)', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', padding: '10px 14px', marginBottom: 12 }}>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="ord-validite">Valable jusqu'au</label>
+                    <input
+                      id="ord-validite"
+                      type="date"
+                      min={nouvelleOrdonnance.prescriptionDate}
+                      className="champ"
+                      value={ordonnanceValidite}
+                      onChange={(e) => setOrdonnanceValidite(e.target.value)}
+                    />
+                  </div>
+                  <p className="etiquette" style={{ marginBottom: 6 }}>Quantité totale prescrite (produits du panier)</p>
+                  {lignesPanier.length === 0 && <p style={{ fontSize: 13 }}>Le panier est vide.</p>}
+                  {lignesPanier
+                    .filter((l, i, tab) => tab.findIndex((x) => x.productId === l.productId) === i)
+                    .map((l) => (
+                      <div key={l.productId} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                        <span style={{ flex: 1, fontSize: 13 }}>{l.produit.name}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          className="champ"
+                          style={{ width: 110 }}
+                          placeholder="Ex : 180"
+                          value={quantitesPrescrites[l.productId] || ''}
+                          onChange={(e) => setQuantitesPrescrites((prev) => ({ ...prev, [l.productId]: e.target.value }))}
+                        />
+                      </div>
+                    ))}
+                  <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '6px 0 0' }}>
+                    Laissez vide un produit non concerné. Les quantités sont comptées à l'unité de détail.
+                  </p>
+                </div>
+              )}
               <div className="actions-modale">
                 <button type="button" className="btn" onClick={() => setOrdonnanceModaleOuverte(false)}>Annuler</button>
                 <button type="submit" className="btn btn-principal" disabled={creationOrdonnanceEnCours}>

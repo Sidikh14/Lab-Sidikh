@@ -199,6 +199,68 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// Ordonnance renouvelable/chronique : vérifie que l'ordonnance n'est pas
+// expirée et que chaque produit prescrit garde assez de quantité à délivrer
+// (prescrit - déjà délivré sur les commandes non annulées). Le verrou sur la
+// ligne de l'ordonnance sérialise les ventes simultanées qui la consomment.
+// excludeOrderId : commande en cours de modification (PUT), à ne pas compter.
+async function verifierOrdonnanceRenouvelable(dbClient, merchantId, prescriptionId, resolvedItems, excludeOrderId) {
+  const prescResult = await dbClient.query(
+    `SELECT id, is_renewable, (valid_until IS NOT NULL AND valid_until < CURRENT_DATE) AS expiree
+     FROM prescriptions WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
+    [prescriptionId, merchantId]
+  );
+  const prescription = prescResult.rows[0];
+  if (!prescription || !prescription.is_renewable) return;
+
+  if (prescription.expiree) {
+    throw { status: 400, message: 'Cette ordonnance renouvelable est expirée.' };
+  }
+
+  const lignesResult = await dbClient.query(
+    `SELECT pi.product_id, pi.quantity_prescribed, pr.name,
+            COALESCE((
+              SELECT SUM(oi.quantity)
+              FROM order_items oi
+              JOIN orders o ON o.id = oi.order_id
+              WHERE o.prescription_id = pi.prescription_id
+                AND oi.product_id = pi.product_id
+                AND o.status <> 'annulee'
+                AND ($2::uuid IS NULL OR o.id <> $2::uuid)
+            ), 0) AS delivered
+     FROM prescription_items pi
+     JOIN products pr ON pr.id = pi.product_id
+     WHERE pi.prescription_id = $1`,
+    [prescriptionId, excludeOrderId || null]
+  );
+  const parProduit = new Map(lignesResult.rows.map((r) => [r.product_id, r]));
+
+  const demandeParProduit = new Map();
+  for (const r of resolvedItems) {
+    demandeParProduit.set(r.product.id, (demandeParProduit.get(r.product.id) || 0) + r.baseQuantity);
+  }
+
+  for (const r of resolvedItems) {
+    if (r.product.requires_prescription && !parProduit.has(r.product.id)) {
+      throw { status: 400, message: `${r.product.name} n'est pas prescrit sur cette ordonnance renouvelable.` };
+    }
+  }
+
+  for (const [productId, demande] of demandeParProduit) {
+    const ligne = parProduit.get(productId);
+    if (!ligne) continue; // produit hors ordonnance (vente libre) : pas de plafond
+    const prescrit = Number(ligne.quantity_prescribed);
+    const delivre = Number(ligne.delivered);
+    const reste = Math.max(0, prescrit - delivre);
+    if (demande > reste) {
+      throw {
+        status: 400,
+        message: `Ordonnance : il ne reste que ${reste} ${ligne.name} à délivrer (prescrit ${prescrit}, déjà délivré ${delivre}).`,
+      };
+    }
+  }
+}
+
 // POST /orders
 // Crée une commande avec ses lignes, déduit le stock automatiquement et
 // enregistre le mouvement de stock correspondant. Tout se fait dans une
@@ -351,6 +413,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
       if (prescriptionResult.rows.length === 0) {
         throw { status: 404, message: 'Ordonnance introuvable.' };
       }
+      await verifierOrdonnanceRenouvelable(client, req.user.merchantId, prescriptionId, resolvedItems, null);
     }
 
     // Arrondi en FCFA entiers (pas de centimes) : on arrondit le montant de
@@ -1245,6 +1308,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       if (prescriptionResult.rows.length === 0) {
         throw { status: 404, message: 'Ordonnance introuvable.' };
       }
+      await verifierOrdonnanceRenouvelable(client, req.user.merchantId, prescriptionId, resolvedItems, order.id);
     }
 
     const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
@@ -1424,9 +1488,6 @@ async function getOrderReceiptDetail(merchantId, id) {
             m.address AS merchant_address, m.bank_details, m.mobile_money_details, m.payment_terms,
             uv.full_name AS vendeur_name,
             uc.full_name AS caissier_name,
-            (SELECT SUM(ic.amount) FROM insurer_claims ic WHERE ic.order_id = o.id) AS insurer_claim_amount,
-            (SELECT ins.name FROM insurer_claims ic JOIN insurers ins ON ins.id = ic.insurer_id WHERE ic.order_id = o.id LIMIT 1) AS insurer_name,
-            (SELECT COALESCE(SUM(icp.amount), 0) FROM insurer_copayments icp WHERE icp.order_id = o.id) AS insurer_copay_amount,
             EXISTS (SELECT 1 FROM product_returns pr WHERE pr.order_id = o.id) AS has_return
      FROM orders o
      JOIN merchants m ON m.id = o.merchant_id
@@ -1537,7 +1598,6 @@ function mesurerHauteurTicket(order, largeurContenu) {
   if (order.tva_applicable) hauteur += 13;
   if (Number(order.change_given) > 0) hauteur += 12;
   if (order.has_return) hauteur += 18;
-  if (order.insurer_claim_amount !== null && order.insurer_claim_amount !== undefined) hauteur += 36; // part assurance + reste à charge
 
   order.items.forEach((item) => {
     mesure.font('Helvetica').fontSize(8.5);
@@ -1639,16 +1699,6 @@ function genererTicketEtroit(res, order) {
   doc.text('TOTAL', MARGE, y, { width: largeurContenu - 90 });
   doc.text(`${formatMontant(order.total_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
   y += 20;
-
-  if (order.insurer_claim_amount !== null && order.insurer_claim_amount !== undefined) {
-    doc.font('Helvetica').fontSize(8).fillColor(COULEURS.muted);
-    doc.text(`Part ${order.insurer_name || 'assurance'}`, MARGE, y, { width: largeurContenu - 70, lineBreak: false, ellipsis: true });
-    doc.fillColor(COULEURS.encre).text(`${formatMontant(order.insurer_claim_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right', lineBreak: false });
-    y += 12;
-    doc.fillColor(COULEURS.muted).text('Reste à charge client', MARGE, y, { width: largeurContenu - 70, lineBreak: false });
-    doc.font('Helvetica-Bold').fillColor(COULEURS.encre).text(`${formatMontant(order.insurer_copay_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right', lineBreak: false });
-    y += 16;
-  }
 
   doc.font('Helvetica').fontSize(8).fillColor(COULEURS.muted);
   doc.text(MOYENS_PAIEMENT_LABEL[order.payment_method] || order.payment_method || '', MARGE, y, { width: largeurContenu - 90 });
@@ -1843,15 +1893,6 @@ function genererFactureA4(res, order, creditInfo) {
   y += 4;
   ligneTotal('TOTAL :', order.total_amount, { grand: true });
   y += 8;
-
-  if (order.insurer_claim_amount !== null && order.insurer_claim_amount !== undefined) {
-    doc.font('Helvetica').fontSize(9).fillColor(COULEURS.muted)
-      .text(`Tiers payant — ${order.insurer_name || 'assurance'}`, 260, y, { width: 285, align: 'right' });
-    y += 18;
-    ligneTotal('Part assurance :', order.insurer_claim_amount);
-    ligneTotal('Reste à charge :', order.insurer_copay_amount);
-    y += 4;
-  }
 
   if (order.payment_method === 'a_credit' && creditInfo) {
     ligneTotal('Déjà réglé :', creditInfo.avance, { discret: true });
