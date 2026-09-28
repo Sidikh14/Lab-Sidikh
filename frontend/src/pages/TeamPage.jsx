@@ -772,6 +772,11 @@ function SalairesTab() {
   const [methodeSaisie, setMethodeSaisie] = useState('especes');
   const [partsSaisies, setPartsSaisies] = useState(1);
 
+  // Primes fixes (page distincte du bouton "Configurer") : reprises
+  // automatiquement à l'ouverture du bulletin de chaque mois.
+  const [employePrimesFixes, setEmployePrimesFixes] = useState(null);
+  const [primesFixes, setPrimesFixes] = useState([]);
+
   const [employePaiement, setEmployePaiement] = useState(null);
   const [montantPaiement, setMontantPaiement] = useState('');
   const [methodePaiement, setMethodePaiement] = useState('especes');
@@ -804,6 +809,33 @@ function SalairesTab() {
   }
 
   useEffect(charger, [mois]);
+
+  function ouvrirPrimesFixes(emp) {
+    setEmployePrimesFixes(emp);
+    setPrimesFixes(Array.isArray(emp.recurring_bonuses) ? emp.recurring_bonuses.map((p) => ({ label: p.label, amount: p.amount })) : []);
+  }
+
+  async function enregistrerPrimesFixes(e) {
+    e.preventDefault();
+    setEnvoiEnCours(true);
+    setErreur('');
+    try {
+      await api.setSalary(employePrimesFixes.id, {
+        monthlySalary: Number(employePrimesFixes.monthly_salary) || 0,
+        paymentMethod: employePrimesFixes.payment_method || 'especes',
+        partsFiscales: Number(employePrimesFixes.parts_fiscales) || 1,
+        recurringBonuses: primesFixes
+          .filter((p) => p.label && Number(p.amount))
+          .map((p) => ({ label: p.label, amount: Number(p.amount) })),
+      });
+      setEmployePrimesFixes(null);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnvoiEnCours(false);
+    }
+  }
 
   function ouvrirConfig(emp) {
     setEmployeConfig(emp);
@@ -846,7 +878,21 @@ function SalairesTab() {
     setChargementBulletin(true);
     try {
       const existantes = await api.getSalaryBonuses(emp.id, mois);
-      setPrimes(existantes.length > 0 ? existantes.map((p) => ({ label: p.label, amount: p.amount })) : []);
+      if (existantes.length > 0) {
+        setPrimes(existantes.map((p) => ({ label: p.label, amount: p.amount })));
+      } else {
+        // Rien de saisi pour ce mois : on reprend les primes fixes configurées
+        // pour l'employé, sauf si un bulletin existe déjà pour ce mois.
+        let dejaGenere = false;
+        try {
+          await api.getPayslip(emp.id, mois);
+          dejaGenere = true;
+        } catch {
+          dejaGenere = false;
+        }
+        const config = Array.isArray(emp.recurring_bonuses) ? emp.recurring_bonuses : [];
+        setPrimes(dejaGenere ? [] : config.map((p) => ({ label: p.label, amount: p.amount })));
+      }
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -945,6 +991,7 @@ function SalairesTab() {
                   )}
                 </div>
                 <button className="btn" onClick={() => ouvrirConfig(emp)}>Configurer</button>
+                <button className="btn" onClick={() => ouvrirPrimesFixes(emp)}>Primes fixes</button>
                 <button className="btn" disabled={!emp.monthly_salary} onClick={() => ouvrirBulletin(emp)}>
                   Bulletin
                 </button>
@@ -1008,6 +1055,47 @@ function SalairesTab() {
               </div>
               <div className="actions-modale">
                 <button type="button" className="btn" onClick={() => setEmployeConfig(null)}>Annuler</button>
+                <button type="submit" className="btn btn-principal" disabled={envoiEnCours}>Enregistrer</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {employePrimesFixes && (
+        <div className="modale-fond" onClick={() => setEmployePrimesFixes(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Primes fixes — {employePrimesFixes.name}</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+              Ces primes/indemnités sont reprises automatiquement à l'ouverture du bulletin de chaque mois. Modifie-les ici une fois pour toutes.
+            </p>
+            <form onSubmit={enregistrerPrimesFixes}>
+              <div className="champ-groupe">
+                {primesFixes.map((prime, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                    <input
+                      type="text"
+                      className="champ"
+                      placeholder="Libellé (ex. prime de transport)"
+                      value={prime.label}
+                      onChange={(e) => setPrimesFixes((l) => l.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                      style={{ flex: 2 }}
+                    />
+                    <input
+                      type="number"
+                      className="champ"
+                      placeholder="Montant"
+                      value={prime.amount}
+                      onChange={(e) => setPrimesFixes((l) => l.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))}
+                      style={{ flex: 1 }}
+                    />
+                    <button type="button" className="btn" onClick={() => setPrimesFixes((l) => l.filter((_, j) => j !== i))}>×</button>
+                  </div>
+                ))}
+                <button type="button" className="btn" onClick={() => setPrimesFixes((l) => [...l, { label: '', amount: '' }])}>+ Ajouter une prime</button>
+              </div>
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={() => setEmployePrimesFixes(null)}>Annuler</button>
                 <button type="submit" className="btn btn-principal" disabled={envoiEnCours}>Enregistrer</button>
               </div>
             </form>
