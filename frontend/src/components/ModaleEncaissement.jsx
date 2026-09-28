@@ -79,11 +79,31 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
     }
   }, [commande.client_id]);
 
+  // Pharmacie : tiers payant pour un client de passage — la mutuelle et le
+  // taux sont choisis ici même (pas de fiche patient existante), avec le
+  // nom pour créer le dossier patient au moment de l'encaissement.
+  const estPharmacie = merchant?.sector === 'pharmacie';
+  const [assureursDisponibles, setAssureursDisponibles] = useState([]);
+  const [tiersPayantAssureurId, setTiersPayantAssureurId] = useState('');
+  const [tiersPayantTaux, setTiersPayantTaux] = useState('');
+  const [tiersPayantPatientNom, setTiersPayantPatientNom] = useState('');
+  const [tiersPayantPatientTelephone, setTiersPayantPatientTelephone] = useState('');
+  useEffect(() => {
+    if (estPharmacie && !commande.client_id) {
+      api.getInsurers().then(setAssureursDisponibles).catch(() => setAssureursDisponibles([]));
+    }
+  }, [estPharmacie, commande.client_id]);
+
   const estManager = user?.role === 'manager';
   const estClientDePassage = !commande.client_id;
   const estACredit = moyenPaiement === 'a_credit';
   const estTiersPayant = moyenPaiement === 'tiers_payant';
   const clientAMutuelle = Boolean(clientInfo?.insurer_id && Number(clientInfo?.insurance_coverage_percent) > 0);
+  const mutuelleEffective = clientAMutuelle
+    ? { nom: clientInfo.insurer_name, taux: Number(clientInfo.insurance_coverage_percent) }
+    : (estPharmacie && estClientDePassage && tiersPayantAssureurId && Number(tiersPayantTaux) > 0
+        ? { nom: assureursDisponibles.find((a) => a.id === tiersPayantAssureurId)?.name, taux: Number(tiersPayantTaux) }
+        : null);
   const fraisLivraisonNombre = prevoirLivraison ? Number(fraisLivraison || 0) : 0;
   const montantReduction =
     estManager && reductionActive && valeurReduction
@@ -95,8 +115,8 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
         )
       : 0;
   const totalAPayer = Number(commande.total_amount) - montantReduction + fraisLivraisonNombre;
-  const montantCouvertAssurance = estTiersPayant && clientAMutuelle
-    ? Math.min(totalAPayer, Math.round(totalAPayer * (Number(clientInfo.insurance_coverage_percent) / 100)))
+  const montantCouvertAssurance = estTiersPayant && mutuelleEffective
+    ? Math.min(totalAPayer, Math.round(totalAPayer * (mutuelleEffective.taux / 100)))
     : 0;
   const montantResteACharge = estTiersPayant ? totalAPayer - montantCouvertAssurance : totalAPayer;
   const monnaieARendre = Math.max(0, Number(montantRecu || 0) - montantResteACharge);
@@ -131,7 +151,20 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
       setErreur('Le paiement à crédit est réservé aux clients enregistrés.');
       return;
     }
-    if (estTiersPayant && !clientAMutuelle) {
+    if (estTiersPayant && estClientDePassage) {
+      if (!tiersPayantPatientNom.trim()) {
+        setErreur('Le nom du patient est requis pour un tiers payant sans fiche enregistrée.');
+        return;
+      }
+      if (!tiersPayantAssureurId) {
+        setErreur('Choisissez la mutuelle du patient.');
+        return;
+      }
+      if (!tiersPayantTaux || Number(tiersPayantTaux) <= 0 || Number(tiersPayantTaux) > 100) {
+        setErreur('Taux de prise en charge invalide.');
+        return;
+      }
+    } else if (estTiersPayant && !clientAMutuelle) {
       setErreur("Ce client n'a pas de mutuelle/tiers payant configuré sur sa fiche.");
       return;
     }
@@ -183,6 +216,14 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
           ? { advanceAmount: Number(montantAvance), advancePaymentMethod: moyenAvance }
           : {}),
         ...(estTiersPayant && montantResteACharge > 0 ? { copaymentMethod: moyenResteACharge } : {}),
+        ...(estTiersPayant && estClientDePassage
+          ? {
+              insurerId: tiersPayantAssureurId,
+              coveragePercent: Number(tiersPayantTaux),
+              patientName: tiersPayantPatientNom.trim(),
+              patientPhone: tiersPayantPatientTelephone.trim() || undefined,
+            }
+          : {}),
       });
       if (resultat?.offline) {
         // Pas de réseau : l'encaissement est en file d'attente, on ne peut
@@ -394,14 +435,14 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
               <span className="chiffre">- {Math.round(montantReduction).toLocaleString('fr-FR')}</span>
             </div>
           )}
-          {estTiersPayant && clientAMutuelle ? (
+          {estTiersPayant && mutuelleEffective ? (
             <>
               <div className="ticket-total-ligne">
                 <span>Total facture</span>
                 <span className="chiffre">{Math.round(totalAPayer).toLocaleString('fr-FR')} FCFA</span>
               </div>
               <div className="ticket-total-ligne">
-                <span>Part {clientInfo?.insurer_name || 'assurance'} ({Number(clientInfo?.insurance_coverage_percent)}%)</span>
+                <span>Part {mutuelleEffective.nom || 'assurance'} ({mutuelleEffective.taux}%)</span>
                 <span className="chiffre">- {Math.round(montantCouvertAssurance).toLocaleString('fr-FR')} FCFA</span>
               </div>
               <div className="ticket-total-ligne ticket-total-ligne--principal">
@@ -459,7 +500,10 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
           <div className="champ-groupe">
             <label className="etiquette" htmlFor="e-moyen">Moyen de paiement</label>
             <select id="e-moyen" className="champ" value={moyenPaiement} onChange={(e) => setMoyenPaiement(e.target.value)}>
-              {MOYENS_PAIEMENT.filter((m) => m.value !== 'tiers_payant' || clientAMutuelle).map((m) => (
+              {MOYENS_PAIEMENT
+                .filter((m) => m.value !== 'a_credit' || !estPharmacie)
+                .filter((m) => m.value !== 'tiers_payant' || clientAMutuelle || (estPharmacie && estClientDePassage))
+                .map((m) => (
                 <option key={m.value} value={m.value}>
                   {m.label}{m.value === 'a_credit' && estClientDePassage ? ' (client de passage → demande requise)' : ''}
                 </option>
@@ -474,13 +518,68 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
                 padding: '10px 14px', marginBottom: 12,
               }}
             >
-              <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 10 }}>
-                <strong>{clientInfo?.insurer_name}</strong> prend en charge {Number(clientInfo?.insurance_coverage_percent)}% :
-                {' '}<strong className="chiffre">{Math.round(montantCouvertAssurance).toLocaleString('fr-FR')} FCFA</strong> à leur charge,
-                {' '}<strong className="chiffre">{Math.round(montantResteACharge).toLocaleString('fr-FR')} FCFA</strong> à la charge du client.
-              </p>
+              {estClientDePassage && (
+                <div style={{ marginBottom: 10 }}>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="e-tp-patient">Nom du patient *</label>
+                    <input
+                      id="e-tp-patient"
+                      className="champ"
+                      value={tiersPayantPatientNom}
+                      onChange={(e) => setTiersPayantPatientNom(e.target.value)}
+                    />
+                  </div>
+                  <div className="champ-groupe">
+                    <label className="etiquette" htmlFor="e-tp-tel">Téléphone du patient</label>
+                    <input
+                      id="e-tp-tel"
+                      className="champ"
+                      placeholder="Facultatif"
+                      value={tiersPayantPatientTelephone}
+                      onChange={(e) => setTiersPayantPatientTelephone(e.target.value)}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <div style={{ flex: '1 1 140px' }}>
+                      <label className="etiquette" htmlFor="e-tp-mutuelle">Mutuelle *</label>
+                      <select
+                        id="e-tp-mutuelle"
+                        className="champ"
+                        value={tiersPayantAssureurId}
+                        onChange={(e) => setTiersPayantAssureurId(e.target.value)}
+                      >
+                        <option value="">Choisir…</option>
+                        {assureursDisponibles.map((a) => (
+                          <option key={a.id} value={a.id}>{a.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div style={{ flex: '1 1 100px' }}>
+                      <label className="etiquette" htmlFor="e-tp-taux">Taux (%) *</label>
+                      <input
+                        id="e-tp-taux"
+                        type="number"
+                        min="0"
+                        max="100"
+                        className="champ"
+                        placeholder="Ex : 80"
+                        value={tiersPayantTaux}
+                        onChange={(e) => setTiersPayantTaux(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
-              {montantResteACharge > 0 ? (
+              {mutuelleEffective && (
+                <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 10 }}>
+                  <strong>{mutuelleEffective.nom}</strong> prend en charge {mutuelleEffective.taux}% :
+                  {' '}<strong className="chiffre">{Math.round(montantCouvertAssurance).toLocaleString('fr-FR')} FCFA</strong> à leur charge,
+                  {' '}<strong className="chiffre">{Math.round(montantResteACharge).toLocaleString('fr-FR')} FCFA</strong> à la charge du client.
+                </p>
+              )}
+
+              {mutuelleEffective && montantResteACharge > 0 ? (
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   <div style={{ flex: '1 1 140px' }}>
                     <label className="etiquette" htmlFor="e-moyen-reste">Moyen de paiement du reste à charge</label>
@@ -509,9 +608,9 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
                     Monnaie à rendre : <strong className="chiffre">{Math.round(monnaieARendre).toLocaleString('fr-FR')} FCFA</strong>
                   </p>
                 </div>
-              ) : (
+              ) : mutuelleEffective ? (
                 <p style={{ fontSize: 13, margin: 0 }}>Entièrement pris en charge — aucun encaissement requis.</p>
-              )}
+              ) : null}
             </div>
           ) : estACredit ? (
             <div

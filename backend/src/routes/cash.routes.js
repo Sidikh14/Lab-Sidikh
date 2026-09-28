@@ -125,6 +125,23 @@ async function recupererMouvementsDetailles(req, method, from, to, cashier, ware
     ts.params
   );
 
+  // Règlement reçu d'une mutuelle (remboursement des ventes en tiers
+  // payant) : au même titre qu'un règlement de crédit, il entre en caisse
+  // dès qu'il est enregistré (POST /insurers/:id/payments).
+  const reglementsMutuelle = await pool.query(
+    `SELECT ip.id, 'reglement_mutuelle' AS type, ip.paid_at AS date, ip.amount, ip.payment_method,
+            i.name AS insurer_name,
+            ip.user_id AS user_id, u.full_name AS user_name
+     FROM insurer_payments ip
+     JOIN insurers i ON i.id = ip.insurer_id
+     LEFT JOIN users u ON u.id = ip.user_id
+     WHERE ip.merchant_id = $1 AND ip.paid_at >= $2 AND ip.paid_at < $3 AND ip.warehouse_id = $4
+       ${ts.idxMethode ? `AND ip.payment_method = $${ts.idxMethode}` : ''}
+       ${ts.idxCaissier ? `AND ip.user_id = $${ts.idxCaissier}` : ''}
+     ORDER BY ip.paid_at`,
+    ts.params
+  );
+
   const achatsStock = await pool.query(
     `SELECT sm.id, 'achat_stock' AS type, sm.created_at AS date, sm.total_cost AS amount, sm.cash_method AS payment_method,
             p.name AS product_name, s.name AS supplier_name,
@@ -178,7 +195,7 @@ async function recupererMouvementsDetailles(req, method, from, to, cashier, ware
     dates.params
   );
 
-  const entrees = [...encaissements.rows, ...reglementsCredit.rows, ...copaiementsTiersPayant.rows, ...entreesManuelles.rows].map((r) => ({ ...r, sens: 'entree' }));
+  const entrees = [...encaissements.rows, ...reglementsCredit.rows, ...copaiementsTiersPayant.rows, ...reglementsMutuelle.rows, ...entreesManuelles.rows].map((r) => ({ ...r, sens: 'entree' }));
   const dehors = [...achatsStock.rows, ...reglementsFournisseur.rows, ...sorties.rows].map((r) => ({ ...r, sens: 'sortie' }));
 
   return [...entrees, ...dehors].sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -194,6 +211,7 @@ function texteMouvement(m) {
   if (m.type === 'encaissement') return `Encaissement ${formatOrderNumber(m)}${m.client_name ? ` — ${m.client_name}` : ''}`;
   if (m.type === 'reglement_credit') return `Règlement créance${m.client_name ? ` — ${m.client_name}` : ''}`;
   if (m.type === 'reglement_tiers_payant') return `Reste à charge tiers payant ${formatOrderNumber(m)}${m.client_name ? ` — ${m.client_name}` : ''}`;
+  if (m.type === 'reglement_mutuelle') return `Règlement mutuelle — ${m.insurer_name}`;
   if (m.type === 'achat_stock') return `Achat stock — ${m.product_name}${m.supplier_name ? ` (${m.supplier_name})` : ''}`;
   if (m.type === 'reglement_fournisseur') return `Règlement fournisseur — ${m.supplier_name}`;
   if (m.type === 'sortie') return `Sortie de caisse — ${m.reason}`;

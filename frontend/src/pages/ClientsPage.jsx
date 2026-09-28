@@ -770,6 +770,18 @@ function ClientsTab() {
 }
 
 function MutuellesTab() {
+  const { user } = useAuth();
+  const estManager = user?.role === 'manager';
+  // Le règlement d'une mutuelle entre directement dans la caisse d'une
+  // boutique (voir insurers_routes.js) : le gérant est déjà rattaché à une
+  // seule boutique, mais le manager qui en gère plusieurs doit préciser
+  // laquelle a reçu ce règlement.
+  const [boutiques, setBoutiques] = useState([]);
+  const [boutiqueReglement, setBoutiqueReglement] = useState('');
+  useEffect(() => {
+    if (estManager) api.getWarehouses().then(setBoutiques).catch(() => {});
+  }, [estManager]);
+
   const [mutuelles, setMutuelles] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
@@ -843,6 +855,7 @@ function MutuellesTab() {
     setMutuelleSelectionnee(mutuelle);
     setMontantReglement('');
     setMoyenReglement('especes');
+    setBoutiqueReglement('');
     api
       .getInsurer(mutuelle.id)
       .then(setDetailMutuelle)
@@ -855,9 +868,17 @@ function MutuellesTab() {
       setErreur('Montant de règlement invalide.');
       return;
     }
+    if (estManager && !boutiqueReglement) {
+      setErreur('Choisissez la boutique qui a reçu ce règlement.');
+      return;
+    }
     setEnregistrementReglement(true);
     try {
-      await api.createInsurerPayment(mutuelleSelectionnee.id, { amount: Number(montantReglement), paymentMethod: moyenReglement });
+      await api.createInsurerPayment(mutuelleSelectionnee.id, {
+        amount: Number(montantReglement),
+        paymentMethod: moyenReglement,
+        ...(estManager ? { warehouseId: boutiqueReglement } : {}),
+      });
       const detail = await api.getInsurer(mutuelleSelectionnee.id);
       setDetailMutuelle(detail);
       setMontantReglement('');
@@ -1051,6 +1072,22 @@ function MutuellesTab() {
                 </p>
 
                 <form onSubmit={handleEnregistrerReglement}>
+                  {estManager && (
+                    <div className="champ-groupe">
+                      <label className="etiquette" htmlFor="mr-boutique">Boutique ayant reçu le règlement</label>
+                      <select
+                        id="mr-boutique"
+                        className="champ"
+                        value={boutiqueReglement}
+                        onChange={(e) => setBoutiqueReglement(e.target.value)}
+                      >
+                        <option value="">Choisir…</option>
+                        {boutiques.map((b) => (
+                          <option key={b.id} value={b.id}>{b.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className="champ-groupe">
                     <label className="etiquette" htmlFor="mr-montant">Montant du règlement reçu (FCFA)</label>
                     <input

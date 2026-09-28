@@ -646,7 +646,7 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
   const {
     paymentMethod, amountReceived, needsDelivery, deliveryFee, deliveryAddress,
     discountType, discountMode, discountValue, advanceAmount, advancePaymentMethod,
-    copaymentMethod,
+    copaymentMethod, insurerId, coveragePercent, patientName, patientPhone,
   } = req.body;
 
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
@@ -676,6 +676,10 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
 
   const estACredit = paymentMethod === 'a_credit';
   const estTiersPayant = paymentMethod === 'tiers_payant';
+
+  if (estACredit && req.user.sector === 'pharmacie') {
+    return res.status(400).json({ error: "La vente à crédit n'est pas disponible en pharmacie : utilisez le tiers payant." });
+  }
 
   // Avance versée directement par le client au moment de la vente à
   // crédit (optionnelle) : réduit immédiatement la créance et impacte la
@@ -741,22 +745,72 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
       return res.status(400).json({ error: 'La vente à crédit n\'est autorisée que pour un client déjà enregistré.' });
     }
 
-    // Tiers payant : le client doit être enregistré ET avoir une mutuelle
-    // avec un % de prise en charge configuré sur sa fiche.
+    // Tiers payant : soit le client est déjà enregistré avec une mutuelle
+    // sur sa fiche, soit c'est un client de passage — la caissière choisit
+    // alors la mutuelle et le taux directement dans la modale, et une fiche
+    // patient est créée (ou retrouvée par téléphone) à la volée.
     let mutuelleClient = null;
     if (estTiersPayant) {
-      if (!order.client_id) {
-        return res.status(400).json({ error: "La vente en tiers payant n'est autorisée que pour un client déjà enregistré." });
-      }
-      const clientResult = await pool.query(
-        `SELECT c.insurer_id, c.insurance_coverage_percent, i.name AS insurer_name
-         FROM clients c LEFT JOIN insurers i ON i.id = c.insurer_id
-         WHERE c.id = $1 AND c.merchant_id = $2`,
-        [order.client_id, req.user.merchantId]
-      );
-      mutuelleClient = clientResult.rows[0];
-      if (!mutuelleClient || !mutuelleClient.insurer_id || !Number(mutuelleClient.insurance_coverage_percent)) {
-        return res.status(400).json({ error: "Ce client n'a pas de mutuelle/tiers payant configuré sur sa fiche." });
+      if (order.client_id) {
+        const clientResult = await pool.query(
+          `SELECT c.insurer_id, c.insurance_coverage_percent, i.name AS insurer_name
+           FROM clients c LEFT JOIN insurers i ON i.id = c.insurer_id
+           WHERE c.id = $1 AND c.merchant_id = $2`,
+          [order.client_id, req.user.merchantId]
+        );
+        mutuelleClient = clientResult.rows[0];
+        if (!mutuelleClient || !mutuelleClient.insurer_id || !Number(mutuelleClient.insurance_coverage_percent)) {
+          return res.status(400).json({ error: "Ce client n'a pas de mutuelle/tiers payant configuré sur sa fiche." });
+        }
+      } else {
+        if (!patientName || typeof patientName !== 'string' || !patientName.trim()) {
+          return res.status(400).json({ error: 'Le nom du patient est requis pour un tiers payant sans fiche enregistrée.' });
+        }
+        if (!insurerId) {
+          return res.status(400).json({ error: 'La mutuelle est requise.' });
+        }
+        const tauxChoisi = Number(coveragePercent);
+        if (!Number.isFinite(tauxChoisi) || tauxChoisi <= 0 || tauxChoisi > 100) {
+          return res.status(400).json({ error: 'Taux de prise en charge invalide.' });
+        }
+        const assureurResult = await pool.query(
+          `SELECT id, name FROM insurers WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+          [insurerId, req.user.merchantId]
+        );
+        if (assureurResult.rows.length === 0) {
+          return res.status(404).json({ error: 'Mutuelle introuvable.' });
+        }
+        const assureur = assureurResult.rows[0];
+
+        const telephone = patientPhone ? String(patientPhone).trim() : '';
+        let clientIdFinal = null;
+        if (telephone) {
+          const existant = await pool.query(
+            `SELECT id FROM clients WHERE merchant_id = $1 AND phone = $2 LIMIT 1`,
+            [req.user.merchantId, telephone]
+          );
+          if (existant.rows[0]) clientIdFinal = existant.rows[0].id;
+        }
+        if (clientIdFinal) {
+          await pool.query(
+            `UPDATE clients SET insurer_id = $1, insurance_coverage_percent = $2 WHERE id = $3 AND merchant_id = $4`,
+            [assureur.id, tauxChoisi, clientIdFinal, req.user.merchantId]
+          );
+        } else {
+          const nouveauClient = await pool.query(
+            `INSERT INTO clients (merchant_id, full_name, phone, insurer_id, insurance_coverage_percent)
+             VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+            [req.user.merchantId, patientName.trim(), telephone || null, assureur.id, tauxChoisi]
+          );
+          clientIdFinal = nouveauClient.rows[0].id;
+        }
+
+        await pool.query(
+          `UPDATE orders SET client_id = $1 WHERE id = $2 AND merchant_id = $3`,
+          [clientIdFinal, req.params.id, req.user.merchantId]
+        );
+        order.client_id = clientIdFinal;
+        mutuelleClient = { insurer_id: assureur.id, insurance_coverage_percent: tauxChoisi, insurer_name: assureur.name };
       }
     }
 

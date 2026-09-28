@@ -11,6 +11,23 @@ router.use(requireRole('manager', 'gerant'));
 
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
 
+// Même pattern que dans prescriptions_routes.js / orders_routes.js : le
+// manager (qui voit toutes les boutiques) doit préciser laquelle reçoit le
+// règlement ; le gérant est déjà rattaché à une seule boutique.
+async function resolveWarehouseId(req, providedId) {
+  if (req.user.role === 'manager') {
+    if (!providedId) throw { status: 400, message: 'La boutique est requise.' };
+    const result = await pool.query(
+      `SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+      [providedId, req.user.merchantId]
+    );
+    if (result.rows.length === 0) throw { status: 404, message: 'Boutique introuvable.' };
+    return providedId;
+  }
+  if (!req.user.warehouseId) throw { status: 403, message: "Vous n'êtes assigné à aucune boutique." };
+  return req.user.warehouseId;
+}
+
 // GET /insurers — liste avec la créance (ce que l'assureur nous doit pour
 // les ventes en tiers payant) calculée à la volée, jamais stockée.
 router.get('/', async (req, res) => {
@@ -181,7 +198,7 @@ router.get('/:id/statement-pdf', async (req, res) => {
 
 // POST /insurers/:id/payments — enregistrer un règlement reçu de l'assureur
 router.post('/:id/payments', async (req, res) => {
-  const { amount, notes, paymentMethod } = req.body;
+  const { amount, notes, paymentMethod, warehouseId: warehouseIdInput } = req.body;
   if (!Number(amount) || Number(amount) <= 0) {
     return res.status(400).json({ error: 'Montant de règlement invalide.' });
   }
@@ -189,19 +206,25 @@ router.post('/:id/payments', async (req, res) => {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
   }
   try {
+    const warehouseId = await resolveWarehouseId(req, warehouseIdInput);
+
     const insurer = await pool.query(
       `SELECT id, name FROM insurers WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
       [req.params.id, req.user.merchantId]
     );
     if (insurer.rows.length === 0) return res.status(404).json({ error: 'Mutuelle introuvable.' });
 
+    // Ce règlement entre directement dans la caisse de cette boutique — au
+    // même titre qu'un règlement de crédit ou un reste à charge tiers
+    // payant — voir GET /cash/summary et /cash/movements.
     const result = await pool.query(
-      `INSERT INTO insurer_payments (merchant_id, insurer_id, user_id, amount, payment_method, notes)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [req.user.merchantId, req.params.id, req.user.id, Number(amount), paymentMethod, notes || null]
+      `INSERT INTO insurer_payments (merchant_id, insurer_id, user_id, amount, payment_method, notes, warehouse_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [req.user.merchantId, req.params.id, req.user.id, Number(amount), paymentMethod, notes || null, warehouseId]
     );
     res.status(201).json(result.rows[0]);
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error(err);
     res.status(500).json({ error: "Erreur lors de l'enregistrement du règlement." });
   }
