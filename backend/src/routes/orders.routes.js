@@ -1424,6 +1424,9 @@ async function getOrderReceiptDetail(merchantId, id) {
             m.address AS merchant_address, m.bank_details, m.mobile_money_details, m.payment_terms,
             uv.full_name AS vendeur_name,
             uc.full_name AS caissier_name,
+            (SELECT SUM(ic.amount) FROM insurer_claims ic WHERE ic.order_id = o.id) AS insurer_claim_amount,
+            (SELECT ins.name FROM insurer_claims ic JOIN insurers ins ON ins.id = ic.insurer_id WHERE ic.order_id = o.id LIMIT 1) AS insurer_name,
+            (SELECT COALESCE(SUM(icp.amount), 0) FROM insurer_copayments icp WHERE icp.order_id = o.id) AS insurer_copay_amount,
             EXISTS (SELECT 1 FROM product_returns pr WHERE pr.order_id = o.id) AS has_return
      FROM orders o
      JOIN merchants m ON m.id = o.merchant_id
@@ -1534,6 +1537,7 @@ function mesurerHauteurTicket(order, largeurContenu) {
   if (order.tva_applicable) hauteur += 13;
   if (Number(order.change_given) > 0) hauteur += 12;
   if (order.has_return) hauteur += 18;
+  if (order.insurer_claim_amount !== null && order.insurer_claim_amount !== undefined) hauteur += 36; // part assurance + reste à charge
 
   order.items.forEach((item) => {
     mesure.font('Helvetica').fontSize(8.5);
@@ -1635,6 +1639,16 @@ function genererTicketEtroit(res, order) {
   doc.text('TOTAL', MARGE, y, { width: largeurContenu - 90 });
   doc.text(`${formatMontant(order.total_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
   y += 20;
+
+  if (order.insurer_claim_amount !== null && order.insurer_claim_amount !== undefined) {
+    doc.font('Helvetica').fontSize(8).fillColor(COULEURS.muted);
+    doc.text(`Part ${order.insurer_name || 'assurance'}`, MARGE, y, { width: largeurContenu - 70, lineBreak: false, ellipsis: true });
+    doc.fillColor(COULEURS.encre).text(`${formatMontant(order.insurer_claim_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right', lineBreak: false });
+    y += 12;
+    doc.fillColor(COULEURS.muted).text('Reste à charge client', MARGE, y, { width: largeurContenu - 70, lineBreak: false });
+    doc.font('Helvetica-Bold').fillColor(COULEURS.encre).text(`${formatMontant(order.insurer_copay_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right', lineBreak: false });
+    y += 16;
+  }
 
   doc.font('Helvetica').fontSize(8).fillColor(COULEURS.muted);
   doc.text(MOYENS_PAIEMENT_LABEL[order.payment_method] || order.payment_method || '', MARGE, y, { width: largeurContenu - 90 });
@@ -1829,6 +1843,15 @@ function genererFactureA4(res, order, creditInfo) {
   y += 4;
   ligneTotal('TOTAL :', order.total_amount, { grand: true });
   y += 8;
+
+  if (order.insurer_claim_amount !== null && order.insurer_claim_amount !== undefined) {
+    doc.font('Helvetica').fontSize(9).fillColor(COULEURS.muted)
+      .text(`Tiers payant — ${order.insurer_name || 'assurance'}`, 260, y, { width: 285, align: 'right' });
+    y += 18;
+    ligneTotal('Part assurance :', order.insurer_claim_amount);
+    ligneTotal('Reste à charge :', order.insurer_copay_amount);
+    y += 4;
+  }
 
   if (order.payment_method === 'a_credit' && creditInfo) {
     ligneTotal('Déjà réglé :', creditInfo.avance, { discret: true });
