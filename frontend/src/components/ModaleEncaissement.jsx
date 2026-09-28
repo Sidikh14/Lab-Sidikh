@@ -66,6 +66,8 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
   const [montantAvance, setMontantAvance] = useState('');
   const [moyenAvance, setMoyenAvance] = useState('especes');
   const [moyenResteACharge, setMoyenResteACharge] = useState('especes');
+  // Format du reçu pour un client enregistré : facture A4 ou ticket de caisse.
+  const [formatRecu, setFormatRecu] = useState('a4');
 
   // Mutuelle du client (tiers payant) — chargée une fois, pas incluse dans
   // l'objet commande.
@@ -169,7 +171,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
       // onglet — l'échec de cet appel ne doit pas bloquer l'encaissement
       // déjà enregistré, donc on l'isole dans son propre try/catch.
       try {
-        await api.previewOrderReceipt(commande.id);
+        await api.previewOrderReceipt(commande.id, commande.client_id ? formatRecu : undefined);
       } catch (err) {
         console.error('Impossible d\'ouvrir le reçu automatiquement :', err.message);
       }
@@ -592,6 +594,21 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {!estClientDePassage && (
+            <div className="champ-groupe">
+              <label className="etiquette" htmlFor="e-format-recu">Reçu à imprimer</label>
+              <select
+                id="e-format-recu"
+                className="champ"
+                value={formatRecu}
+                onChange={(e) => setFormatRecu(e.target.value)}
+              >
+                <option value="a4">Facture A4</option>
+                <option value="ticket">Ticket de caisse</option>
+              </select>
             </div>
           )}
 

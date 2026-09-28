@@ -177,7 +177,7 @@ export const api = {
     request(`/orders/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   recordOrderPayment: (id, data) =>
     request(`/orders/${id}/payment`, { method: 'PATCH', body: JSON.stringify(data) }),
-  previewOrderReceipt: (id) => previewFile(`/orders/${id}/receipt-pdf`),
+  previewOrderReceipt: (id, format) => previewFile(`/orders/${id}/receipt-pdf${format ? `?format=${format}` : ''}`),
   downloadOrdersPdf: (from, to) => previewFile(`/orders/pdf?from=${from}&to=${to}`),
   returnOrderToSeller: (id, reason) =>
     request(`/orders/${id}/return-to-seller`, { method: 'PATCH', body: JSON.stringify({ reason }) }),

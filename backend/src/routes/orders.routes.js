@@ -1881,16 +1881,22 @@ function genererFactureA4(res, order, creditInfo) {
   doc.end();
 }
 
-// GET /orders/:id/receipt-pdf — reçu de caisse : ticket étroit pour un
-// client de passage, facture A4 pour un client enregistré.
+// GET /orders/:id/receipt-pdf?format=a4|ticket — reçu de caisse. Sans
+// paramètre "format" : ticket étroit pour un client de passage, facture A4
+// pour un client enregistré. Avec format=a4 ou format=ticket, le choix est
+// forcé (ex : ticket de caisse pour un client enregistré).
 router.get('/:id/receipt-pdf', async (req, res) => {
   try {
     const order = await getOrderReceiptDetail(req.user.merchantId, req.params.id);
     if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
 
-    if (order.client_id) {
+    const format = String(req.query.format || '').toLowerCase();
+    const utiliserA4 = format === 'a4' ? true : format === 'ticket' ? false : Boolean(order.client_id);
+
+    if (utiliserA4) {
+      if (!order.client_name) order.client_name = 'Client de passage';
       let creditInfo = null;
-      if (order.payment_method === 'a_credit') {
+      if (order.client_id && order.payment_method === 'a_credit') {
         creditInfo = await calculerAvanceFacture(req.user.merchantId, order.client_id, order.id);
       }
       genererFactureA4(res, order, creditInfo);

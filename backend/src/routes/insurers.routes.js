@@ -123,6 +123,7 @@ router.get('/:id/statement-pdf', async (req, res) => {
     const totalDu = prisesEnCharge.reduce((somme, p) => somme + Number(p.amount || 0), 0);
     const [annee, moisNum] = month.split('-');
     const nomMois = new Date(`${annee}-${moisNum}-01`).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+    const numeroFacture = `MUT-${annee}${moisNum}-${String(insurer.id).slice(0, 4).toUpperCase()}`;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="etat-${insurer.name.replace(/[^a-zA-Z0-9]+/g, '-')}-${month}.pdf"`);
@@ -132,12 +133,12 @@ router.get('/:id/statement-pdf', async (req, res) => {
 
     let y = dessinerEntete(doc, {
       businessName,
-      titre: `État mensuel — ${insurer.name}`,
-      sousTitre: `${nomMois} · ${prisesEnCharge.length} prise(s) en charge`,
+      titre: `Facture mensuelle — ${insurer.name}`,
+      sousTitre: `N° ${numeroFacture} · ${nomMois} · ${prisesEnCharge.length} prise(s) en charge · émise le ${new Date().toLocaleDateString('fr-FR')}`,
     });
     y += 10;
 
-    doc.fontSize(11).font('Helvetica-Bold').fillColor(COULEURS.encre).text('Total dû pour le mois', 50, y);
+    doc.fontSize(11).font('Helvetica-Bold').fillColor(COULEURS.encre).text('Montant à verser pour le mois', 50, y);
     doc.text(`${formatMontant(totalDu)} FCFA`, 400, y, { width: 145, align: 'right' });
     y += 28;
 

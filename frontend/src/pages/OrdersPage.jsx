@@ -1830,12 +1830,29 @@ export function OrdersPage() {
                 </p>
                 <div className="actions-modale">
                   <button className="btn" onClick={() => setDetailCommande(null)}>Fermer</button>
-                  <button
-                    className="btn btn-principal"
-                    onClick={() => api.previewOrderReceipt(detailCommande.id).catch((err) => setErreur(err.message))}
-                  >
-                    Télécharger en PDF
-                  </button>
+                  {detailCommande.client_id ? (
+                    <>
+                      <button
+                        className="btn"
+                        onClick={() => api.previewOrderReceipt(detailCommande.id, 'ticket').catch((err) => setErreur(err.message))}
+                      >
+                        Ticket de caisse
+                      </button>
+                      <button
+                        className="btn btn-principal"
+                        onClick={() => api.previewOrderReceipt(detailCommande.id, 'a4').catch((err) => setErreur(err.message))}
+                      >
+                        Facture A4
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="btn btn-principal"
+                      onClick={() => api.previewOrderReceipt(detailCommande.id).catch((err) => setErreur(err.message))}
+                    >
+                      Télécharger en PDF
+                    </button>
+                  )}
                 </div>
               </>
             )}
