@@ -72,7 +72,7 @@ router.get('/pdf', async (req, res) => {
 
     const result = await pool.query(
       `SELECT
-         p.name, p.sku, ps.quantity_in_stock,
+         p.name, p.sku, ps.quantity_in_stock, p.is_weighted,
          p.unit_price, p.quantity_alert_threshold,
          CASE
            WHEN ps.quantity_in_stock = 0 THEN 'Rupture'
@@ -124,7 +124,7 @@ router.get('/pdf', async (req, res) => {
       doc.text(p.name, 56, y + 5, { width: 190 });
       doc.fillColor(COULEURS.muted).text(p.sku || '—', 250, y + 5, { width: 90 });
       doc.fillColor(COULEURS.encre).text(`${formatMontant(p.unit_price)} FCFA`, 345, y + 5, { width: 80, align: 'right' });
-      doc.text(String(p.quantity_in_stock), 435, y + 5, { width: 50, align: 'right' });
+      doc.text(p.is_weighted ? `${Number(p.quantity_in_stock).toFixed(1)} kg` : String(Math.round(p.quantity_in_stock)), 435, y + 5, { width: 50, align: 'right' });
       doc.font(p.status === 'Rupture' ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5)
         .text(p.status, 495, y + 6, { width: 55 });
       doc.font('Helvetica');
@@ -284,10 +284,10 @@ router.get('/inventory-report/pdf', requireRole('manager', 'gerant'), async (req
       }
       doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(9);
       doc.text(r.name, 56, y + 6, { width: 150 });
-      doc.text(String(r.stock_actuel), 210, y + 6, { width: 70, align: 'right' });
-      doc.text(String(r.entrees), 285, y + 6, { width: 65, align: 'right' });
-      doc.text(String(r.sorties), 355, y + 6, { width: 65, align: 'right' });
-      doc.text(String(r.quantite_vendue), 425, y + 6, { width: 70, align: 'right' });
+      doc.text(String(Math.round(r.stock_actuel)), 210, y + 6, { width: 70, align: 'right' });
+      doc.text(String(Math.round(r.entrees)), 285, y + 6, { width: 65, align: 'right' });
+      doc.text(String(Math.round(r.sorties)), 355, y + 6, { width: 65, align: 'right' });
+      doc.text(String(Math.round(r.quantite_vendue)), 425, y + 6, { width: 70, align: 'right' });
       doc.text(formatMontant(r.chiffre_affaires), 500, y + 6, { width: 100, align: 'right' });
       doc.text(formatMontant(r.marge), 605, y + 6, { width: 100, align: 'right' });
       totalCA += Number(r.chiffre_affaires);
@@ -1186,16 +1186,6 @@ router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), async (req, 
     const quantiteDetruite = Number(lot.quantity);
     await client.query(`UPDATE product_lots SET quantity = 0 WHERE id = $1`, [lot.id]);
 
-    // Registre des destructions : qui, quoi, quand, valeur (prix de vente au
-    // moment de la destruction).
-    const prixResult = await client.query(`SELECT unit_price FROM products WHERE id = $1`, [req.params.id]);
-    await client.query(
-      `INSERT INTO lot_destructions (merchant_id, warehouse_id, product_id, lot_id, lot_number, expiry_date, quantity, unit_price, destroyed_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [req.user.merchantId, warehouseId, req.params.id, lot.id, lot.lot_number || null, lot.expiry_date, quantiteDetruite,
-        Number(prixResult.rows[0]?.unit_price) || 0, req.user.id]
-    );
-
     const stockResult = await client.query(
       `UPDATE product_stock SET quantity_in_stock = GREATEST(0, quantity_in_stock - $1)
        WHERE product_id = $2 AND warehouse_id = $3
@@ -1220,69 +1210,6 @@ router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), async (req, 
     res.status(500).json({ error: 'Erreur lors de la destruction du lot.' });
   } finally {
     client.release();
-  }
-});
-
-// GET /products/expired-lots — lots DÉJÀ périmés mais encore présents dans le
-// stock (quantity > 0) : c'est ce qui alimente l'alerte du tableau de bord.
-// Un lot disparaît de cette liste dès qu'il est détruit.
-router.get('/expired-lots', requireRole('manager', 'gerant'), async (req, res) => {
-  try {
-    const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
-    const result = await pool.query(
-      `SELECT l.id AS lot_id, l.lot_number, l.expiry_date, l.quantity,
-              (CURRENT_DATE - l.expiry_date) AS days_expired,
-              p.id AS product_id, p.name AS product_name, p.unit_price
-       FROM product_lots l
-       JOIN products p ON p.id = l.product_id
-       WHERE l.merchant_id = $1 AND l.warehouse_id = $2 AND l.quantity > 0
-         AND l.expiry_date < CURRENT_DATE
-       ORDER BY l.expiry_date ASC`,
-      [req.user.merchantId, warehouseId]
-    );
-    res.json({
-      count: result.rows.length,
-      totalQuantity: result.rows.reduce((s, l) => s + Number(l.quantity), 0),
-      totalValue: result.rows.reduce((s, l) => s + Number(l.quantity) * Number(l.unit_price), 0),
-      lots: result.rows,
-    });
-  } catch (err) {
-    if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error(err);
-    res.status(500).json({ error: 'Erreur lors de la récupération des lots périmés.' });
-  }
-});
-
-// GET /products/destructions?from=YYYY-MM-DD&to=YYYY-MM-DD — registre des
-// lots périmés détruits (sortis du stock), du plus récent au plus ancien.
-router.get('/destructions', requireRole('manager', 'gerant'), async (req, res) => {
-  try {
-    const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
-    const params = [req.user.merchantId, warehouseId];
-    let filtreDates = '';
-    if (req.query.from) { params.push(req.query.from); filtreDates += ` AND d.destroyed_at::date >= $${params.length}`; }
-    if (req.query.to) { params.push(req.query.to); filtreDates += ` AND d.destroyed_at::date <= $${params.length}`; }
-    const result = await pool.query(
-      `SELECT d.id, d.lot_number, d.expiry_date, d.quantity, d.unit_price, d.destroyed_at,
-              (d.quantity * d.unit_price) AS lost_value,
-              p.name AS product_name, u.full_name AS destroyed_by_name
-       FROM lot_destructions d
-       JOIN products p ON p.id = d.product_id
-       LEFT JOIN users u ON u.id = d.destroyed_by
-       WHERE d.merchant_id = $1 AND d.warehouse_id = $2${filtreDates}
-       ORDER BY d.destroyed_at DESC
-       LIMIT 200`,
-      params
-    );
-    res.json({
-      totalQuantity: result.rows.reduce((s, r) => s + Number(r.quantity), 0),
-      totalValue: result.rows.reduce((s, r) => s + Number(r.lost_value), 0),
-      destructions: result.rows,
-    });
-  } catch (err) {
-    if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error(err);
-    res.status(500).json({ error: 'Erreur lors de la récupération du registre des destructions.' });
   }
 });
 

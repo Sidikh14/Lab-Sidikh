@@ -309,7 +309,6 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
     await client.query('BEGIN');
 
     let subtotalAmount = 0;
-    let subtotalSoumisTva = 0; // pharmacie : part des lignes dont le produit est soumis à la TVA
     let stockOverrideUtilise = false;
     const resolvedItems = [];
 
@@ -319,7 +318,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
       }
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription, p.tva_applicable,
+        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -386,7 +385,6 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
 
       const lineTotal = prixParConditionnement * item.quantity;
       subtotalAmount += lineTotal;
-      if (product.tva_applicable) subtotalSoumisTva += lineTotal;
       resolvedItems.push({
         product,
         baseQuantity,
@@ -420,12 +418,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
 
     // Arrondi en FCFA entiers (pas de centimes) : on arrondit le montant de
     // TVA lui-même, pas un ratio intermédiaire, pour éviter les décimales.
-    // Pharmacie : la TVA dépend de chaque produit (products.tva_applicable),
-    // pas d'une case globale. Autres secteurs : comportement inchangé.
-    const estPharmacieTva = req.user.sector === 'pharmacie';
-    const appliquerTva = estPharmacieTva ? subtotalSoumisTva > 0 : Boolean(tvaApplicable);
-    const baseTva = estPharmacieTva ? subtotalSoumisTva : subtotalAmount;
-    const tvaAmount = appliquerTva ? Math.round(baseTva * (TVA_RATE / 100)) : 0;
+    const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
 
     const orderResult = await client.query(
@@ -437,7 +430,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
         clientId || null,
         req.user.id,
         subtotalAmount,
-        appliquerTva,
+        Boolean(tvaApplicable),
         TVA_RATE,
         tvaAmount,
         totalAmount,
@@ -1271,7 +1264,6 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
 
     // 2. On applique les nouveaux articles — même logique que la création.
     let subtotalAmount = 0;
-    let subtotalSoumisTva = 0; // pharmacie : part des lignes dont le produit est soumis à la TVA
     let stockOverrideUtilise = false;
     const resolvedItems = [];
 
@@ -1281,7 +1273,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       }
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription, p.tva_applicable,
+        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -1345,7 +1337,6 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
 
       const lineTotal = prixParConditionnement * item.quantity;
       subtotalAmount += lineTotal;
-      if (product.tva_applicable) subtotalSoumisTva += lineTotal;
       resolvedItems.push({
         product,
         baseQuantity,
@@ -1374,12 +1365,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       await verifierOrdonnanceRenouvelable(client, req.user.merchantId, prescriptionId, resolvedItems, order.id);
     }
 
-    // Pharmacie : la TVA dépend de chaque produit (products.tva_applicable),
-    // pas d'une case globale. Autres secteurs : comportement inchangé.
-    const estPharmacieTva = req.user.sector === 'pharmacie';
-    const appliquerTva = estPharmacieTva ? subtotalSoumisTva > 0 : Boolean(tvaApplicable);
-    const baseTva = estPharmacieTva ? subtotalSoumisTva : subtotalAmount;
-    const tvaAmount = appliquerTva ? Math.round(baseTva * (TVA_RATE / 100)) : 0;
+    const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
     const alertesStock = [];
     const reservationsCreees = [];
@@ -1497,7 +1483,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
          prescription_id = COALESCE($9, prescription_id)
        WHERE id = $7
        RETURNING *`,
-      [clientId || null, notes || null, appliquerTva, tvaAmount, subtotalAmount, totalAmount, order.id, stockOverrideUtilise, prescriptionId || null]
+      [clientId || null, notes || null, Boolean(tvaApplicable), tvaAmount, subtotalAmount, totalAmount, order.id, stockOverrideUtilise, prescriptionId || null]
     );
     const orderMisAJour = updateResult.rows[0];
 
@@ -1663,7 +1649,7 @@ function mesurerHauteurTicket(order, largeurContenu) {
   const mesure = new PDFDocument({ margin: 0 });
 
   let hauteur = 176; // en-tête + bloc totaux fixe + marge basse (sans pied de page)
-  if (order.tva_applicable || order.merchant_sector === 'pharmacie') hauteur += 13;
+  if (order.tva_applicable) hauteur += 13;
   if (Number(order.change_given) > 0) hauteur += 12;
   if (order.has_return) hauteur += 18;
 
@@ -1742,7 +1728,7 @@ function genererTicketEtroit(res, order) {
 
     const quantiteAffichee = item.packaging_label ? item.packaging_quantity : item.quantity;
     doc.fillColor(COULEURS.muted).fontSize(8)
-      .text(`${quantiteAffichee} × ${formatMontant(item.unit_price * (item.packaging_label ? item.quantity / item.packaging_quantity : 1))}`, MARGE, y, { width: largeurContenu - 70 });
+      .text(`${Math.round(quantiteAffichee)} × ${formatMontant(item.unit_price * (item.packaging_label ? item.quantity / item.packaging_quantity : 1))}`, MARGE, y, { width: largeurContenu - 70 });
     doc.fillColor(COULEURS.encre).font('Helvetica-Bold')
       .text(formatMontant(item.line_total), MARGE, y, { width: largeurContenu, align: 'right' });
     y += 14;
@@ -1752,20 +1738,19 @@ function genererTicketEtroit(res, order) {
   y += 10;
 
   doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted);
-  const estPharmacieTicket = order.merchant_sector === 'pharmacie';
-  doc.text(estPharmacieTicket ? 'Total HT' : 'Sous-total', MARGE, y, { width: largeurContenu - 70 });
+  doc.text('Sous-total', MARGE, y, { width: largeurContenu - 70 });
   doc.fillColor(COULEURS.encre).text(`${formatMontant(order.subtotal_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
   y += 13;
 
-  if (order.tva_applicable || estPharmacieTicket) {
+  if (order.tva_applicable) {
     doc.fillColor(COULEURS.muted).text(`TVA (${TVA_RATE} %)`, MARGE, y, { width: largeurContenu - 70 });
-    doc.fillColor(COULEURS.encre).text(`${formatMontant(order.tva_applicable ? order.tva_amount : 0)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
+    doc.fillColor(COULEURS.encre).text(`${formatMontant(order.tva_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
     y += 13;
   }
 
   y += 3;
   doc.font('Helvetica-Bold').fontSize(11).fillColor(COULEURS.encre);
-  doc.text(estPharmacieTicket ? 'TOTAL TTC' : 'TOTAL', MARGE, y, { width: largeurContenu - 90 });
+  doc.text('TOTAL', MARGE, y, { width: largeurContenu - 90 });
   doc.text(`${formatMontant(order.total_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
   y += 20;
 
@@ -1911,8 +1896,8 @@ function genererFactureA4(res, order, creditInfo) {
     const quantiteAffichee = item.packaging_label ? item.packaging_quantity : item.quantity;
     const prixUnitaire = item.line_total / quantiteAffichee;
     const sousLigne = item.packaging_label
-      ? `${item.packaging_label} · ${quantiteAffichee} × ${formatMontant(prixUnitaire)} ${order.currency}`
-      : `${quantiteAffichee} × ${formatMontant(prixUnitaire)} ${order.currency}`;
+      ? `${item.packaging_label} · ${Math.round(quantiteAffichee)} × ${formatMontant(prixUnitaire)} ${order.currency}`
+      : `${Math.round(quantiteAffichee)} × ${formatMontant(prixUnitaire)} ${order.currency}`;
 
     doc.font('Helvetica').fontSize(13).fillColor(COULEURS.encre)
       .text(item.product_name, 50, y, { width: 320 });
@@ -1949,19 +1934,8 @@ function genererFactureA4(res, order, creditInfo) {
     y += grand ? 30 : 20;
   };
 
-  const estPharmacieFacture = order.merchant_sector === 'pharmacie';
-  if (estPharmacieFacture) {
-    // Pharmacie : HT / TVA / TTC affichés distinctement. La TVA est toujours
-    // montrée (0 si non applicable) ; le TTC précède remise et livraison,
-    // le net à payer est le TOTAL final.
-    const tvaMontant = order.tva_applicable ? Number(order.tva_amount) : 0;
-    ligneTotal('Total HT :', order.subtotal_amount);
-    ligneTotal(`TVA (${TVA_RATE}%) :`, tvaMontant);
-    ligneTotal('Total TTC :', Number(order.subtotal_amount) + tvaMontant);
-  } else {
-    ligneTotal('Sous total :', order.subtotal_amount);
-    if (order.tva_applicable) ligneTotal(`TVA (${TVA_RATE}%) :`, order.tva_amount);
-  }
+  ligneTotal('Sous total :', order.subtotal_amount);
+  if (order.tva_applicable) ligneTotal(`TVA (${TVA_RATE}%) :`, order.tva_amount);
   if (order.discount_type && Number(order.discount_amount) > 0) {
     const labelReduction = { remise: 'Remise', rabais: 'Rabais', ristourne: 'Ristourne', escompte: 'Escompte' }[order.discount_type] || 'Réduction';
     const detailReduction = order.discount_mode === 'pourcentage' ? ` (${order.discount_value}%)` : '';
@@ -1971,7 +1945,7 @@ function genererFactureA4(res, order, creditInfo) {
     ligneTotal('Frais de livraison :', order.delivery_fee);
   }
   y += 4;
-  ligneTotal(estPharmacieFacture ? 'NET À PAYER :' : 'TOTAL :', order.total_amount, { grand: true });
+  ligneTotal('TOTAL :', order.total_amount, { grand: true });
   y += 8;
 
   if (order.payment_method === 'a_credit' && creditInfo) {
@@ -2091,7 +2065,7 @@ function genererBonDeLivraison(res, order, merchant) {
     const libelle = item.packaging_label ? `${item.product_name} (${item.packaging_label})` : item.product_name;
     doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
     doc.text(libelle, xGauche, y, { width: 315 });
-    doc.text(String(quantiteAffichee), xGauche + 320, y, { width: largeurContenu - 320, align: 'right' });
+    doc.text(String(Math.round(quantiteAffichee)), xGauche + 320, y, { width: largeurContenu - 320, align: 'right' });
     y += 20;
   });
 
@@ -2100,7 +2074,7 @@ function genererBonDeLivraison(res, order, merchant) {
 
   const totalArticles = order.items.reduce((s, it) => s + Number(it.quantity), 0);
   doc.font('Helvetica-Bold').fontSize(11).fillColor(COULEURS.encre);
-  doc.text(`Total : ${totalArticles} article${totalArticles > 1 ? 's' : ''}`, xGauche, y, { width: 320 });
+  doc.text(`Total : ${Math.round(totalArticles)} article${totalArticles > 1 ? 's' : ''}`, xGauche, y, { width: 320 });
   y += 40;
 
   // Cases de signature côte à côte, pour acter la remise.
@@ -2130,7 +2104,6 @@ router.get('/:id/receipt-pdf', async (req, res) => {
   try {
     const order = await getOrderReceiptDetail(req.user.merchantId, req.params.id);
     if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
-    order.merchant_sector = req.user.sector;
 
     const format = String(req.query.format || '').toLowerCase();
     const utiliserA4 = format === 'a4' ? true : format === 'ticket' ? false : Boolean(order.client_id);

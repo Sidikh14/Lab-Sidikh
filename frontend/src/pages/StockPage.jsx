@@ -1210,10 +1210,10 @@ export function StockPage() {
                   {rapport.map((r) => (
                     <tr key={r.id}>
                       <td>{r.name}</td>
-                      <td className="chiffre">{r.stock_actuel}</td>
-                      <td className="chiffre">{r.entrees}</td>
-                      <td className="chiffre">{r.sorties}</td>
-                      <td className="chiffre">{r.quantite_vendue}</td>
+                      <td className="chiffre">{Math.round(r.stock_actuel)}</td>
+                      <td className="chiffre">{Math.round(r.entrees)}</td>
+                      <td className="chiffre">{Math.round(r.sorties)}</td>
+                      <td className="chiffre">{Math.round(r.quantite_vendue)}</td>
                       <td className="chiffre">{Math.round(r.chiffre_affaires).toLocaleString('fr-FR')} FCFA</td>
                       <td className="chiffre">{Math.round(r.marge).toLocaleString('fr-FR')} FCFA</td>
                     </tr>

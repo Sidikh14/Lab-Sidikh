@@ -177,9 +177,11 @@ export function TeamPage() {
             Réglages paie
           </button>
         )}
-        <button className={onglet === 'mes-bulletins' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('mes-bulletins')}>
-          Mes bulletins
-        </button>
+        {!estManager && (
+          <button className={onglet === 'mes-bulletins' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('mes-bulletins')}>
+            Mes bulletins
+          </button>
+        )}
       </div>
 
       {onglet === 'equipe' && <EquipeTab />}
