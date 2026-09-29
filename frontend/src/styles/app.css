@@ -463,14 +463,14 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 14px 32px;
+  padding: 16px 32px;
   background: var(--carte);
   border-bottom: 1px solid var(--trait);
 }
 
 .barre-haut-commerce {
-  font-weight: 600;
-  font-size: 14px;
+  font-weight: 700;
+  font-size: 15px;
   white-space: nowrap;
 }
 
@@ -577,23 +577,22 @@
 .barre-laterale {
   width: 230px;
   flex-shrink: 0;
-  background: linear-gradient(180deg, #1b1c29 0%, var(--encre) 100%);
+  background: var(--encre);
   color: #f4f4f7;
   display: flex;
   flex-direction: column;
   padding: 24px 0;
-  box-shadow: 2px 0 12px rgba(0, 0, 0, 0.15);
 }
 
 .marque {
   font-family: var(--font-marque);
-  font-size: 20px;
-  padding: 0 20px 20px;
-  border-bottom: 1px solid rgba(244, 244, 247, 0.12);
+  font-size: 19px;
+  font-weight: 800;
+  padding: 0 20px 22px;
   margin-bottom: 12px;
   line-height: 1.3;
   word-break: break-word;
-  color: #f4f4f7;
+  color: #ffffff;
 }
 
 .marque .sous-titre {
@@ -610,7 +609,7 @@
 .nav-liste {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 12px;
   flex: 1;
 }
 
@@ -618,11 +617,13 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 11px 20px;
+  padding: 10px 14px;
+  margin-bottom: 2px;
+  border-radius: var(--rayon-petit);
   color: rgba(244, 244, 247, 0.68);
   text-decoration: none;
   font-size: 14px;
-  border-left: 3px solid transparent;
+  font-weight: 500;
   transition: background var(--transition), color var(--transition);
 }
 
@@ -633,13 +634,16 @@
 
 .nav-lien:hover {
   color: #ffffff;
-  background: rgba(244, 244, 247, 0.06);
+  background: rgba(244, 244, 247, 0.08);
 }
 
 .nav-lien.actif {
   color: #ffffff;
-  border-left-color: var(--accent);
-  background: var(--accent-transparent, rgba(91, 79, 233, 0.18));
+  background: var(--accent);
+}
+
+.nav-lien.actif svg {
+  opacity: 1;
 }
 
 .pied-sidebar {
@@ -704,7 +708,7 @@
   border: 1px solid var(--trait);
   border-radius: var(--rayon);
   box-shadow: var(--ombre-legere);
-  padding: 14px 16px;
+  padding: 18px 20px;
   transition: box-shadow var(--transition), transform var(--transition);
 }
 
@@ -714,15 +718,15 @@
 }
 
 .stat-icone {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   background: var(--accent-clair);
   color: var(--accent);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .stat .etiquette {
@@ -732,8 +736,8 @@
 
 .stat .valeur {
   font-family: var(--font-chiffres);
-  font-size: 19px;
-  font-weight: 600;
+  font-size: 25px;
+  font-weight: 800;
 }
 
 .panneau {
