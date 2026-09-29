@@ -792,9 +792,15 @@ export function OrdersPage() {
 
   const apercuCaisse = useMemo(() => {
     const sousTotal = lignesPanier.reduce((sum, l) => sum + l.option.price * l.quantity, 0);
-    const tva = tvaApplicable ? Math.round(sousTotal * 0.18) : 0;
+    // TVA uniquement sur les lignes dont le produit est soumis à la TVA
+    // (même règle que le backend, tous secteurs).
+    const baseTaxable = lignesPanier.reduce(
+      (sum, l) => (l.produit.tva_applicable === false ? sum : sum + l.option.price * l.quantity),
+      0
+    );
+    const tva = Math.round(baseTaxable * 0.18);
     return { sousTotal, tva, total: sousTotal + tva };
-  }, [lignesPanier, tvaApplicable]);
+  }, [lignesPanier]);
 
   const necessiteOrdonnance = estPharmacie && lignesPanier.some((l) => l.produit.requires_prescription);
 
@@ -1217,17 +1223,14 @@ export function OrdersPage() {
               )}
             </div>
 
-            <label className="case-a-cocher" style={{ margin: '12px 0' }}>
-              <input type="checkbox" checked={tvaApplicable} onChange={(e) => setTvaApplicable(e.target.checked)} />
-              Vente avec TVA (18 %)
-            </label>
+            {/* La TVA est réglée produit par produit dans le Stock (produits exonérés). */}
 
             <div className="ticket-totaux">
               <div className="ticket-total-ligne">
                 <span>Sous-total</span>
                 <span className="chiffre">{Math.round(apercuCaisse.sousTotal).toLocaleString('fr-FR')}</span>
               </div>
-              {tvaApplicable && (
+              {apercuCaisse.tva > 0 && (
                 <div className="ticket-total-ligne">
                   <span>TVA (18 %)</span>
                   <span className="chiffre">{Math.round(apercuCaisse.tva).toLocaleString('fr-FR')}</span>

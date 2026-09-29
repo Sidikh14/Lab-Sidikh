@@ -9,7 +9,23 @@ const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessiner
 const { creerAlerte, getSeuilVenteElevee, getNomUtilisateur } = require('../services/alerts.service');
 const { consumeFEFO } = require('../utils/lots');
 
-const TVA_RATE = 18; // Taux de TVA appliqué quand la case est cochée (%)
+const TVA_RATE = 18; // Taux de TVA appliqué aux produits soumis à la TVA (%)
+
+// TVA d'une commande — tous secteurs (pharmacie comprise).
+// La TVA se décide produit par produit (products.tva_applicable, réglable
+// depuis la page Stock : certains produits sont exonérés). On ne taxe que les
+// lignes soumises à la TVA ; tout tvaApplicable envoyé par le client est
+// ignoré. Un produit sans valeur (null/undefined) est considéré taxable,
+// comme le défaut en base.
+// Arrondi en FCFA entiers : on arrondit le montant de TVA lui-même.
+function calculerTvaCommande({ resolvedItems }) {
+  const baseTaxable = resolvedItems.reduce(
+    (somme, r) => (r.product.tva_applicable === false ? somme : somme + r.lineTotal),
+    0
+  );
+  const tvaAmount = Math.round(baseTaxable * (TVA_RATE / 100));
+  return { tvaAmount, tvaApplicable: tvaAmount > 0 };
+}
 const SEUIL_ALERTE_PEREMPTION_JOURS = 30; // Pharmacie : lot bientôt périmé, vente réservée au pharmacien responsable
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement', 'a_credit', 'tiers_payant'];
 const TYPES_REDUCTION = ['remise', 'rabais', 'ristourne', 'escompte'];
@@ -318,7 +334,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
       }
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
+        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription, p.tva_applicable,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -395,6 +411,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
         packagingLabel,
         packagingQuantity: packagingLabel ? item.quantity : null,
         rupture,
+        lineTotal,
       });
     }
 
@@ -418,7 +435,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
 
     // Arrondi en FCFA entiers (pas de centimes) : on arrondit le montant de
     // TVA lui-même, pas un ratio intermédiaire, pour éviter les décimales.
-    const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
+    const { tvaAmount, tvaApplicable: tvaEffective } = calculerTvaCommande({ resolvedItems });
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
 
     const orderResult = await client.query(
@@ -430,7 +447,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
         clientId || null,
         req.user.id,
         subtotalAmount,
-        Boolean(tvaApplicable),
+        tvaEffective,
         TVA_RATE,
         tvaAmount,
         totalAmount,
@@ -1273,7 +1290,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       }
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
+        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription, p.tva_applicable,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -1347,6 +1364,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
         packagingLabel,
         packagingQuantity: packagingLabel ? item.quantity : null,
         rupture,
+        lineTotal,
       });
     }
 
@@ -1365,7 +1383,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       await verifierOrdonnanceRenouvelable(client, req.user.merchantId, prescriptionId, resolvedItems, order.id);
     }
 
-    const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
+    const { tvaAmount, tvaApplicable: tvaEffective } = calculerTvaCommande({ resolvedItems });
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
     const alertesStock = [];
     const reservationsCreees = [];
@@ -1483,7 +1501,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
          prescription_id = COALESCE($9, prescription_id)
        WHERE id = $7
        RETURNING *`,
-      [clientId || null, notes || null, Boolean(tvaApplicable), tvaAmount, subtotalAmount, totalAmount, order.id, stockOverrideUtilise, prescriptionId || null]
+      [clientId || null, notes || null, tvaEffective, tvaAmount, subtotalAmount, totalAmount, order.id, stockOverrideUtilise, prescriptionId || null]
     );
     const orderMisAJour = updateResult.rows[0];
 

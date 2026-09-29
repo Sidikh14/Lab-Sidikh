@@ -443,7 +443,7 @@ export function StockPage() {
         requiresColdChain: estPharmacie ? nouveauProduit.requiresColdChain : undefined,
         warehouseId: estManager ? warehouseId : undefined,
         categoryId: (estPharmacie || estElectromenager) ? (nouveauProduit.categoryId || undefined) : undefined,
-        tvaApplicable: estPharmacie ? nouveauProduit.tvaApplicable : undefined,
+        tvaApplicable: nouveauProduit.tvaApplicable,
         attributes: nouveauProduit.attributes,
         lotNumber: estPharmacie ? (nouveauProduit.lotNumber || undefined) : undefined,
         expiryDate: estPharmacie ? (nouveauProduit.expiryDate || undefined) : undefined,
@@ -588,7 +588,7 @@ export function StockPage() {
         requiresPrescription: estPharmacie ? produitEnEdition.requiresPrescription : undefined,
         requiresColdChain: estPharmacie ? produitEnEdition.requiresColdChain : undefined,
         categoryId: (estPharmacie || estElectromenager) ? (produitEnEdition.categoryId || null) : undefined,
-        tvaApplicable: estPharmacie ? produitEnEdition.tvaApplicable : undefined,
+        tvaApplicable: produitEnEdition.tvaApplicable,
         attributes: produitEnEdition.attributes,
       });
       setProduitEnEdition(null);
@@ -1402,18 +1402,18 @@ export function StockPage() {
                 </div>
               )}
 
-              {estPharmacie && (
-                <div className="champ-groupe">
-                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={nouveauProduit.tvaApplicable}
-                      onChange={(e) => setNouveauProduit({ ...nouveauProduit, tvaApplicable: e.target.checked })}
-                    />
-                    Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)
-                  </label>
-                </div>
-              )}
+              <div className="champ-groupe">
+                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={nouveauProduit.tvaApplicable}
+                    onChange={(e) => setNouveauProduit({ ...nouveauProduit, tvaApplicable: e.target.checked })}
+                  />
+                  {estPharmacie
+                    ? 'Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)'
+                    : 'Soumis à la TVA 18 % (décochez pour un produit exonéré)'}
+                </label>
+              </div>
 
               {secteurConfig.champsProduitSup.map((champ) => (
                 <div className="champ-groupe" key={champ.key}>
@@ -1993,18 +1993,18 @@ export function StockPage() {
                 </div>
               )}
 
-              {estPharmacie && (
-                <div className="champ-groupe">
-                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={produitEnEdition.tvaApplicable}
-                      onChange={(e) => setProduitEnEdition({ ...produitEnEdition, tvaApplicable: e.target.checked })}
-                    />
-                    Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)
-                  </label>
-                </div>
-              )}
+              <div className="champ-groupe">
+                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={produitEnEdition.tvaApplicable}
+                    onChange={(e) => setProduitEnEdition({ ...produitEnEdition, tvaApplicable: e.target.checked })}
+                  />
+                  {estPharmacie
+                    ? 'Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)'
+                    : 'Soumis à la TVA 18 % (décochez pour un produit exonéré)'}
+                </label>
+              </div>
 
               {secteurConfig.champsProduitSup.map((champ) => (
                 <div className="champ-groupe" key={champ.key}>
