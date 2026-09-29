@@ -1999,6 +1999,103 @@ function genererFactureA4(res, order, creditInfo) {
   doc.end();
 }
 
+// Bon de livraison : liste des articles à livrer, adresse, cases de
+// signature "Livré par" / "Reçu par" — sans le détail des prix, sauf le
+// total (utile pour le livreur/le client sans être une facture). Générique,
+// utilisable dans tous les secteurs (pas de logique spécifique à un métier).
+function genererBonDeLivraison(res, order, merchant) {
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="bon-livraison-${order.order_number}.pdf"`);
+
+  const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  attacherFiletSecuritePdf(doc, res, 'bon de livraison');
+  doc.pipe(res);
+
+  const largeurPage = doc.page.width;
+  const xGauche = 50;
+  const xDroite = largeurPage - 50;
+  const largeurContenu = xDroite - xGauche;
+
+  let y = dessinerEntete(doc, {
+    businessName: merchant.business_name,
+    titre: 'Bon de livraison',
+    sousTitre: order.order_number,
+    merchant,
+  });
+
+  doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
+  doc.text(`Date d'émission : ${new Date(order.validated_at || order.created_at).toLocaleDateString('fr-FR')}`, xGauche, y);
+  y += 18;
+  doc.font('Helvetica-Bold').fontSize(13).text(order.client_name || 'Client de passage', xGauche, y);
+  y += 17;
+  doc.font('Helvetica').fontSize(10);
+  if (order.client_phone) { doc.text(order.client_phone, xGauche, y); y += 15; }
+
+  // Encart adresse de livraison, bien visible — comme sur la facture A4.
+  if (order.delivery_address) {
+    y += 6;
+    const largeurTexte = largeurContenu - 24;
+    doc.font('Helvetica').fontSize(10.5);
+    const hauteurTexte = doc.heightOfString(order.delivery_address, { width: largeurTexte });
+    const hauteurEncart = 28 + hauteurTexte;
+    doc.roundedRect(xGauche, y, largeurContenu, hauteurEncart, 4).fillAndStroke('#f6f6f6', COULEURS.bordure);
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.muted)
+      .text('ADRESSE DE LIVRAISON', xGauche + 12, y + 8, { characterSpacing: 0.5 });
+    doc.font('Helvetica').fontSize(10.5).fillColor(COULEURS.encre)
+      .text(order.delivery_address, xGauche + 12, y + 21, { width: largeurTexte });
+    y += hauteurEncart + 20;
+  } else {
+    y += 14;
+  }
+
+  const COLONNES = [
+    { texte: 'Article', x: xGauche, largeur: 320 },
+    { texte: 'Quantité', x: xGauche + 320, largeur: largeurContenu - 320, aligner: 'right' },
+  ];
+  y = dessinerEnteteTableau(doc, y, COLONNES);
+
+  order.items.forEach((item, index) => {
+    if (y > doc.page.height - 140) {
+      doc.addPage();
+      y = dessinerEntete(doc, { businessName: merchant.business_name, titre: 'Bon de livraison', sousTitre: order.order_number, merchant });
+      y = dessinerEnteteTableau(doc, y, COLONNES);
+    }
+    if (index % 2 === 1) doc.rect(xGauche, y - 3, largeurContenu, 20).fill(COULEURS.fondAlterne);
+    const quantiteAffichee = item.packaging_label ? item.packaging_quantity : item.quantity;
+    const libelle = item.packaging_label ? `${item.product_name} (${item.packaging_label})` : item.product_name;
+    doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
+    doc.text(libelle, xGauche, y, { width: 315 });
+    doc.text(String(quantiteAffichee), xGauche + 320, y, { width: largeurContenu - 320, align: 'right' });
+    y += 20;
+  });
+
+  traitSeparateur(doc, y + 4);
+  y += 22;
+
+  const totalArticles = order.items.reduce((s, it) => s + Number(it.quantity), 0);
+  doc.font('Helvetica-Bold').fontSize(11).fillColor(COULEURS.encre);
+  doc.text(`Total : ${totalArticles} article${totalArticles > 1 ? 's' : ''}`, xGauche, y, { width: 320 });
+  y += 40;
+
+  // Cases de signature côte à côte, pour acter la remise.
+  const largeurCase = (largeurContenu - 30) / 2;
+  const hauteurCase = 70;
+  [
+    { label: 'LIVRÉ PAR', x: xGauche },
+    { label: 'REÇU PAR', x: xGauche + largeurCase + 30 },
+  ].forEach(({ label, x }) => {
+    doc.roundedRect(x, y, largeurCase, hauteurCase, 4).strokeColor(COULEURS.bordure).lineWidth(0.75).stroke();
+    doc.font('Helvetica-Bold').fontSize(8).fillColor(COULEURS.muted)
+      .text(label, x + 10, y + 8, { characterSpacing: 0.5 });
+    doc.font('Helvetica').fontSize(8).fillColor(COULEURS.mutedClair)
+      .text('Nom, signature et date', x + 10, y + hauteurCase - 18);
+  });
+
+  dessinerPiedDePage(doc, merchant);
+  doc.font('Helvetica').fillColor(COULEURS.encre);
+  doc.end();
+}
+
 // GET /orders/:id/receipt-pdf?format=a4|ticket — reçu de caisse. Sans
 // paramètre "format" : ticket étroit pour un client de passage, facture A4
 // pour un client enregistré. Avec format=a4 ou format=ticket, le choix est
@@ -2024,6 +2121,27 @@ router.get('/:id/receipt-pdf', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la génération du reçu.' });
+  }
+});
+
+
+// GET /orders/:id/delivery-note-pdf — bon de livraison (générique, tous secteurs).
+router.get('/:id/delivery-note-pdf', async (req, res) => {
+  try {
+    const order = await getOrderReceiptDetail(req.user.merchantId, req.params.id);
+    if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+    if (!order.client_name) order.client_name = 'Client de passage';
+
+    const merchantResult = await pool.query(
+      'SELECT business_name, ninea, rccm, address, bank_details, mobile_money_details, payment_terms FROM merchants WHERE id = $1',
+      [req.user.merchantId]
+    );
+    const merchant = merchantResult.rows[0] || {};
+
+    genererBonDeLivraison(res, order, merchant);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la génération du bon de livraison.' });
   }
 });
 

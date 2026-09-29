@@ -243,6 +243,39 @@ export function StockPage() {
   const [livraisonEnCours, setLivraisonEnCours] = useState(null);
   const [livraisonsAAnnoncer, setLivraisonsAAnnoncer] = useState(null);
 
+  const [rapport, setRapport] = useState([]);
+  const [chargementRapport, setChargementRapport] = useState(false);
+  const [rapportDebut, setRapportDebut] = useState(() => new Date().toISOString().slice(0, 8) + '01');
+  const [rapportFin, setRapportFin] = useState(() => new Date().toISOString().slice(0, 10));
+  const [exportRapportEnCours, setExportRapportEnCours] = useState(false);
+
+  function chargerRapport() {
+    setChargementRapport(true);
+    setErreur('');
+    api
+      .getInventoryReport(rapportDebut, rapportFin, estManager ? warehouseId : undefined)
+      .then(setRapport)
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargementRapport(false));
+  }
+
+  useEffect(() => {
+    if (onglet === 'rapport') chargerRapport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onglet, warehouseId]);
+
+  async function exporterRapportPdf() {
+    setExportRapportEnCours(true);
+    setErreur('');
+    try {
+      await api.downloadInventoryReportPdf(rapportDebut, rapportFin, estManager ? warehouseId : undefined);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setExportRapportEnCours(false);
+    }
+  }
+
   function chargerReservations() {
     if (estManager && !warehouseId) return;
     setChargementReservations(true);
@@ -783,6 +816,11 @@ export function StockPage() {
             Reliquats{reservations.length > 0 ? ` (${reservations.length})` : ''}
           </button>
         )}
+        {peutGerer && (
+          <button className={onglet === 'rapport' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('rapport')}>
+            Rapport
+          </button>
+        )}
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
@@ -1126,6 +1164,62 @@ export function StockPage() {
                   </table>
                 </div>
               ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {onglet === 'rapport' && (
+        <>
+          <div className="barre-filtres" style={{ marginBottom: 16 }}>
+            <div className="champ-groupe" style={{ marginBottom: 0 }}>
+              <label className="etiquette" htmlFor="rap-debut">Du</label>
+              <input id="rap-debut" type="date" className="champ" value={rapportDebut} onChange={(e) => setRapportDebut(e.target.value)} />
+            </div>
+            <div className="champ-groupe" style={{ marginBottom: 0 }}>
+              <label className="etiquette" htmlFor="rap-fin">Au</label>
+              <input id="rap-fin" type="date" className="champ" value={rapportFin} onChange={(e) => setRapportFin(e.target.value)} />
+            </div>
+            <button className="btn" style={{ alignSelf: 'flex-end' }} onClick={chargerRapport} disabled={chargementRapport}>
+              {chargementRapport ? 'Chargement…' : 'Actualiser'}
+            </button>
+            <button className="btn" style={{ alignSelf: 'flex-end' }} onClick={exporterRapportPdf} disabled={exportRapportEnCours}>
+              {exportRapportEnCours ? 'Génération…' : 'Exporter PDF'}
+            </button>
+          </div>
+
+          {chargementRapport ? (
+            <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+          ) : rapport.length === 0 ? (
+            <p className="etat-vide">Aucun article.</p>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table className="registre">
+                <thead>
+                  <tr>
+                    <th>Article</th>
+                    <th>Stock actuel</th>
+                    <th>Entrées</th>
+                    <th>Sorties</th>
+                    <th>Qté vendue</th>
+                    <th>Chiffre d'affaires</th>
+                    <th>Marge</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rapport.map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.name}</td>
+                      <td className="chiffre">{r.stock_actuel}</td>
+                      <td className="chiffre">{r.entrees}</td>
+                      <td className="chiffre">{r.sorties}</td>
+                      <td className="chiffre">{r.quantite_vendue}</td>
+                      <td className="chiffre">{Math.round(r.chiffre_affaires).toLocaleString('fr-FR')} FCFA</td>
+                      <td className="chiffre">{Math.round(r.marge).toLocaleString('fr-FR')} FCFA</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </>

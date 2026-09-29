@@ -138,6 +138,178 @@ router.get('/pdf', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Inventaire général par article : entrées/sorties/marge sur une période
+// (manager/gérant uniquement — expose le prix d'achat et la marge).
+// ---------------------------------------------------------------------------
+
+async function calculerInventaireGeneral(req, { from, to, warehouseId }) {
+  const merchantId = req.user.merchantId;
+  const params = [merchantId, from, to];
+  let filtreWarehouseMouvements = '';
+  let filtreWarehouseVentes = '';
+  let filtreWarehouseStock = '';
+
+  if (req.user.role !== 'manager') {
+    if (!req.user.warehouseId) throw { status: 403, message: "Vous n'êtes assigné à aucune boutique." };
+    params.push(req.user.warehouseId);
+    filtreWarehouseMouvements = ` AND sm.warehouse_id = $${params.length}`;
+    filtreWarehouseVentes = ` AND o.warehouse_id = $${params.length}`;
+    filtreWarehouseStock = ` AND ps.warehouse_id = $${params.length}`;
+  } else if (warehouseId) {
+    params.push(warehouseId);
+    filtreWarehouseMouvements = ` AND sm.warehouse_id = $${params.length}`;
+    filtreWarehouseVentes = ` AND o.warehouse_id = $${params.length}`;
+    filtreWarehouseStock = ` AND ps.warehouse_id = $${params.length}`;
+  }
+
+  const { rows } = await pool.query(
+    `WITH mouvements AS (
+       SELECT sm.product_id,
+              SUM(CASE WHEN sm.movement_type = 'entree' THEN sm.quantity ELSE 0 END) AS entrees,
+              SUM(CASE WHEN sm.movement_type = 'sortie' THEN sm.quantity ELSE 0 END) AS sorties,
+              SUM(CASE WHEN sm.movement_type = 'ajustement' THEN sm.quantity ELSE 0 END) AS ajustements
+       FROM stock_movements sm
+       WHERE sm.merchant_id = $1 AND COALESCE(sm.movement_date, sm.created_at)::date BETWEEN $2 AND $3${filtreWarehouseMouvements}
+       GROUP BY sm.product_id
+     ),
+     ventes AS (
+       SELECT oi.product_id,
+              SUM(oi.quantity) AS quantite_vendue,
+              SUM(oi.line_total) AS chiffre_affaires
+       FROM order_items oi
+       JOIN orders o ON o.id = oi.order_id
+       WHERE o.merchant_id = $1 AND o.status <> 'annulee' AND o.created_at::date BETWEEN $2 AND $3${filtreWarehouseVentes}
+       GROUP BY oi.product_id
+     ),
+     stock AS (
+       SELECT ps.product_id, SUM(ps.quantity_in_stock) AS stock_actuel
+       FROM product_stock ps
+       WHERE ps.merchant_id = $1${filtreWarehouseStock}
+       GROUP BY ps.product_id
+     )
+     SELECT p.id, p.name, p.sku, cat.name AS category_name,
+            p.cost_price, p.unit_price,
+            COALESCE(s.stock_actuel, 0) AS stock_actuel,
+            COALESCE(m.entrees, 0) AS entrees,
+            COALESCE(m.sorties, 0) AS sorties,
+            COALESCE(m.ajustements, 0) AS ajustements,
+            COALESCE(v.quantite_vendue, 0) AS quantite_vendue,
+            COALESCE(v.chiffre_affaires, 0) AS chiffre_affaires,
+            (COALESCE(v.chiffre_affaires, 0) - COALESCE(v.quantite_vendue, 0) * COALESCE(p.cost_price, 0)) AS marge
+     FROM products p
+     LEFT JOIN categories cat ON cat.id = p.category_id
+     LEFT JOIN mouvements m ON m.product_id = p.id
+     LEFT JOIN ventes v ON v.product_id = p.id
+     LEFT JOIN stock s ON s.product_id = p.id
+     WHERE p.merchant_id = $1
+     ORDER BY p.name`,
+    params
+  );
+
+  return rows;
+}
+
+// GET /products/inventory-report?from&to&warehouseId — entrées/sorties/marge
+// par article sur une période. La marge est calculée sur le prix d'achat
+// ACTUEL du produit (cost_price), pas sur un coût moyen pondéré historique
+// des entrées — plus simple, cohérent avec le reste de l'appli qui ne suit
+// pas de coût par lot d'entrée.
+router.get('/inventory-report', requireRole('manager', 'gerant'), async (req, res) => {
+  const { from, to, warehouseId } = req.query;
+  if (!from || !to) {
+    return res.status(400).json({ error: 'La période (from/to) est requise.' });
+  }
+  try {
+    const rows = await calculerInventaireGeneral(req, { from, to, warehouseId });
+    res.json(rows);
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// GET /products/inventory-report/pdf?from&to&warehouseId
+router.get('/inventory-report/pdf', requireRole('manager', 'gerant'), async (req, res) => {
+  const { from, to, warehouseId } = req.query;
+  if (!from || !to) {
+    return res.status(400).json({ error: 'La période (from/to) est requise.' });
+  }
+  try {
+    const rows = await calculerInventaireGeneral(req, { from, to, warehouseId });
+    const merchantResult = await pool.query('SELECT business_name FROM merchants WHERE id = $1', [req.user.merchantId]);
+    const businessName = merchantResult.rows[0]?.business_name || 'Commerce';
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="inventaire-general-${from}-au-${to}.pdf"`);
+
+    const doc = new PDFDocument({ margin: 50, size: 'A4', layout: 'landscape' });
+    doc.pipe(res);
+
+    const COLONNES = [
+      { texte: 'Article', x: 50, largeur: 155 },
+      { texte: 'Stock actuel', x: 210, largeur: 70, aligner: 'right' },
+      { texte: 'Entrées', x: 285, largeur: 65, aligner: 'right' },
+      { texte: 'Sorties', x: 355, largeur: 65, aligner: 'right' },
+      { texte: 'Qté vendue', x: 425, largeur: 70, aligner: 'right' },
+      { texte: 'Chiffre d\u2019affaires', x: 500, largeur: 100, aligner: 'right' },
+      { texte: 'Marge', x: 605, largeur: 100, aligner: 'right' },
+    ];
+
+    function dessinerEnTete() {
+      let y0 = dessinerEntete(doc, {
+        businessName,
+        titre: 'Inventaire général',
+        sousTitre: `Du ${new Date(from).toLocaleDateString('fr-FR')} au ${new Date(to).toLocaleDateString('fr-FR')} · ${rows.length} article(s)`,
+      });
+      return dessinerEnteteTableau(doc, y0, COLONNES);
+    }
+
+    let y = dessinerEnTete();
+
+    if (rows.length === 0) {
+      doc.fontSize(10).fillColor(COULEURS.muted).text('Aucun article.', 56, y + 10);
+    }
+
+    let totalCA = 0;
+    let totalMarge = 0;
+    rows.forEach((r, index) => {
+      if (y > doc.page.height - 90) {
+        doc.addPage();
+        y = dessinerEnTete();
+      }
+      if (index % 2 === 1) {
+        doc.rect(50, y, doc.page.width - 100, 20).fill(COULEURS.fondAlterne);
+      }
+      doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(9);
+      doc.text(r.name, 56, y + 6, { width: 150 });
+      doc.text(String(r.stock_actuel), 210, y + 6, { width: 70, align: 'right' });
+      doc.text(String(r.entrees), 285, y + 6, { width: 65, align: 'right' });
+      doc.text(String(r.sorties), 355, y + 6, { width: 65, align: 'right' });
+      doc.text(String(r.quantite_vendue), 425, y + 6, { width: 70, align: 'right' });
+      doc.text(formatMontant(r.chiffre_affaires), 500, y + 6, { width: 100, align: 'right' });
+      doc.text(formatMontant(r.marge), 605, y + 6, { width: 100, align: 'right' });
+      totalCA += Number(r.chiffre_affaires);
+      totalMarge += Number(r.marge);
+      y += 20;
+    });
+
+    traitSeparateur(doc, y + 4);
+    y += 16;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor(COULEURS.encre);
+    doc.text('TOTAL', 425, y, { width: 70, align: 'right' });
+    doc.text(formatMontant(totalCA), 500, y, { width: 100, align: 'right' });
+    doc.text(formatMontant(totalMarge), 605, y, { width: 100, align: 'right' });
+
+    doc.end();
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
+  }
+});
+
 // GET /products
 router.get('/', async (req, res) => {
   let warehouseId;

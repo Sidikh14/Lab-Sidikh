@@ -2024,6 +2024,14 @@ export function OrdersPage() {
                 </p>
                 <div className="actions-modale">
                   <button className="btn" onClick={() => setDetailCommande(null)}>Fermer</button>
+                  {detailCommande.needs_delivery && (
+                    <button
+                      className="btn"
+                      onClick={() => api.previewDeliveryNote(detailCommande.id).catch((err) => setErreur(err.message))}
+                    >
+                      Bon de livraison
+                    </button>
+                  )}
                   {detailCommande.client_id ? (
                     <>
                       <button
