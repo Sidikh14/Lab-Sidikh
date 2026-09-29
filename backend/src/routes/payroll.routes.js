@@ -35,6 +35,18 @@ function peutConsulter(req, userId) {
   return req.user.id === userId || ['manager', 'gerant'].includes(req.user.role);
 }
 
+// Quand l'employé consulte SON PROPRE bulletin (quel que soit son rôle,
+// caissier/vendeur/manager…), il ne peut le tirer que si le mois est marqué
+// payé. Un manager/gérant qui consulte le bulletin d'un AUTRE employé n'est
+// pas soumis à cette règle (il doit pouvoir le prévisualiser avant paiement).
+async function moisEstPaye(userId, month) {
+  const { rows } = await pool.query(
+    'SELECT 1 FROM salary_payments WHERE user_id = $1 AND month = $2',
+    [userId, month]
+  );
+  return rows.length > 0;
+}
+
 async function recupererOuCreerReglages(merchantId) {
   const existant = await pool.query('SELECT * FROM payroll_settings WHERE merchant_id = $1', [merchantId]);
   if (existant.rows.length > 0) return existant.rows[0];
@@ -211,12 +223,17 @@ router.post('/:userId/generate', requireRole('manager'), async (req, res) => {
   }
 });
 
-// GET /payroll/mine — liste des bulletins de l'utilisateur connecté
+// GET /payroll/mine — liste des bulletins de l'utilisateur connecté, limitée
+// aux mois marqués payés (le bulletin peut exister avant le paiement, mais
+// l'employé ne doit pouvoir le tirer qu'une fois payé).
 router.get('/mine', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT month, gross_salary, net_a_payer, generated_at
-       FROM payslips WHERE user_id = $1 ORDER BY month DESC`,
+      `SELECT p.month, p.gross_salary, p.net_a_payer, p.generated_at
+       FROM payslips p
+       JOIN salary_payments sp ON sp.user_id = p.user_id AND sp.month = p.month
+       WHERE p.user_id = $1
+       ORDER BY p.month DESC`,
       [req.user.id]
     );
     res.json(rows);
@@ -231,6 +248,9 @@ router.get('/mine', async (req, res) => {
 router.get('/:userId/:month', async (req, res) => {
   if (!peutConsulter(req, req.params.userId)) {
     return res.status(403).json({ error: 'Accès refusé.' });
+  }
+  if (req.user.id === req.params.userId && !(await moisEstPaye(req.params.userId, req.params.month))) {
+    return res.status(403).json({ error: "Ce mois n'est pas encore marqué payé." });
   }
   try {
     const { rows } = await pool.query(
@@ -252,6 +272,9 @@ router.get('/:userId/:month', async (req, res) => {
 router.get('/:userId/:month/pdf', async (req, res) => {
   if (!peutConsulter(req, req.params.userId)) {
     return res.status(403).json({ error: 'Accès refusé.' });
+  }
+  if (req.user.id === req.params.userId && !(await moisEstPaye(req.params.userId, req.params.month))) {
+    return res.status(403).json({ error: "Ce mois n'est pas encore marqué payé." });
   }
   try {
     const { rows } = await pool.query(
