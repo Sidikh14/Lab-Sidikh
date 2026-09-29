@@ -125,6 +125,8 @@ export const api = {
     request(`/products/${id}/lots${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   getExpiringLots: (warehouseId) =>
     request(`/products/expiring-lots${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
+  getExpiredLots: (warehouseId) =>
+    request(`/products/expired-lots${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   destroyProductLot: (id, lotId, warehouseId) =>
     request(`/products/${id}/lots/${lotId}${warehouseId ? `?warehouseId=${warehouseId}` : ''}`, { method: 'DELETE' }),
   addProductUnit: (productId, data) =>
@@ -184,6 +186,7 @@ export const api = {
   recordOrderPayment: (id, data) =>
     request(`/orders/${id}/payment`, { method: 'PATCH', body: JSON.stringify(data) }),
   previewOrderReceipt: (id, format) => previewFile(`/orders/${id}/receipt-pdf${format ? `?format=${format}` : ''}`),
+  previewDeliveryNote: (id) => previewFile(`/orders/${id}/delivery-note-pdf`),
   downloadOrdersPdf: (from, to) => previewFile(`/orders/pdf?from=${from}&to=${to}`),
   getInventoryReport: (from, to, warehouseId) =>
     request(`/products/inventory-report?from=${from}&to=${to}${warehouseId ? `&warehouseId=${warehouseId}` : ''}`),

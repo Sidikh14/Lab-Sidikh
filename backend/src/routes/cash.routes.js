@@ -211,7 +211,7 @@ function texteMouvement(m) {
   if (m.type === 'encaissement') return `Encaissement ${formatOrderNumber(m)}${m.client_name ? ` — ${m.client_name}` : ''}`;
   if (m.type === 'reglement_credit') return `Règlement créance${m.client_name ? ` — ${m.client_name}` : ''}`;
   if (m.type === 'reglement_tiers_payant') return `Reste à charge tiers payant ${formatOrderNumber(m)}${m.client_name ? ` — ${m.client_name}` : ''}`;
-  if (m.type === 'reglement_mutuelle') return `Règlement mutuelle — ${m.insurer_name}`;
+  if (m.type === 'reglement_mutuelle') return `Versement du tiers payant — ${m.insurer_name}`;
   if (m.type === 'achat_stock') return `Achat stock — ${m.product_name}${m.supplier_name ? ` (${m.supplier_name})` : ''}`;
   if (m.type === 'reglement_fournisseur') return `Règlement fournisseur — ${m.supplier_name}`;
   if (m.type === 'sortie') return `Sortie de caisse — ${m.reason}`;
