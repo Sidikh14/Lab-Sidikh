@@ -309,6 +309,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
     await client.query('BEGIN');
 
     let subtotalAmount = 0;
+    let subtotalSoumisTva = 0; // pharmacie : part des lignes dont le produit est soumis à la TVA
     let stockOverrideUtilise = false;
     const resolvedItems = [];
 
@@ -318,7 +319,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
       }
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
+        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription, p.tva_applicable,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -385,6 +386,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
 
       const lineTotal = prixParConditionnement * item.quantity;
       subtotalAmount += lineTotal;
+      if (product.tva_applicable) subtotalSoumisTva += lineTotal;
       resolvedItems.push({
         product,
         baseQuantity,
@@ -418,7 +420,12 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
 
     // Arrondi en FCFA entiers (pas de centimes) : on arrondit le montant de
     // TVA lui-même, pas un ratio intermédiaire, pour éviter les décimales.
-    const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
+    // Pharmacie : la TVA dépend de chaque produit (products.tva_applicable),
+    // pas d'une case globale. Autres secteurs : comportement inchangé.
+    const estPharmacieTva = req.user.sector === 'pharmacie';
+    const appliquerTva = estPharmacieTva ? subtotalSoumisTva > 0 : Boolean(tvaApplicable);
+    const baseTva = estPharmacieTva ? subtotalSoumisTva : subtotalAmount;
+    const tvaAmount = appliquerTva ? Math.round(baseTva * (TVA_RATE / 100)) : 0;
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
 
     const orderResult = await client.query(
@@ -430,7 +437,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
         clientId || null,
         req.user.id,
         subtotalAmount,
-        Boolean(tvaApplicable),
+        appliquerTva,
         TVA_RATE,
         tvaAmount,
         totalAmount,
@@ -1264,6 +1271,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
 
     // 2. On applique les nouveaux articles — même logique que la création.
     let subtotalAmount = 0;
+    let subtotalSoumisTva = 0; // pharmacie : part des lignes dont le produit est soumis à la TVA
     let stockOverrideUtilise = false;
     const resolvedItems = [];
 
@@ -1273,7 +1281,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       }
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription,
+        `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription, p.tva_applicable,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -1337,6 +1345,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
 
       const lineTotal = prixParConditionnement * item.quantity;
       subtotalAmount += lineTotal;
+      if (product.tva_applicable) subtotalSoumisTva += lineTotal;
       resolvedItems.push({
         product,
         baseQuantity,
@@ -1365,7 +1374,12 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       await verifierOrdonnanceRenouvelable(client, req.user.merchantId, prescriptionId, resolvedItems, order.id);
     }
 
-    const tvaAmount = tvaApplicable ? Math.round(subtotalAmount * (TVA_RATE / 100)) : 0;
+    // Pharmacie : la TVA dépend de chaque produit (products.tva_applicable),
+    // pas d'une case globale. Autres secteurs : comportement inchangé.
+    const estPharmacieTva = req.user.sector === 'pharmacie';
+    const appliquerTva = estPharmacieTva ? subtotalSoumisTva > 0 : Boolean(tvaApplicable);
+    const baseTva = estPharmacieTva ? subtotalSoumisTva : subtotalAmount;
+    const tvaAmount = appliquerTva ? Math.round(baseTva * (TVA_RATE / 100)) : 0;
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
     const alertesStock = [];
     const reservationsCreees = [];
@@ -1483,7 +1497,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
          prescription_id = COALESCE($9, prescription_id)
        WHERE id = $7
        RETURNING *`,
-      [clientId || null, notes || null, Boolean(tvaApplicable), tvaAmount, subtotalAmount, totalAmount, order.id, stockOverrideUtilise, prescriptionId || null]
+      [clientId || null, notes || null, appliquerTva, tvaAmount, subtotalAmount, totalAmount, order.id, stockOverrideUtilise, prescriptionId || null]
     );
     const orderMisAJour = updateResult.rows[0];
 
