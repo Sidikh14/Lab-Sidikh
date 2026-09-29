@@ -1649,7 +1649,7 @@ function mesurerHauteurTicket(order, largeurContenu) {
   const mesure = new PDFDocument({ margin: 0 });
 
   let hauteur = 176; // en-tête + bloc totaux fixe + marge basse (sans pied de page)
-  if (order.tva_applicable) hauteur += 13;
+  if (order.tva_applicable || order.merchant_sector === 'pharmacie') hauteur += 13;
   if (Number(order.change_given) > 0) hauteur += 12;
   if (order.has_return) hauteur += 18;
 
@@ -1738,19 +1738,20 @@ function genererTicketEtroit(res, order) {
   y += 10;
 
   doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted);
-  doc.text('Sous-total', MARGE, y, { width: largeurContenu - 70 });
+  const estPharmacieTicket = order.merchant_sector === 'pharmacie';
+  doc.text(estPharmacieTicket ? 'Total HT' : 'Sous-total', MARGE, y, { width: largeurContenu - 70 });
   doc.fillColor(COULEURS.encre).text(`${formatMontant(order.subtotal_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
   y += 13;
 
-  if (order.tva_applicable) {
+  if (order.tva_applicable || estPharmacieTicket) {
     doc.fillColor(COULEURS.muted).text(`TVA (${TVA_RATE} %)`, MARGE, y, { width: largeurContenu - 70 });
-    doc.fillColor(COULEURS.encre).text(`${formatMontant(order.tva_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
+    doc.fillColor(COULEURS.encre).text(`${formatMontant(order.tva_applicable ? order.tva_amount : 0)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
     y += 13;
   }
 
   y += 3;
   doc.font('Helvetica-Bold').fontSize(11).fillColor(COULEURS.encre);
-  doc.text('TOTAL', MARGE, y, { width: largeurContenu - 90 });
+  doc.text(estPharmacieTicket ? 'TOTAL TTC' : 'TOTAL', MARGE, y, { width: largeurContenu - 90 });
   doc.text(`${formatMontant(order.total_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
   y += 20;
 
@@ -1934,8 +1935,19 @@ function genererFactureA4(res, order, creditInfo) {
     y += grand ? 30 : 20;
   };
 
-  ligneTotal('Sous total :', order.subtotal_amount);
-  if (order.tva_applicable) ligneTotal(`TVA (${TVA_RATE}%) :`, order.tva_amount);
+  const estPharmacieFacture = order.merchant_sector === 'pharmacie';
+  if (estPharmacieFacture) {
+    // Pharmacie : HT / TVA / TTC affichés distinctement. La TVA est toujours
+    // montrée (0 si non applicable) ; le TTC précède remise et livraison,
+    // le net à payer est le TOTAL final.
+    const tvaMontant = order.tva_applicable ? Number(order.tva_amount) : 0;
+    ligneTotal('Total HT :', order.subtotal_amount);
+    ligneTotal(`TVA (${TVA_RATE}%) :`, tvaMontant);
+    ligneTotal('Total TTC :', Number(order.subtotal_amount) + tvaMontant);
+  } else {
+    ligneTotal('Sous total :', order.subtotal_amount);
+    if (order.tva_applicable) ligneTotal(`TVA (${TVA_RATE}%) :`, order.tva_amount);
+  }
   if (order.discount_type && Number(order.discount_amount) > 0) {
     const labelReduction = { remise: 'Remise', rabais: 'Rabais', ristourne: 'Ristourne', escompte: 'Escompte' }[order.discount_type] || 'Réduction';
     const detailReduction = order.discount_mode === 'pourcentage' ? ` (${order.discount_value}%)` : '';
@@ -1945,7 +1957,7 @@ function genererFactureA4(res, order, creditInfo) {
     ligneTotal('Frais de livraison :', order.delivery_fee);
   }
   y += 4;
-  ligneTotal('TOTAL :', order.total_amount, { grand: true });
+  ligneTotal(estPharmacieFacture ? 'NET À PAYER :' : 'TOTAL :', order.total_amount, { grand: true });
   y += 8;
 
   if (order.payment_method === 'a_credit' && creditInfo) {
@@ -2104,6 +2116,7 @@ router.get('/:id/receipt-pdf', async (req, res) => {
   try {
     const order = await getOrderReceiptDetail(req.user.merchantId, req.params.id);
     if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
+    order.merchant_sector = req.user.sector;
 
     const format = String(req.query.format || '').toLowerCase();
     const utiliserA4 = format === 'a4' ? true : format === 'ticket' ? false : Boolean(order.client_id);
