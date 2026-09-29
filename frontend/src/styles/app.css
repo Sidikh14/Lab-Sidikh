@@ -681,6 +681,13 @@
   flex: 1;
   padding: 32px 40px;
   max-width: 1080px;
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(20, 21, 31, 0.025) 0px,
+    rgba(20, 21, 31, 0.025) 1px,
+    transparent 1px,
+    transparent 34px
+  );
 }
 
 .entete-page {
@@ -718,15 +725,15 @@
 }
 
 .stat-icone {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
   background: var(--accent-clair);
   color: var(--accent);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .stat .etiquette {
