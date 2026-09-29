@@ -123,6 +123,9 @@ export function DashboardPage() {
   const [alerteSalaires, setAlerteSalaires] = useState(null);
   const [lotsBientotPerimes, setLotsBientotPerimes] = useState([]);
   const [horizonOuvert, setHorizonOuvert] = useState(null);
+  const [lotsPerimes, setLotsPerimes] = useState(null);
+  const [registreDestructions, setRegistreDestructions] = useState(null);
+  const [destructionEnCours, setDestructionEnCours] = useState(null);
   const estManager = user.role === 'manager';
 
   // Même boutique active que Stock/Ventes (mémorisée en local), pour que le
@@ -230,6 +233,25 @@ export function DashboardPage() {
     }
     if (estPharmacie && vueEquipe) {
       api.getExpiringLots(estManager ? warehouseId : undefined).then(setLotsBientotPerimes).catch((err) => setErreur(err.message));
+      api.getExpiredLots(estManager ? warehouseId : undefined).then(setLotsPerimes).catch((err) => setErreur(err.message));
+      api.getLotDestructions(estManager ? warehouseId : undefined).then(setRegistreDestructions).catch((err) => setErreur(err.message));
+    }
+  }
+
+  // Détruit un lot périmé (le sort du stock) puis rafraîchit l'alerte et le registre.
+  async function detruireLotPerime(lot) {
+    const ok = window.confirm(
+      `Détruire le lot ${lot.lot_number ? `n° ${lot.lot_number} ` : ''}de ${lot.product_name} (${Math.round(Number(lot.quantity))} unité(s)) ?\nIl sera retiré du stock et inscrit au registre des destructions.`
+    );
+    if (!ok) return;
+    setDestructionEnCours(lot.lot_id);
+    try {
+      await api.destroyProductLot(lot.product_id, lot.lot_id, estManager ? warehouseId : undefined);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setDestructionEnCours(null);
     }
   }
 
@@ -564,6 +586,28 @@ export function DashboardPage() {
               </div>
             )}
 
+            {estPharmacie && lotsPerimes && lotsPerimes.count > 0 && (
+              <div className="erreur" style={{ marginBottom: 20 }}>
+                <p style={{ fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <IconAlerte />
+                  {lotsPerimes.count} lot{lotsPerimes.count > 1 ? 's' : ''} périmé{lotsPerimes.count > 1 ? 's' : ''} encore en stock — {Math.round(lotsPerimes.totalValue).toLocaleString('fr-FR')} FCFA à retirer
+                </p>
+                <p style={{ fontSize: 12, marginBottom: 10 }}>Ces produits ne peuvent plus être vendus. Détruisez-les pour les sortir du stock.</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {lotsPerimes.lots.map((l) => (
+                    <div key={l.lot_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                      <span>
+                        <strong>{l.product_name}</strong> · lot {l.lot_number || '—'} · périmé le {new Date(l.expiry_date).toLocaleDateString('fr-FR')} ({l.days_expired} j) · {Math.round(Number(l.quantity))} unité(s)
+                      </span>
+                      <button className="btn btn-principal" disabled={destructionEnCours === l.lot_id} onClick={() => detruireLotPerime(l)}>
+                        {destructionEnCours === l.lot_id ? 'Destruction…' : 'Détruire'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {estManager && alerteSalaires?.show && (
               <div className="erreur" style={{ marginBottom: 20, cursor: 'pointer' }} onClick={() => navigate('/salaires')}>
                 Salaires de {formatMois(alerteSalaires.month)} non versés pour {alerteSalaires.unpaid.length} employé{alerteSalaires.unpaid.length > 1 ? 's' : ''} :{' '}
@@ -713,6 +757,49 @@ export function DashboardPage() {
               )}
             </div>
           </div>
+
+          {estPharmacie && (
+            <div style={{ marginTop: 24 }}>
+              <h2 style={{ fontSize: 16, marginBottom: 12 }}>Registre des destructions</h2>
+              {!registreDestructions || registreDestructions.destructions.length === 0 ? (
+                <p className="etat-vide">Aucun lot périmé détruit pour le moment.</p>
+              ) : (
+                <>
+                  <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 8 }}>
+                    {Math.round(registreDestructions.totalQuantity)} unité(s) sorties du stock · {Math.round(registreDestructions.totalValue).toLocaleString('fr-FR')} FCFA de valeur détruite
+                  </p>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="registre" style={{ marginBottom: 16 }}>
+                      <thead>
+                        <tr>
+                          <th>Détruit le</th>
+                          <th>Produit</th>
+                          <th>N° de lot</th>
+                          <th>Péremption</th>
+                          <th>Qté</th>
+                          <th>Valeur</th>
+                          <th>Par</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {registreDestructions.destructions.map((d) => (
+                          <tr key={d.id}>
+                            <td>{new Date(d.destroyed_at).toLocaleDateString('fr-FR')}</td>
+                            <td>{d.product_name}</td>
+                            <td>{d.lot_number || '—'}</td>
+                            <td>{d.expiry_date ? new Date(d.expiry_date).toLocaleDateString('fr-FR') : '—'}</td>
+                            <td className="chiffre">{Math.round(Number(d.quantity))}</td>
+                            <td className="chiffre">{Math.round(Number(d.lost_value)).toLocaleString('fr-FR')} FCFA</td>
+                            <td>{d.destroyed_by_name || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {estPharmacie && (
             <div style={{ marginTop: 24 }}>
