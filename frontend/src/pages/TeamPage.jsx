@@ -146,8 +146,14 @@ function formatMois(moisStr) {
 export function TeamPage() {
   const { user } = useAuth();
   const estManager = user.role === 'manager';
+  // "Équipe" (trombinoscope + salaires) reste réservé à manager/gérant ; les
+  // autres rôles (caissier, vendeur…) n'ont accès qu'à "Mes bulletins".
+  const voitTrombinoscope = ['manager', 'gerant'].includes(user.role);
   const [searchParams] = useSearchParams();
-  const [onglet, setOnglet] = useState(() => (searchParams.get('tab') === 'salaires' && estManager ? 'salaires' : 'equipe'));
+  const [onglet, setOnglet] = useState(() => {
+    if (!voitTrombinoscope) return 'mes-bulletins';
+    return searchParams.get('tab') === 'salaires' && estManager ? 'salaires' : 'equipe';
+  });
 
   return (
     <>
@@ -156,9 +162,11 @@ export function TeamPage() {
       </div>
 
       <div className="onglets" style={{ marginBottom: 20 }}>
-        <button className={onglet === 'equipe' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('equipe')}>
-          Équipe
-        </button>
+        {voitTrombinoscope && (
+          <button className={onglet === 'equipe' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('equipe')}>
+            Équipe
+          </button>
+        )}
         {estManager && (
           <button className={onglet === 'salaires' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('salaires')}>
             Salaires
@@ -169,11 +177,9 @@ export function TeamPage() {
             Réglages paie
           </button>
         )}
-        {!estManager && (
-          <button className={onglet === 'mes-bulletins' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('mes-bulletins')}>
-            Mes bulletins
-          </button>
-        )}
+        <button className={onglet === 'mes-bulletins' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('mes-bulletins')}>
+          Mes bulletins
+        </button>
       </div>
 
       {onglet === 'equipe' && <EquipeTab />}
