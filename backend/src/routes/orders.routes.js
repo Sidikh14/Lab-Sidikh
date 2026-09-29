@@ -50,17 +50,25 @@ async function resolveWarehouseId(req, dbClient, providedId) {
       throw { status: 400, message: 'La boutique est requise.' };
     }
     const result = await runner.query(
-      `SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+      `SELECT id, type FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
       [providedId, req.user.merchantId]
     );
     if (result.rows.length === 0) {
       throw { status: 404, message: 'Boutique introuvable.' };
+    }
+    // Un dépôt sert au stockage uniquement : aucune vente possible dessus.
+    if (result.rows[0].type === 'depot') {
+      throw { status: 400, message: 'Un dépôt ne peut pas enregistrer de vente. Choisissez une boutique.' };
     }
     return providedId;
   }
 
   if (!req.user.warehouseId) {
     throw { status: 403, message: "Vous n'êtes assigné à aucune boutique." };
+  }
+  const assignee = await runner.query(`SELECT type FROM warehouses WHERE id = $1`, [req.user.warehouseId]);
+  if (assignee.rows[0]?.type === 'depot') {
+    throw { status: 403, message: "Votre lieu d'affectation est un dépôt : aucune vente n'y est possible." };
   }
   return req.user.warehouseId;
 }

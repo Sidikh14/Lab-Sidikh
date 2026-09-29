@@ -7,14 +7,14 @@ const { logActivity } = require('../utils/activityLog');
 const router = express.Router();
 router.use(authenticate);
 
-// GET /warehouses — liste des boutiques du commerçant. Accessible à tous
+// GET /warehouses — liste des boutiques ET dépôts du commerçant (champ `type`). Accessible à tous
 // les rôles (le manager en a besoin pour choisir une boutique à chaque
 // vente/entrée de stock ; les autres rôles n'en ont normalement pas
 // besoin puisqu'ils sont assignés à la leur, mais ça reste inoffensif).
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, address, is_active, created_at
+      `SELECT id, name, address, type, is_active, created_at
        FROM warehouses
        WHERE merchant_id = $1
        ORDER BY name`,
@@ -30,8 +30,14 @@ router.get('/', async (req, res) => {
 // POST /warehouses — créer une boutique (manager uniquement)
 router.post('/', requireRole('manager'), async (req, res) => {
   const { name, address } = req.body;
+  // Le dépôt est facultatif : sans type, on crée une boutique comme avant.
+  const type = req.body.type === undefined ? 'boutique' : req.body.type;
+  if (!['boutique', 'depot'].includes(type)) {
+    return res.status(400).json({ error: 'Le type doit être "boutique" ou "depot".' });
+  }
+  const libelle = type === 'depot' ? 'dépôt' : 'boutique';
   if (!name || !name.trim()) {
-    return res.status(400).json({ error: 'Le nom de la boutique est requis.' });
+    return res.status(400).json({ error: `Le nom du ${libelle} est requis.` });
   }
 
   try {
@@ -49,31 +55,32 @@ router.post('/', requireRole('manager'), async (req, res) => {
     const plafond = merchantRows[0]?.max_warehouses ?? 3;
     if (countRows[0].total >= plafond) {
       return res.status(403).json({
-        error: `Limite de ${plafond} boutiques atteinte pour votre commerce. Contactez le propriétaire de la plateforme pour l'augmenter.`,
+        error: `Limite de ${plafond} lieux (boutiques et dépôts confondus) atteinte pour votre commerce. Contactez le propriétaire de la plateforme pour l'augmenter.`,
       });
     }
 
     const result = await pool.query(
-      `INSERT INTO warehouses (merchant_id, name, address)
-       VALUES ($1, $2, $3) RETURNING *`,
-      [req.user.merchantId, name.trim(), address || null]
+      `INSERT INTO warehouses (merchant_id, name, address, type)
+       VALUES ($1, $2, $3, $4) RETURNING *`,
+      [req.user.merchantId, name.trim(), address || null, type]
     );
 
     await logActivity({
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'warehouse_created',
-      description: `a créé la boutique ${result.rows[0].name}`,
+      description: `a créé ${type === 'depot' ? 'le dépôt' : 'la boutique'} ${result.rows[0].name}`,
     });
 
     res.status(201).json(result.rows[0]);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Erreur lors de la création de la boutique.' });
+    res.status(500).json({ error: 'Erreur lors de la création du lieu.' });
   }
 });
 
-// PATCH /warehouses/:id — modifier nom/adresse (manager uniquement)
+// PATCH /warehouses/:id — modifier nom/adresse (manager uniquement). Le type
+// (boutique/dépôt) n'est pas modifiable après la création.
 router.patch('/:id', requireRole('manager'), async (req, res) => {
   const { name, address } = req.body;
 
@@ -94,7 +101,7 @@ router.patch('/:id', requireRole('manager'), async (req, res) => {
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'warehouse_updated',
-      description: `a modifié la boutique ${result.rows[0].name}`,
+      description: `a modifié ${result.rows[0].type === 'depot' ? 'le dépôt' : 'la boutique'} ${result.rows[0].name}`,
     });
 
     res.json(result.rows[0]);
@@ -126,7 +133,7 @@ router.patch('/:id/status', requireRole('manager'), async (req, res) => {
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'warehouse_status_changed',
-      description: `a ${isActive ? 'réactivé' : 'désactivé'} la boutique ${result.rows[0].name}`,
+      description: `a ${isActive ? 'réactivé' : 'désactivé'} ${result.rows[0].type === 'depot' ? 'le dépôt' : 'la boutique'} ${result.rows[0].name}`,
     });
 
     res.json(result.rows[0]);

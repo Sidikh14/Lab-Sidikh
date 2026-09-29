@@ -21,7 +21,8 @@ async function authenticate(req, res, next) {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
 
     const result = await pool.query(
-      `SELECT u.is_active, m.is_active AS merchant_is_active
+      `SELECT u.is_active, u.warehouse_id, m.is_active AS merchant_is_active,
+              COALESCE((SELECT array_agg(uw.warehouse_id) FROM user_warehouses uw WHERE uw.user_id = u.id), '{}') AS warehouse_ids
        FROM users u
        LEFT JOIN merchants m ON m.id = u.merchant_id
        WHERE u.id = $1`,
@@ -36,11 +37,20 @@ async function authenticate(req, res, next) {
       return res.status(403).json({ error: 'Ce commerce a été suspendu. Contactez le support.' });
     }
 
+    // Lieux d'affectation lus en base à chaque requête (et non dans le token,
+    // qui n'expire jamais) : une réaffectation s'applique immédiatement.
+    // warehouseId = lieu principal ; warehouseIds = tous les lieux (un gérant
+    // peut en avoir plusieurs). Le manager n'a aucune affectation.
+    const estManager = payload.role === 'manager';
+    const principal = estManager ? null : (account.warehouse_id || payload.warehouseId || null);
+    const ids = estManager ? [] : Array.from(new Set([...(account.warehouse_ids || []), ...(principal ? [principal] : [])]));
+
     req.user = {
       id: payload.sub,
       merchantId: payload.merchantId,
       role: payload.role,
-      warehouseId: payload.warehouseId || null,
+      warehouseId: principal,
+      warehouseIds: ids,
       sector: payload.sector || null,
     };
     next();

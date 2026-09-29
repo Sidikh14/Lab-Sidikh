@@ -216,7 +216,9 @@ export function OrdersPage() {
   // autres rôles sont assignés à la leur, le backend l'applique tout seul).
   // Même mémorisation locale que StockPage, pour rester cohérent d'une page à l'autre.
   const [warehouses, setWarehouses] = useState([]);
-  const [warehouseId, setWarehouseId] = useState(() => (estManager ? localStorage.getItem('boutiqueActiveId') || '' : ''));
+  // Clé propre à la caisse : la page Stock peut être sur un dépôt (pas de vente),
+  // ce qui ne doit pas écraser la boutique de vente choisie ici.
+  const [warehouseId, setWarehouseId] = useState(() => (estManager ? localStorage.getItem('boutiqueVenteId') || '' : ''));
   const [chargementBoutiques, setChargementBoutiques] = useState(estManager);
 
   useEffect(() => {
@@ -224,7 +226,8 @@ export function OrdersPage() {
     api.getWarehouses()
       .then((liste) => {
         setWarehouses(liste);
-        const actives = liste.filter((w) => w.is_active);
+        // Les dépôts ne vendent pas : seules les boutiques sont proposées.
+        const actives = liste.filter((w) => w.is_active && w.type !== 'depot');
         setWarehouseId((avant) => {
           if (avant && actives.some((w) => w.id === avant)) return avant;
           return actives[0]?.id || '';
@@ -235,7 +238,7 @@ export function OrdersPage() {
   }, [estManager]);
 
   useEffect(() => {
-    if (estManager && warehouseId) localStorage.setItem('boutiqueActiveId', warehouseId);
+    if (estManager && warehouseId) localStorage.setItem('boutiqueVenteId', warehouseId);
   }, [estManager, warehouseId]);
 
   const [rechercheCaisse, setRechercheCaisse] = useState('');
@@ -977,7 +980,7 @@ export function OrdersPage() {
     <>
       <div className="entete-page">
         <h1>Ventes & caisse</h1>
-        {estManager && warehouses.length > 0 && (
+        {estManager && warehouses.some((w) => w.type !== 'depot') && (
           <div
             style={{
               display: 'inline-flex',
@@ -1011,7 +1014,7 @@ export function OrdersPage() {
                 maxWidth: 130,
               }}
             >
-              {warehouses.filter((w) => w.is_active).map((w) => (
+              {warehouses.filter((w) => w.is_active && w.type !== 'depot').map((w) => (
                 <option key={w.id} value={w.id}>{w.name}</option>
               ))}
             </select>
@@ -1019,7 +1022,7 @@ export function OrdersPage() {
         )}
       </div>
 
-      {estManager && !chargementBoutiques && warehouses.length === 0 && (
+      {estManager && !chargementBoutiques && !warehouses.some((w) => w.type !== 'depot') && (
         <p className="etat-vide">Aucune {secteurConfig.libelleBoutique.toLowerCase()} n'a encore été créée. Créez-en une avant d'enregistrer des ventes.</p>
       )}
 

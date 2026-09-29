@@ -75,6 +75,14 @@ function IconSupprimer() {
   );
 }
 
+// Rôles qui vendent : affectables uniquement à une boutique (un dépôt sert au
+// stockage seul — seul un gérant peut y être affecté).
+const ROLES_VENTE = ['vendeur', 'caissier', 'vendeur_caissier'];
+
+function lieuxAffectables(warehouses, role) {
+  return ROLES_VENTE.includes(role) ? warehouses.filter((w) => w.type !== 'depot') : warehouses;
+}
+
 function IconBoutique() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -595,7 +603,11 @@ function EquipeTab() {
                   id="m-role"
                   className="champ"
                   value={nouveauMembre.role}
-                  onChange={(e) => setNouveauMembre({ ...nouveauMembre, role: e.target.value })}
+                  onChange={(e) => {
+                    const role = e.target.value;
+                    const lieuValide = lieuxAffectables(warehouses, role).some((w) => w.id === nouveauMembre.warehouseId);
+                    setNouveauMembre({ ...nouveauMembre, role, warehouseId: lieuValide ? nouveauMembre.warehouseId : '' });
+                  }}
                 >
                   {rolesProposes.map((r) => (
                     <option key={r.value} value={r.value}>{r.label}</option>
@@ -612,8 +624,8 @@ function EquipeTab() {
                     onChange={(e) => setNouveauMembre({ ...nouveauMembre, warehouseId: e.target.value })}
                   >
                     <option value="">Choisir une {secteurConfig.libelleBoutique.toLowerCase()}</option>
-                    {warehouses.map((w) => (
-                      <option key={w.id} value={w.id}>{w.name}</option>
+                    {lieuxAffectables(warehouses, nouveauMembre.role).map((w) => (
+                      <option key={w.id} value={w.id}>{w.name}{w.type === 'depot' ? ' (dépôt)' : ''}</option>
                     ))}
                   </select>
                 </div>
@@ -747,8 +759,8 @@ function EquipeTab() {
                   onChange={(e) => setNouvelleBoutique(e.target.value)}
                 >
                   <option value="">Choisir une {secteurConfig.libelleBoutique.toLowerCase()}</option>
-                  {warehouses.map((w) => (
-                    <option key={w.id} value={w.id}>{w.name}</option>
+                  {lieuxAffectables(warehouses, membreBoutique.role).map((w) => (
+                    <option key={w.id} value={w.id}>{w.name}{w.type === 'depot' ? ' (dépôt)' : ''}</option>
                   ))}
                 </select>
               </div>

@@ -91,12 +91,12 @@ export function WarehousesPage() {
   return (
     <>
       <div className="entete-page">
-        <h1>{secteurConfig.libelleBoutique}s</h1>
+        <h1>{secteurConfig.libelleBoutique}s &amp; dépôts</h1>
       </div>
 
       <div className="onglets" style={{ marginBottom: 20 }}>
         <button className={onglet === 'boutiques' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('boutiques')}>
-          {secteurConfig.libelleBoutique}s
+          {secteurConfig.libelleBoutique}s &amp; dépôts
         </button>
         <button className={onglet === 'transferts' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('transferts')}>
           Transferts
@@ -116,7 +116,7 @@ function BoutiquesTab() {
   const [erreur, setErreur] = useState('');
 
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouvelleBoutique, setNouvelleBoutique] = useState({ name: '', address: '' });
+  const [nouvelleBoutique, setNouvelleBoutique] = useState({ name: '', address: '', type: 'boutique' });
   const [enregistrement, setEnregistrement] = useState(false);
 
   const [boutiqueEnEdition, setBoutiqueEnEdition] = useState(null);
@@ -133,17 +133,24 @@ function BoutiquesTab() {
 
   useEffect(charger, []);
 
+  // Un dépôt sert au stockage uniquement (pas de vente) ; il est facultatif.
+  function ouvrirCreation(type) {
+    setErreur('');
+    setNouvelleBoutique({ name: '', address: '', type });
+    setModaleOuverte(true);
+  }
+
   async function handleCreate(e) {
     e.preventDefault();
     if (!nouvelleBoutique.name.trim()) {
-      setErreur(`Le nom de la ${secteurConfig.libelleBoutique.toLowerCase()} est requis.`);
+      setErreur(nouvelleBoutique.type === 'depot' ? 'Le nom du dépôt est requis.' : `Le nom de la ${secteurConfig.libelleBoutique.toLowerCase()} est requis.`);
       return;
     }
     setEnregistrement(true);
     try {
       await api.createWarehouse(nouvelleBoutique);
       setModaleOuverte(false);
-      setNouvelleBoutique({ name: '', address: '' });
+      setNouvelleBoutique({ name: '', address: '', type: 'boutique' });
       charger();
     } catch (err) {
       setErreur(err.message);
@@ -153,7 +160,7 @@ function BoutiquesTab() {
   }
 
   function ouvrirEdition(boutique) {
-    setBoutiqueEnEdition({ id: boutique.id, name: boutique.name, address: boutique.address || '' });
+    setBoutiqueEnEdition({ id: boutique.id, name: boutique.name, address: boutique.address || '', type: boutique.type || 'boutique' });
   }
 
   async function handleEnregistrerEdition(e) {
@@ -186,11 +193,19 @@ function BoutiquesTab() {
 
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+        <button
+          className="btn"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, fontWeight: 600 }}
+          onClick={() => ouvrirCreation('depot')}
+        >
+          <IconPlus />
+          Nouveau dépôt
+        </button>
         <button
           className="btn btn-principal"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
-          onClick={() => setModaleOuverte(true)}
+          onClick={() => ouvrirCreation('boutique')}
         >
           <IconPlus />
           Nouvelle {secteurConfig.libelleBoutique.toLowerCase()}
@@ -203,11 +218,12 @@ function BoutiquesTab() {
         <p className="etat-vide">Aucune {secteurConfig.libelleBoutique.toLowerCase()} pour l'instant.</p>
       ) : (
         <div className="grille-cartes">
-          {warehouses.map((w) => (
+          {[...warehouses].sort((a, b) => Number(a.type === 'depot') - Number(b.type === 'depot')).map((w) => (
             <div key={w.id} className="carte" style={{ opacity: w.is_active ? 1 : 0.55 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
                 <div>
                   <h3 style={{ margin: 0 }}>{w.name}</h3>
+                  {w.type === 'depot' && <span className="tampon tampon-ambre" style={{ marginRight: 6 }}>Dépôt · stockage</span>}
                   {w.address && <p style={{ fontSize: 13, color: 'var(--encre-douce)', margin: '4px 0 0' }}>{w.address}</p>}
                   {!w.is_active && <span className="tampon">Désactivée</span>}
                 </div>
@@ -228,8 +244,20 @@ function BoutiquesTab() {
       {modaleOuverte && (
         <div className="modale-fond" onClick={() => setModaleOuverte(false)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Nouvelle {secteurConfig.libelleBoutique.toLowerCase()}</h2>
+            <h2>{nouvelleBoutique.type === 'depot' ? 'Nouveau dépôt' : `Nouvelle ${secteurConfig.libelleBoutique.toLowerCase()}`}</h2>
             <form onSubmit={handleCreate}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="b-type">Type</label>
+                <select
+                  id="b-type"
+                  className="champ"
+                  value={nouvelleBoutique.type}
+                  onChange={(e) => setNouvelleBoutique({ ...nouvelleBoutique, type: e.target.value })}
+                >
+                  <option value="boutique">{secteurConfig.libelleBoutique} (vente + stock)</option>
+                  <option value="depot">Dépôt (stockage uniquement)</option>
+                </select>
+              </div>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="b-name">Nom</label>
                 <input
@@ -237,7 +265,7 @@ function BoutiquesTab() {
                   className="champ"
                   value={nouvelleBoutique.name}
                   onChange={(e) => setNouvelleBoutique({ ...nouvelleBoutique, name: e.target.value })}
-                  placeholder={`${secteurConfig.libelleBoutique} Médina`}
+                  placeholder={nouvelleBoutique.type === 'depot' ? 'Dépôt central' : `${secteurConfig.libelleBoutique} Médina`}
                 />
               </div>
               <div className="champ-groupe">
@@ -263,7 +291,7 @@ function BoutiquesTab() {
       {boutiqueEnEdition && (
         <div className="modale-fond" onClick={() => setBoutiqueEnEdition(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Modifier la {secteurConfig.libelleBoutique.toLowerCase()}</h2>
+            <h2>{boutiqueEnEdition.type === 'depot' ? 'Modifier le dépôt' : `Modifier la ${secteurConfig.libelleBoutique.toLowerCase()}`}</h2>
             <form onSubmit={handleEnregistrerEdition}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="be-name">Nom</label>
@@ -544,7 +572,7 @@ function TransfertsTab() {
                   >
                     <option value="">Choisir une {secteurConfig.libelleBoutique.toLowerCase()}</option>
                     {boutiquesActives.map((w) => (
-                      <option key={w.id} value={w.id}>{w.name}</option>
+                      <option key={w.id} value={w.id}>{w.name}{w.type === 'depot' ? ' (dépôt)' : ''}</option>
                     ))}
                   </select>
                 ) : (
@@ -561,7 +589,7 @@ function TransfertsTab() {
                 >
                   <option value="">Choisir une {secteurConfig.libelleBoutique.toLowerCase()}</option>
                   {boutiquesActives.filter((w) => w.id !== fromWarehouseId).map((w) => (
-                    <option key={w.id} value={w.id}>{w.name}</option>
+                    <option key={w.id} value={w.id}>{w.name}{w.type === 'depot' ? ' (dépôt)' : ''}</option>
                   ))}
                 </select>
               </div>

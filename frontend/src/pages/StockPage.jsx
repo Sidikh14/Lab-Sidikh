@@ -776,7 +776,7 @@ export function StockPage() {
                 }}
               >
                 {warehouses.filter((w) => w.is_active).map((w) => (
-                  <option key={w.id} value={w.id}>{w.name}</option>
+                  <option key={w.id} value={w.id}>{w.name}{w.type === 'depot' ? ' (dépôt)' : ''}</option>
                 ))}
               </select>
             </div>

@@ -17,12 +17,18 @@ const ROLES_AUTORISES_PAR_CREATEUR = {
   manager: ['gerant', 'vendeur', 'caissier', 'vendeur_caissier'],
 };
 
+// Rôles qui vendent / encaissent : ils ne peuvent être affectés qu'à une
+// boutique, jamais à un dépôt (un dépôt sert uniquement au stockage). Seul un
+// gérant peut être affecté à un dépôt, pour en gérer le stock et les transferts.
+const ROLES_VENTE = ['vendeur', 'caissier', 'vendeur_caissier'];
+const MSG_DEPOT_RESERVE = "Un dépôt sert uniquement au stockage : seul un gérant peut y être affecté. Choisissez une boutique pour ce rôle.";
+
 // GET /users — liste de l'équipe du commerce (manager et gérant uniquement)
 router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.full_name, u.email, u.role, u.is_active, u.last_login_at, u.created_at,
-              u.visible_modules, u.warehouse_id, w.name AS warehouse_name
+              u.visible_modules, u.warehouse_id, w.name AS warehouse_name, w.type AS warehouse_type
        FROM users u
        LEFT JOIN warehouses w ON w.id = u.warehouse_id
        WHERE u.merchant_id = $1
@@ -60,11 +66,14 @@ router.post('/', requireRole('manager'), async (req, res) => {
 
   try {
     const boutique = await pool.query(
-      `SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+      `SELECT id, type FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
       [warehouseId, req.user.merchantId]
     );
     if (boutique.rows.length === 0) {
       return res.status(404).json({ error: 'Boutique introuvable.' });
+    }
+    if (boutique.rows[0].type === 'depot' && ROLES_VENTE.includes(role)) {
+      return res.status(400).json({ error: MSG_DEPOT_RESERVE });
     }
 
     // Plafond de comptes fixé par le propriétaire de la plateforme
@@ -193,11 +202,20 @@ router.patch('/:id/warehouse', requireRole('manager'), async (req, res) => {
 
   try {
     const boutique = await pool.query(
-      `SELECT id, name FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+      `SELECT id, name, type FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
       [warehouseId, req.user.merchantId]
     );
     if (boutique.rows.length === 0) {
       return res.status(404).json({ error: 'Boutique introuvable.' });
+    }
+    if (boutique.rows[0].type === 'depot') {
+      const membre = await pool.query(
+        `SELECT role FROM users WHERE id = $1 AND merchant_id = $2 AND role != 'manager'`,
+        [req.params.id, req.user.merchantId]
+      );
+      if (membre.rows[0] && ROLES_VENTE.includes(membre.rows[0].role)) {
+        return res.status(400).json({ error: MSG_DEPOT_RESERVE });
+      }
     }
 
     const result = await pool.query(
@@ -214,7 +232,7 @@ router.patch('/:id/warehouse', requireRole('manager'), async (req, res) => {
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'team_member_warehouse_changed',
-      description: `a assigné ${result.rows[0].full_name} à la boutique ${boutique.rows[0].name}`,
+      description: `a assigné ${result.rows[0].full_name} ${boutique.rows[0].type === 'depot' ? 'au dépôt' : 'à la boutique'} ${boutique.rows[0].name}`,
     });
 
     res.json(result.rows[0]);
@@ -281,6 +299,18 @@ router.patch('/:id/role', requireRole('manager'), async (req, res) => {
   }
 
   try {
+    // Un membre affecté à un dépôt ne peut pas passer à un rôle de vente.
+    if (ROLES_VENTE.includes(role)) {
+      const lieu = await pool.query(
+        `SELECT w.type FROM users u LEFT JOIN warehouses w ON w.id = u.warehouse_id
+         WHERE u.id = $1 AND u.merchant_id = $2 AND u.role != 'manager'`,
+        [req.params.id, req.user.merchantId]
+      );
+      if (lieu.rows[0]?.type === 'depot') {
+        return res.status(400).json({ error: "Ce membre est affecté à un dépôt (stockage uniquement) : affectez-le d'abord à une boutique pour lui donner un rôle de vente." });
+      }
+    }
+
     const result = await pool.query(
       `UPDATE users SET role = $1, visible_modules = NULL
        WHERE id = $2 AND merchant_id = $3 AND role != 'manager'
