@@ -4,7 +4,7 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
-const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
+const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, traitSeparateur } = require('../utils/pdfHelpers');
 const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 const { getSoldeActuel, LABEL_METHODE } = require('../utils/cashBalance');
 const { addLot } = require('../utils/lots');
@@ -57,6 +57,7 @@ async function resolveWarehouseId(req, dbClient, providedId) {
 
 // GET /products/pdf — catalogue produits en PDF (avant les routes /:id pour éviter tout conflit de route)
 router.get('/pdf', async (req, res) => {
+  let doc;
   try {
     let warehouseId;
     try {
@@ -89,7 +90,8 @@ router.get('/pdf', async (req, res) => {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="catalogue-produits-${new Date().toISOString().slice(0, 10)}.pdf"`);
 
-    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    doc = new PDFDocument({ margin: 50, size: 'A4' });
+    doc.on('error', (e) => console.error('pdfkit (catalogue) :', e));
     doc.pipe(res);
 
     let y = dessinerEntete(doc, {
@@ -133,7 +135,12 @@ router.get('/pdf', async (req, res) => {
 
     doc.end();
   } catch (err) {
-    console.error(err);
+    console.error('Erreur PDF catalogue produits :', err);
+    // Si le flux PDF a déjà commencé, on ne peut plus répondre en JSON :
+    // on coupe proprement, sinon pdfkit écrit dans une réponse fermée
+    // (ERR_STREAM_WRITE_AFTER_END) et fait planter tout le serveur.
+    if (doc) doc.destroy();
+    if (res.headersSent) return res.end();
     res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
   }
 });
@@ -236,6 +243,7 @@ router.get('/inventory-report/pdf', requireRole('manager', 'gerant'), async (req
   if (!from || !to) {
     return res.status(400).json({ error: 'La période (from/to) est requise.' });
   }
+  let doc;
   try {
     const rows = await calculerInventaireGeneral(req, { from, to, warehouseId });
     const merchantResult = await pool.query('SELECT business_name FROM merchants WHERE id = $1', [req.user.merchantId]);
@@ -244,7 +252,8 @@ router.get('/inventory-report/pdf', requireRole('manager', 'gerant'), async (req
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="inventaire-general-${from}-au-${to}.pdf"`);
 
-    const doc = new PDFDocument({ margin: 50, size: 'A4', layout: 'landscape' });
+    doc = new PDFDocument({ margin: 50, size: 'A4', layout: 'landscape' });
+    doc.on('error', (e) => console.error('pdfkit (inventaire) :', e));
     doc.pipe(res);
 
     const COLONNES = [
@@ -295,6 +304,10 @@ router.get('/inventory-report/pdf', requireRole('manager', 'gerant'), async (req
       y += 20;
     });
 
+    if (y > doc.page.height - 90) {
+      doc.addPage();
+      y = dessinerEnTete();
+    }
     traitSeparateur(doc, y + 4);
     y += 16;
     doc.font('Helvetica-Bold').fontSize(10).fillColor(COULEURS.encre);
@@ -304,8 +317,10 @@ router.get('/inventory-report/pdf', requireRole('manager', 'gerant'), async (req
 
     doc.end();
   } catch (err) {
+    console.error('Erreur PDF inventaire général :', err);
+    if (doc) doc.destroy();
+    if (res.headersSent) return res.end();
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error(err);
     res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
   }
 });

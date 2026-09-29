@@ -560,6 +560,7 @@ router.get('/movements/pdf', requireRole('manager', 'gerant'), async (req, res) 
   }
   const tous = method === 'tous';
   const tousCaissiers = !cashier || cashier === 'tous';
+  let doc;
   try {
     const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
     const merchantResult = await pool.query(`SELECT business_name FROM merchants WHERE id = $1`, [req.user.merchantId]);
@@ -573,7 +574,8 @@ router.get('/movements/pdf', requireRole('manager', 'gerant'), async (req, res) 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="releve-${method}-${from}-${to}.pdf"`);
 
-    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    doc = new PDFDocument({ margin: 50, size: 'A4' });
+    doc.on('error', (e) => console.error('pdfkit (relevé caisse) :', e));
     doc.pipe(res);
 
     const titre = tous ? 'Relevé de caisse — Tous les moyens' : `Relevé de caisse — ${LABEL_METHODE[method]}`;
@@ -638,8 +640,10 @@ router.get('/movements/pdf', requireRole('manager', 'gerant'), async (req, res) 
 
     doc.end();
   } catch (err) {
+    console.error('Erreur PDF relevé de caisse :', err);
+    if (doc) doc.destroy();
+    if (res.headersSent) return res.end();
     if (err.status) return res.status(err.status).json({ error: err.message });
-    console.error(err);
     res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
   }
 });
