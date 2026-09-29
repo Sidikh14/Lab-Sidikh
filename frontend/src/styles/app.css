@@ -577,7 +577,9 @@
 .barre-laterale {
   width: 230px;
   flex-shrink: 0;
-  background: var(--encre);
+  background-color: var(--encre);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44'%3E%3Cpath d='M22 3 L41 22 L22 41 L3 22 Z' fill='none' stroke='rgba(244,244,247,0.045)' stroke-width='1'/%3E%3C/svg%3E");
+  background-repeat: repeat;
   color: #f4f4f7;
   display: flex;
   flex-direction: column;
@@ -681,13 +683,8 @@
   flex: 1;
   padding: 32px 40px;
   max-width: 1080px;
-  background-image: repeating-linear-gradient(
-    135deg,
-    rgba(20, 21, 31, 0.025) 0px,
-    rgba(20, 21, 31, 0.025) 1px,
-    transparent 1px,
-    transparent 34px
-  );
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44'%3E%3Cpath d='M22 3 L41 22 L22 41 L3 22 Z' fill='none' stroke='rgba(20,21,31,0.05)' stroke-width='1'/%3E%3C/svg%3E");
+  background-repeat: repeat;
 }
 
 .entete-page {
@@ -715,7 +712,7 @@
   border: 1px solid var(--trait);
   border-radius: var(--rayon);
   box-shadow: var(--ombre-legere);
-  padding: 18px 20px;
+  padding: 14px 16px;
   transition: box-shadow var(--transition), transform var(--transition);
 }
 
@@ -725,15 +722,20 @@
 }
 
 .stat-icone {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
   background: var(--accent-clair);
   color: var(--accent);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
+}
+
+.stat-icone svg {
+  width: 14px;
+  height: 14px;
 }
 
 .stat .etiquette {
@@ -743,8 +745,8 @@
 
 .stat .valeur {
   font-family: var(--font-chiffres);
-  font-size: 25px;
-  font-weight: 800;
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .panneau {
