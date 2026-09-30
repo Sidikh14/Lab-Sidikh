@@ -1209,11 +1209,11 @@ router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), async (req, 
     );
 
     // Registre des destructions (affiché sur le tableau de bord pharmacie).
-    // Valeur = quantité × prix de vente, comme l'alerte "lots périmés".
+    // Valeur = quantité × prix de vente enregistré (unit_price), comme l'alerte "lots périmés".
     await client.query(
       `INSERT INTO lot_destructions
-         (merchant_id, warehouse_id, product_id, lot_id, product_name, lot_number, expiry_date, quantity, unit_price, lost_value, destroyed_by)
-       SELECT $1, $2, p.id, $3, p.name, $4, $5, $6::numeric, p.unit_price, $6::numeric * p.unit_price, $7
+         (merchant_id, warehouse_id, product_id, lot_id, lot_number, expiry_date, quantity, unit_price, destroyed_by)
+       SELECT $1, $2, p.id, $3, $4, $5, $6::numeric, p.unit_price, $7
        FROM products p WHERE p.id = $8 AND p.merchant_id = $1`,
       [req.user.merchantId, warehouseId, lot.id, lot.lot_number || null, lot.expiry_date, quantiteDetruite, req.user.id, req.params.id]
     );
@@ -1275,9 +1275,12 @@ router.get('/destructions', async (req, res) => {
   try {
     const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
     const liste = await pool.query(
-      `SELECT d.id, d.destroyed_at, d.product_name, d.lot_number, d.expiry_date,
-              d.quantity, d.lost_value, u.full_name AS destroyed_by_name
+      `SELECT d.id, d.destroyed_at, COALESCE(p.name, 'Produit supprimé') AS product_name,
+              d.lot_number, d.expiry_date, d.quantity,
+              (d.quantity * COALESCE(d.unit_price, 0)) AS lost_value,
+              u.full_name AS destroyed_by_name
        FROM lot_destructions d
+       LEFT JOIN products p ON p.id = d.product_id
        LEFT JOIN users u ON u.id = d.destroyed_by
        WHERE d.merchant_id = $1 AND d.warehouse_id = $2
        ORDER BY d.destroyed_at DESC
@@ -1285,7 +1288,7 @@ router.get('/destructions', async (req, res) => {
       [req.user.merchantId, warehouseId]
     );
     const totaux = await pool.query(
-      `SELECT COALESCE(SUM(quantity), 0) AS total_quantity, COALESCE(SUM(lost_value), 0) AS total_value
+      `SELECT COALESCE(SUM(quantity), 0) AS total_quantity, COALESCE(SUM(quantity * COALESCE(unit_price, 0)), 0) AS total_value
        FROM lot_destructions
        WHERE merchant_id = $1 AND warehouse_id = $2`,
       [req.user.merchantId, warehouseId]
