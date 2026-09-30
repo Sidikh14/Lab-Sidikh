@@ -103,34 +103,36 @@ router.get('/pdf', async (req, res) => {
 
     function entete() {
       y = dessinerEnteteTableau(doc, y, [
-        { texte: 'Produit', x: 56, largeur: 190 },
-        { texte: 'Référence', x: 250, largeur: 90 },
-        { texte: 'Prix', x: 345, largeur: 80, aligner: 'right' },
-        { texte: 'Stock', x: 435, largeur: 50, aligner: 'right' },
-        { texte: 'Statut', x: 495, largeur: 55 },
+        { texte: 'Produit', x: 58, largeur: 226 },
+        { texte: 'Référence', x: 290, largeur: 62 },
+        { texte: 'Prix', x: 356, largeur: 84, aligner: 'right' },
+        { texte: 'Stock', x: 444, largeur: 44, aligner: 'right' },
+        { texte: 'Statut', x: 496, largeur: 52 },
       ]);
     }
     entete();
 
     result.rows.forEach((p, index) => {
-      if (y > 760) {
+      // Le nom du produit peut passer sur 2 lignes : la hauteur de ligne
+      // s'adapte pour ne jamais couper un nom.
+      doc.font('Helvetica').fontSize(9.5);
+      const hauteurLigne = Math.max(22, doc.heightOfString(p.name, { width: 226 }) + 10);
+      if (y + hauteurLigne > 770) {
         doc.addPage();
         y = 50;
         entete();
       }
       if (index % 2 === 1) {
-        doc.rect(50, y, doc.page.width - 100, 20).fill(COULEURS.fondAlterne);
-        doc.fillColor(COULEURS.encre);
+        doc.rect(50, y, doc.page.width - 100, hauteurLigne).fill(COULEURS.fondAlterne);
       }
-      doc.fontSize(9.5);
-      doc.text(p.name, 56, y + 5, { width: 190 });
-      doc.fillColor(COULEURS.muted).text(p.sku || '—', 250, y + 5, { width: 90 });
-      doc.fillColor(COULEURS.encre).text(`${formatMontant(p.unit_price)} FCFA`, 345, y + 5, { width: 80, align: 'right' });
-      doc.text(p.is_weighted ? `${Number(p.quantity_in_stock).toFixed(1)} kg` : String(Math.round(p.quantity_in_stock)), 435, y + 5, { width: 50, align: 'right' });
-      doc.font(p.status === 'Rupture' ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5)
-        .text(p.status, 495, y + 6, { width: 55 });
+      doc.fillColor(COULEURS.encre).text(p.name, 58, y + 5, { width: 226 });
+      doc.fillColor(COULEURS.muted).text(p.sku || '—', 290, y + 5, { width: 62, height: 16, ellipsis: true });
+      doc.fillColor(COULEURS.encre).text(`${formatMontant(p.unit_price)} FCFA`, 356, y + 5, { width: 84, align: 'right' });
+      doc.text(p.is_weighted ? `${Number(p.quantity_in_stock).toFixed(1)} kg` : String(Math.round(p.quantity_in_stock)), 444, y + 5, { width: 44, align: 'right' });
+      doc.font(p.status === 'Rupture' ? 'Helvetica-Bold' : 'Helvetica')
+        .text(p.status, 496, y + 5, { width: 52 });
       doc.font('Helvetica');
-      y += 20;
+      y += hauteurLigne;
     });
 
     doc.end();
@@ -257,13 +259,13 @@ router.get('/inventory-report/pdf', requireRole('manager', 'gerant'), async (req
     doc.pipe(res);
 
     const COLONNES = [
-      { texte: 'Article', x: 50, largeur: 155 },
-      { texte: 'Stock actuel', x: 210, largeur: 70, aligner: 'right' },
-      { texte: 'Entrées', x: 285, largeur: 65, aligner: 'right' },
-      { texte: 'Sorties', x: 355, largeur: 65, aligner: 'right' },
-      { texte: 'Qté vendue', x: 425, largeur: 70, aligner: 'right' },
-      { texte: 'Chiffre d\u2019affaires', x: 500, largeur: 100, aligner: 'right' },
-      { texte: 'Marge', x: 605, largeur: 100, aligner: 'right' },
+      { texte: 'Article', x: 58, largeur: 246 },
+      { texte: 'Stock actuel', x: 308, largeur: 68, aligner: 'right' },
+      { texte: 'Entrées', x: 380, largeur: 62, aligner: 'right' },
+      { texte: 'Sorties', x: 446, largeur: 62, aligner: 'right' },
+      { texte: 'Qté vendue', x: 512, largeur: 68, aligner: 'right' },
+      { texte: 'Chiffre d\u2019affaires', x: 584, largeur: 102, aligner: 'right' },
+      { texte: 'Marge', x: 690, largeur: 96, aligner: 'right' },
     ];
 
     function dessinerEnTete() {
@@ -284,24 +286,26 @@ router.get('/inventory-report/pdf', requireRole('manager', 'gerant'), async (req
     let totalCA = 0;
     let totalMarge = 0;
     rows.forEach((r, index) => {
-      if (y > doc.page.height - 90) {
+      doc.font('Helvetica').fontSize(9);
+      const hauteurLigne = Math.max(22, doc.heightOfString(r.name, { width: 246 }) + 10);
+      if (y + hauteurLigne > doc.page.height - 90) {
         doc.addPage();
         y = dessinerEnTete();
       }
       if (index % 2 === 1) {
-        doc.rect(50, y, doc.page.width - 100, 20).fill(COULEURS.fondAlterne);
+        doc.rect(50, y, doc.page.width - 100, hauteurLigne).fill(COULEURS.fondAlterne);
       }
-      doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(9);
-      doc.text(r.name, 56, y + 6, { width: 150 });
-      doc.text(String(Math.round(r.stock_actuel)), 210, y + 6, { width: 70, align: 'right' });
-      doc.text(String(Math.round(r.entrees)), 285, y + 6, { width: 65, align: 'right' });
-      doc.text(String(Math.round(r.sorties)), 355, y + 6, { width: 65, align: 'right' });
-      doc.text(String(Math.round(r.quantite_vendue)), 425, y + 6, { width: 70, align: 'right' });
-      doc.text(formatMontant(r.chiffre_affaires), 500, y + 6, { width: 100, align: 'right' });
-      doc.text(formatMontant(r.marge), 605, y + 6, { width: 100, align: 'right' });
+      doc.fillColor(COULEURS.encre);
+      doc.text(r.name, 58, y + 5, { width: 246 });
+      doc.text(String(Math.round(r.stock_actuel)), 308, y + 5, { width: 68, align: 'right' });
+      doc.text(String(Math.round(r.entrees)), 380, y + 5, { width: 62, align: 'right' });
+      doc.text(String(Math.round(r.sorties)), 446, y + 5, { width: 62, align: 'right' });
+      doc.text(String(Math.round(r.quantite_vendue)), 512, y + 5, { width: 68, align: 'right' });
+      doc.text(formatMontant(r.chiffre_affaires), 584, y + 5, { width: 102, align: 'right' });
+      doc.text(formatMontant(r.marge), 690, y + 5, { width: 96, align: 'right' });
       totalCA += Number(r.chiffre_affaires);
       totalMarge += Number(r.marge);
-      y += 20;
+      y += hauteurLigne;
     });
 
     if (y > doc.page.height - 90) {
@@ -309,11 +313,11 @@ router.get('/inventory-report/pdf', requireRole('manager', 'gerant'), async (req
       y = dessinerEnTete();
     }
     traitSeparateur(doc, y + 4);
-    y += 16;
+    y += 14;
     doc.font('Helvetica-Bold').fontSize(10).fillColor(COULEURS.encre);
-    doc.text('TOTAL', 425, y, { width: 70, align: 'right' });
-    doc.text(formatMontant(totalCA), 500, y, { width: 100, align: 'right' });
-    doc.text(formatMontant(totalMarge), 605, y, { width: 100, align: 'right' });
+    doc.text('TOTAL', 512, y, { width: 68, align: 'right' });
+    doc.text(formatMontant(totalCA), 584, y, { width: 102, align: 'right' });
+    doc.text(formatMontant(totalMarge), 690, y, { width: 96, align: 'right' });
 
     doc.end();
   } catch (err) {

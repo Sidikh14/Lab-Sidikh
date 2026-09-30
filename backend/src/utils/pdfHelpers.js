@@ -2,46 +2,45 @@
 // (bons de commande, catalogue produits, inventaire, relevés de caisse,
 // journal d'activité…).
 //
-// Style : moderne et lisible — bande d'en-tête colorée, titres en gras,
-// tableaux à en-tête teinté et lignes alternées, pastilles de statut
-// colorées, filets très discrets. Une seule couleur d'accent (indigo) pour
-// rester sobre à l'impression ; le texte reste noir/gris foncé pour un
-// contraste maximal.
+// Style : sobre, sans aucune couleur (noir et gris uniquement), en Times New
+// Roman. Les polices Times standard des PDF (Times-Roman / Times-Bold…) sont
+// l'équivalent exact de Times New Roman (mêmes métriques) et n'exigent aucun
+// fichier de police à déployer.
 //
-// L'API (noms, paramètres, valeurs de retour) est identique à l'ancienne
-// version : les PDF existants gardent leur code et prennent le nouveau style.
+// Changement de police et de taille pour TOUS les PDF, sans toucher à leur
+// code : à la première utilisation d'un document, enregistrerPolices()
+//   - remplace les noms de police Helvetica* (utilisés partout dans le code
+//     existant) et 'Titre' par leur équivalent Times ;
+//   - agrandit toutes les tailles de texte de ECHELLE_TEXTE (Times est plus
+//     petit et plus étroit qu'Helvetica à taille égale).
+// Pour ajuster la taille des textes, modifier uniquement ECHELLE_TEXTE.
 
-const NOIR = '#1b1f2a';
-const GRIS = '#586174';
-const GRIS_CLAIR = '#8b93a5';
-const TRAIT = '#e4e8f0';
-const FOND_ALTERNE = '#f6f8fc';
+const NOIR = '#111111';
+const GRIS = '#555555';
+const GRIS_CLAIR = '#8a8a8a';
+const TRAIT = '#d4d4d4';
+const FOND_ALTERNE = '#f3f3f3';
 
-const ACCENT = '#4f46e5';
-const ACCENT_FONCE = '#312e81';
-const ACCENT_CLAIR = '#eef0ff';
-const TEXTE_SUR_BANDE = '#c7d2fe';
+const ECHELLE_TEXTE = 1.12;
 
-const DANGER = '#b91c1c';
-const DANGER_CLAIR = '#fee2e2';
-const AVERTISSEMENT = '#b45309';
-const AVERTISSEMENT_CLAIR = '#fef3c7';
-const SUCCES = '#15803d';
-const SUCCES_CLAIR = '#dcfce7';
-
-// Couleurs des pastilles de statut de stock (voir dessinerBadge).
-const BADGES_STATUT = {
-  Rupture: { texte: DANGER, fond: DANGER_CLAIR },
-  Faible: { texte: AVERTISSEMENT, fond: AVERTISSEMENT_CLAIR },
-  'En stock': { texte: SUCCES, fond: SUCCES_CLAIR },
+const POLICES = {
+  Helvetica: 'Times-Roman',
+  'Helvetica-Bold': 'Times-Bold',
+  'Helvetica-Oblique': 'Times-Italic',
+  'Helvetica-BoldOblique': 'Times-BoldItalic',
+  Titre: 'Times-Bold',
 };
 
-// La police 'Titre' est utilisée par certains PDF (totaux, titres). On la
-// mappe sur Helvetica-Bold : plus moderne qu'une serif, et plus aucun
-// fichier de police externe à déployer (l'ancienne Newsreader.ttf n'est plus
-// nécessaire).
 function enregistrerPolices(doc) {
-  doc.registerFont('Titre', 'Helvetica-Bold');
+  if (doc._styleTimes) return; // déjà appliqué à ce document
+  doc._styleTimes = true;
+
+  const fontOrigine = doc.font.bind(doc);
+  const fontSizeOrigine = doc.fontSize.bind(doc);
+  doc.font = (src, ...reste) => fontOrigine(POLICES[src] || src, ...reste);
+  doc.fontSize = (taille) => fontSizeOrigine(taille * ECHELLE_TEXTE);
+
+  doc.font('Times-Roman');
 }
 
 // Formate un montant avec un espace normal comme séparateur de milliers
@@ -53,10 +52,10 @@ function formatMontant(valeur) {
   return signe + String(Math.abs(entier)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
-// En-tête : bande colorée pleine largeur avec le nom du commerce (petites
-// capitales), le titre du document en grand et blanc, et une ligne de
-// sous-titre. Une ligne discrète d'informations légales (adresse / NINEA /
-// RCCM) s'affiche sous la bande si elle a été renseignée.
+// En-tête sobre : nom du commerce en petites capitales grises, titre du
+// document en grand gras, une ligne discrète d'informations légales
+// (NINEA/RCCM/adresse) alignée à droite si elle a été renseignée, un filet
+// fin en dessous.
 // `merchant` est optionnel : { ninea, rccm, address, ... } — permet aussi
 // d'activer le pied de page automatique sur les pages suivantes (voir
 // activerPiedDePageAuto).
@@ -65,36 +64,30 @@ function dessinerEntete(doc, { businessName, titre, sousTitre, merchant }) {
   enregistrerPolices(doc);
   const largeurPage = doc.page.width;
   const xTexte = 50;
-  const largeurTexte = largeurPage - 100;
 
-  doc.rect(0, 0, largeurPage, 112).fill(ACCENT_FONCE);
-  doc.rect(0, 112, largeurPage, 3).fill(ACCENT);
+  doc.fillColor(GRIS).font('Helvetica').fontSize(9)
+    .text((businessName || 'Commerce').toUpperCase(), xTexte, 46, { characterSpacing: 1 });
 
-  doc.fillColor(TEXTE_SUR_BANDE).font('Helvetica-Bold').fontSize(8)
-    .text((businessName || 'Commerce').toUpperCase(), xTexte, 30, {
-      width: largeurTexte, height: 11, ellipsis: true, characterSpacing: 1.2,
-    });
-
-  doc.fillColor('#ffffff').font('Titre').fontSize(24)
-    .text(titre || '', xTexte, 46, { width: largeurTexte, height: 30, ellipsis: true });
+  doc.fillColor(NOIR).font('Titre').fontSize(24)
+    .text(titre || '', xTexte, 62, { width: largeurPage - 100, height: 34, ellipsis: true });
 
   if (sousTitre) {
-    doc.fillColor(TEXTE_SUR_BANDE).font('Helvetica').fontSize(9)
-      .text(sousTitre, xTexte, 82, { width: largeurTexte, height: 24, ellipsis: true });
+    doc.fillColor(GRIS).font('Helvetica').fontSize(9)
+      .text(sousTitre, xTexte, 98, { width: largeurPage - 100, height: 16, ellipsis: true });
   }
 
-  let yContenu = 138;
   if (merchant && (merchant.ninea || merchant.rccm || merchant.address)) {
     const parts = [merchant.address, merchant.ninea && `NINEA ${merchant.ninea}`, merchant.rccm && `RCCM ${merchant.rccm}`].filter(Boolean);
     doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(7.5)
-      .text(parts.join(' · '), xTexte, 124, { width: largeurTexte, height: 10, ellipsis: true });
-    yContenu = 148;
+      .text(parts.join(' · '), 50, 46, { width: largeurPage - 100, height: 12, align: 'right', ellipsis: true });
   }
+
+  doc.moveTo(50, 122).lineTo(largeurPage - 50, 122).strokeColor(TRAIT).lineWidth(0.75).stroke();
 
   if (merchant) activerPiedDePageAuto(doc, merchant);
 
   doc.fillColor(NOIR).font('Helvetica');
-  return yContenu;
+  return 142;
 }
 
 // Pied de page professionnel : coordonnées bancaires / Mobile Money et
@@ -144,65 +137,29 @@ function activerPiedDePageAuto(doc, merchant) {
   });
 }
 
-// En-tête de tableau : bandeau arrondi teinté, libellés en petites capitales
-// gras de la couleur d'accent. Retourne l'ordonnée de la première ligne.
+// En-tête de tableau : simple filet, libellés en petites capitales grises.
 function dessinerEnteteTableau(doc, y, colonnes) {
   const largeurPage = doc.page.width;
-  doc.roundedRect(50, y - 4, largeurPage - 100, 22, 4).fill(ACCENT_CLAIR);
-  doc.fillColor(ACCENT_FONCE).font('Helvetica-Bold').fontSize(7.5);
+  doc.fillColor(GRIS).fontSize(8).font('Helvetica');
   colonnes.forEach((col) => {
-    doc.text(col.texte.toUpperCase(), col.x, y + 3, {
-      width: col.largeur, align: col.aligner || 'left', characterSpacing: 0.6, lineBreak: false,
-    });
+    doc.text(col.texte.toUpperCase(), col.x, y, { width: col.largeur, align: col.aligner || 'left', characterSpacing: 0.5, lineBreak: false });
   });
+  doc.moveTo(50, y + 17).lineTo(largeurPage - 50, y + 17).strokeColor(TRAIT).lineWidth(0.75).stroke();
   doc.fillColor(NOIR).font('Helvetica');
   return y + 26;
 }
 
-// Filet de séparation très discret entre deux blocs.
 function traitSeparateur(doc, y) {
   const largeurPage = doc.page.width;
-  doc.moveTo(50, y).lineTo(largeurPage - 50, y).strokeColor(TRAIT).lineWidth(0.6).stroke();
-}
-
-// Pastille colorée (statut de stock, etc.) : texte centré sur fond arrondi.
-// `couleurs` = { texte, fond } (voir BADGES_STATUT).
-function dessinerBadge(doc, { x, y, texte, largeur = 50, couleurs }) {
-  const c = couleurs || { texte: GRIS, fond: FOND_ALTERNE };
-  doc.roundedRect(x, y, largeur, 13, 6.5).fill(c.fond);
-  doc.fillColor(c.texte).font('Helvetica-Bold').fontSize(7)
-    .text(texte, x, y + 3.5, { width: largeur, align: 'center', lineBreak: false });
-  doc.fillColor(NOIR).font('Helvetica');
-}
-
-// Bandeau de total mis en valeur (fond teinté arrondi). Dessine seulement le
-// fond : le caller écrit ensuite ses libellés/valeurs par-dessus.
-function dessinerBandeTotal(doc, y, hauteur = 28) {
-  doc.roundedRect(50, y, doc.page.width - 100, hauteur, 5).fill(ACCENT_CLAIR);
-  doc.fillColor(ACCENT_FONCE).font('Helvetica-Bold');
+  doc.moveTo(50, y).lineTo(largeurPage - 50, y).strokeColor(TRAIT).lineWidth(0.75).stroke();
 }
 
 module.exports = {
-  COULEURS: {
-    encre: NOIR,
-    muted: GRIS,
-    mutedClair: GRIS_CLAIR,
-    bordure: TRAIT,
-    fondAlterne: FOND_ALTERNE,
-    accent: ACCENT,
-    accentFonce: ACCENT_FONCE,
-    accentClair: ACCENT_CLAIR,
-    danger: DANGER,
-    succes: SUCCES,
-    avertissement: AVERTISSEMENT,
-  },
-  BADGES_STATUT,
+  COULEURS: { encre: NOIR, muted: GRIS, mutedClair: GRIS_CLAIR, bordure: TRAIT, fondAlterne: FOND_ALTERNE },
   formatMontant,
   dessinerEntete,
   dessinerEnteteTableau,
   dessinerPiedDePage,
-  dessinerBadge,
-  dessinerBandeTotal,
   traitSeparateur,
   enregistrerPolices,
 };
