@@ -268,6 +268,13 @@ export function SettingsPage() {
             <p style={{ color: 'var(--encre-douce)' }}>Calcul…</p>
           ) : zakat ? (
             <>
+              <div className="tampon tampon-sarcelle" style={{ display: 'block', marginBottom: 20 }}>
+                Cycle en cours depuis le {new Date(zakat.cycleStart).toLocaleDateString('fr-FR')} —{' '}
+                {zakat.joursRestants} jour{zakat.joursRestants > 1 ? 's' : ''} avant la fin du hawl (
+                {zakat.dureeHawlJours} jours). Le calcul se met à jour en continu et se réinitialisera
+                automatiquement à cette échéance.
+              </div>
+
               <div className="ligne-stats" style={{ marginBottom: 24 }}>
                 <div className="stat">
                   <span className="etiquette">Valeur du stock</span>
@@ -297,6 +304,32 @@ export function SettingsPage() {
               <button type="button" className="btn" style={{ marginTop: 16 }} onClick={chargerZakat}>
                 Recalculer
               </button>
+
+              {zakat.historique.length > 0 && (
+                <div style={{ marginTop: 32 }}>
+                  <h2 style={{ fontSize: 15, marginBottom: 12 }}>Cycles précédents</h2>
+                  <table className="registre">
+                    <thead>
+                      <tr>
+                        <th>Du</th>
+                        <th>Au</th>
+                        <th>Base</th>
+                        <th>Zakat versée</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {zakat.historique.map((h, i) => (
+                        <tr key={i}>
+                          <td>{new Date(h.cycle_start).toLocaleDateString('fr-FR')}</td>
+                          <td>{new Date(h.closed_at).toLocaleDateString('fr-FR')}</td>
+                          <td className="chiffre">{Math.round(h.base).toLocaleString('fr-FR')} FCFA</td>
+                          <td className="chiffre">{Math.round(h.montant).toLocaleString('fr-FR')} FCFA</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </>
           ) : null}
         </>
