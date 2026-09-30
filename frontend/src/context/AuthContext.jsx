@@ -64,6 +64,11 @@ export function AuthProvider({ children }) {
   // thème par défaut puisque merchant redevient null).
   useEffect(() => {
     appliquerThemeSecteur(merchant?.sector);
+    // Mémorisé aussi pour la page statique /maintenance.html, qui s'habille
+    // aux couleurs du secteur. Volontairement conservé après déconnexion.
+    if (merchant?.sector) {
+      try { localStorage.setItem('secteurActif', merchant.sector); } catch { /* ignoré */ }
+    }
   }, [merchant?.sector]);
 
   // client.js déclenche cet événement quand le backend répond 401

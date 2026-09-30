@@ -13,6 +13,27 @@ function signalerSessionExpiree() {
   window.dispatchEvent(new CustomEvent('session-expired'));
 }
 
+// Le backend répond 503 + code "maintenance" quand le secteur du commerçant
+// est en maintenance. On mémorise ce qu'il faut à la page statique
+// /maintenance.html (secteur pour la couleur, URL de l'API pour savoir quand
+// revenir, message et heure de retour) puis on y redirige.
+function signalerMaintenance(body) {
+  try {
+    if (body?.sector) localStorage.setItem('secteurActif', body.sector);
+    localStorage.setItem('maintenanceInfo', JSON.stringify({
+      apiUrl: API_URL,
+      sector: body?.sector || null,
+      message: body?.message || null,
+      returnAt: body?.returnAt || null,
+    }));
+  } catch {
+    // localStorage indisponible : la page s'affichera avec ses valeurs par défaut.
+  }
+  if (!window.location.pathname.startsWith('/maintenance')) {
+    window.location.replace('/maintenance.html');
+  }
+}
+
 async function request(path, options = {}) {
   const token = getToken();
   const headers = {
@@ -24,6 +45,11 @@ async function request(path, options = {}) {
   const response = await fetch(`${API_URL}${path}`, { ...options, headers });
   const isJson = response.headers.get('content-type')?.includes('application/json');
   const body = isJson ? await response.json() : null;
+
+  if (response.status === 503 && body?.code === 'maintenance') {
+    signalerMaintenance(body);
+    throw new Error(body.error);
+  }
 
   if (response.status === 401) {
     signalerSessionExpiree();
@@ -52,6 +78,9 @@ async function previewFile(path) {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => null);
+    if (response.status === 503 && body?.code === 'maintenance') {
+      signalerMaintenance(body);
+    }
     throw new Error(body?.error || `Erreur ${response.status}`);
   }
   const blob = await response.blob();
@@ -73,6 +102,11 @@ async function requestFormData(path, formData) {
   });
   const isJson = response.headers.get('content-type')?.includes('application/json');
   const body = isJson ? await response.json() : null;
+
+  if (response.status === 503 && body?.code === 'maintenance') {
+    signalerMaintenance(body);
+    throw new Error(body.error);
+  }
 
   if (response.status === 401) {
     signalerSessionExpiree();
@@ -286,6 +320,11 @@ export const api = {
     request(`/admin/merchants/${id}/warehouse-limit`, { method: 'PATCH', body: JSON.stringify({ maxWarehouses }) }),
   deleteMerchant: (id) => request(`/admin/merchants/${id}`, { method: 'DELETE' }),
   getMerchantTeam: (id) => request(`/admin/merchants/${id}/users`),
+
+  // Maintenance par secteur (owner).
+  getMaintenance: () => request('/admin/maintenance'),
+  setMaintenance: (sector, data) =>
+    request(`/admin/maintenance/${sector}`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Import en masse de produits par l'owner, pour un commerçant choisi.
   getMerchantWarehouses: (id) => request(`/admin/merchants/${id}/warehouses`),

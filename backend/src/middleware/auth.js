@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const { getMaintenance, reponseMaintenance } = require('./maintenance');
 
 // Vérifie le token JWT et attache l'utilisateur (id, merchantId, role) à la requête.
 // Toutes les routes protégées passent par ce middleware : c'est lui qui garantit
@@ -21,7 +22,7 @@ async function authenticate(req, res, next) {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
 
     const result = await pool.query(
-      `SELECT u.is_active, u.warehouse_id, m.is_active AS merchant_is_active,
+      `SELECT u.is_active, u.warehouse_id, m.is_active AS merchant_is_active, m.sector AS merchant_sector,
               COALESCE((SELECT array_agg(uw.warehouse_id) FROM user_warehouses uw WHERE uw.user_id = u.id), '{}') AS warehouse_ids
        FROM users u
        LEFT JOIN merchants m ON m.id = u.merchant_id
@@ -35,6 +36,14 @@ async function authenticate(req, res, next) {
     }
     if (payload.role !== 'owner' && account.merchant_is_active === false) {
       return res.status(403).json({ error: 'Ce commerce a été suspendu. Contactez le support.' });
+    }
+
+    // Maintenance par secteur (pilotée depuis le panel owner) : les comptes
+    // du secteur concerné reçoivent un 503 "maintenance". L'owner n'a pas
+    // de commerçant, donc n'est jamais bloqué.
+    if (payload.role !== 'owner' && account.merchant_sector) {
+      const maintenance = await getMaintenance(account.merchant_sector);
+      if (maintenance.enabled) return reponseMaintenance(res, maintenance);
     }
 
     // Lieux d'affectation lus en base à chaque requête (et non dans le token,

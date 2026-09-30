@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const { requireAdminKey } = require('../middleware/adminKey');
+const { getMaintenance, reponseMaintenance } = require('../middleware/maintenance');
 const { CATEGORIES_PHARMACIE } = require('../data/pharmacieCatalogue');
 const { CATEGORIES_ELECTROMENAGER } = require('../data/electromenagerCategories');
 
@@ -165,6 +166,13 @@ router.post('/login', async (req, res) => {
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
       return res.status(401).json({ error: 'Identifiants incorrects.' });
+    }
+
+    // Secteur en maintenance : connexion refusée (après vérification du mot
+    // de passe, pour ne rien révéler à quelqu'un qui ne le connaît pas).
+    if (user.role !== 'owner' && user.sector) {
+      const maintenance = await getMaintenance(user.sector);
+      if (maintenance.enabled) return reponseMaintenance(res, maintenance);
     }
 
     await pool.query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);

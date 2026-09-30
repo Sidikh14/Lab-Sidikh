@@ -7,6 +7,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { addLot } = require('../utils/lots');
+const { invalidateMaintenanceCache } = require('../middleware/maintenance');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -502,6 +503,59 @@ router.post('/merchants/:id/products-import', upload.single('file'), async (req,
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Erreur lors de l'import du fichier." });
+  }
+});
+
+// GET /admin/maintenance — état de maintenance des 4 secteurs.
+router.get('/maintenance', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT sector, is_enabled, message, return_at, updated_at
+       FROM maintenance_secteurs ORDER BY sector`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors de la récupération de l'état de maintenance." });
+  }
+});
+
+// PUT /admin/maintenance/:sector — active/désactive la maintenance d'un
+// secteur, avec message et heure de retour facultatifs. Les utilisateurs du
+// secteur sont bloqués dans les ~10 secondes (durée du cache mémoire).
+router.put('/maintenance/:sector', async (req, res) => {
+  const { sector } = req.params;
+  const SECTEURS = ['grossiste', 'pharmacie', 'electromenager', 'textile'];
+  if (!SECTEURS.includes(sector)) {
+    return res.status(400).json({ error: 'Secteur invalide.' });
+  }
+  const { isEnabled, message, returnAt } = req.body;
+  if (typeof isEnabled !== 'boolean') {
+    return res.status(400).json({ error: 'isEnabled doit être un booléen.' });
+  }
+  const messageNettoye = typeof message === 'string' && message.trim() ? message.trim().slice(0, 300) : null;
+  let retour = null;
+  if (returnAt) {
+    retour = new Date(returnAt);
+    if (Number.isNaN(retour.getTime())) {
+      return res.status(400).json({ error: 'Heure de retour invalide.' });
+    }
+  }
+  try {
+    const result = await pool.query(
+      `INSERT INTO maintenance_secteurs (sector, is_enabled, message, return_at, updated_at)
+       VALUES ($1::business_sector, $2, $3, $4, now())
+       ON CONFLICT (sector) DO UPDATE
+         SET is_enabled = EXCLUDED.is_enabled, message = EXCLUDED.message,
+             return_at = EXCLUDED.return_at, updated_at = now()
+       RETURNING sector, is_enabled, message, return_at`,
+      [sector, isEnabled, messageNettoye, retour]
+    );
+    invalidateMaintenanceCache();
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la mise à jour de la maintenance.' });
   }
 });
 

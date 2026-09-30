@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { MaintenancePanel } from './MaintenancePanel';
 
 // Page réservée au propriétaire de la plateforme (rôle "owner"). Indépendante
 // du layout commerçant habituel (pas de Sidebar) puisqu'un owner n'a pas de
@@ -273,6 +274,8 @@ export function AdminPage() {
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
+
+      <MaintenancePanel />
 
       <div className="barre-filtres" style={{ marginBottom: 20 }}>
         <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
