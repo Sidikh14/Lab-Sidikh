@@ -1208,6 +1208,16 @@ router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), async (req, 
       [quantiteDetruite, req.params.id, warehouseId]
     );
 
+    // Registre des destructions (affiché sur le tableau de bord pharmacie).
+    // Valeur = quantité × prix de vente, comme l'alerte "lots périmés".
+    await client.query(
+      `INSERT INTO lot_destructions
+         (merchant_id, warehouse_id, product_id, lot_id, product_name, lot_number, expiry_date, quantity, unit_price, lost_value, destroyed_by)
+       SELECT $1, $2, p.id, $3, p.name, $4, $5, $6::numeric, p.unit_price, $6::numeric * p.unit_price, $7
+       FROM products p WHERE p.id = $8 AND p.merchant_id = $1`,
+      [req.user.merchantId, warehouseId, lot.id, lot.lot_number || null, lot.expiry_date, quantiteDetruite, req.user.id, req.params.id]
+    );
+
     await client.query(
       `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
        VALUES ($1, $2, $3, 'ajustement', $4, $5, $6)`,
@@ -1232,6 +1242,66 @@ router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), async (req, 
 // (princeps <-> génériques) du commerçant. Chargé une fois côté frontend et
 // croisé avec la liste des produits déjà en mémoire (statut/stock par
 // boutique) : pas de requête supplémentaire par produit.
+// GET /products/expired-lots — lots DÉJÀ périmés encore en stock (quantité > 0),
+// pour l'alerte du tableau de bord pharmacie. Chaque lot peut être détruit via
+// DELETE /products/:id/lots/:lotId.
+router.get('/expired-lots', async (req, res) => {
+  try {
+    const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
+    const result = await pool.query(
+      `SELECT l.id AS lot_id, l.lot_number, l.expiry_date, l.quantity,
+              p.id AS product_id, p.name AS product_name, p.unit_price,
+              (CURRENT_DATE - l.expiry_date) AS days_expired
+       FROM product_lots l
+       JOIN products p ON p.id = l.product_id
+       WHERE l.merchant_id = $1 AND l.warehouse_id = $2
+         AND l.quantity > 0 AND l.expiry_date < CURRENT_DATE
+       ORDER BY l.expiry_date ASC, p.name`,
+      [req.user.merchantId, warehouseId]
+    );
+    const lots = result.rows;
+    const totalValue = lots.reduce((somme, l) => somme + Number(l.quantity) * Number(l.unit_price), 0);
+    res.json({ count: lots.length, totalValue, lots });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des lots périmés.' });
+  }
+});
+
+// GET /products/destructions — registre des lots périmés détruits (les 100
+// plus récents) avec les totaux sur toutes les destructions du lieu.
+router.get('/destructions', async (req, res) => {
+  try {
+    const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
+    const liste = await pool.query(
+      `SELECT d.id, d.destroyed_at, d.product_name, d.lot_number, d.expiry_date,
+              d.quantity, d.lost_value, u.full_name AS destroyed_by_name
+       FROM lot_destructions d
+       LEFT JOIN users u ON u.id = d.destroyed_by
+       WHERE d.merchant_id = $1 AND d.warehouse_id = $2
+       ORDER BY d.destroyed_at DESC
+       LIMIT 100`,
+      [req.user.merchantId, warehouseId]
+    );
+    const totaux = await pool.query(
+      `SELECT COALESCE(SUM(quantity), 0) AS total_quantity, COALESCE(SUM(lost_value), 0) AS total_value
+       FROM lot_destructions
+       WHERE merchant_id = $1 AND warehouse_id = $2`,
+      [req.user.merchantId, warehouseId]
+    );
+    res.json({
+      totalQuantity: Number(totaux.rows[0].total_quantity),
+      totalValue: Number(totaux.rows[0].total_value),
+      destructions: liste.rows,
+    });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération du registre des destructions.' });
+  }
+});
+
 // GET /products/expiring-lots — tableau de bord des lots bientôt périmés,
 // répartis en 3 horizons (≤ 3 mois / ≤ 6 mois / ≤ 12 mois, exclusifs : un
 // lot n'apparaît que dans l'horizon le plus proche qui le couvre). Les
