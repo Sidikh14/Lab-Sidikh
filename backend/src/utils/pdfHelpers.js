@@ -1,19 +1,47 @@
 // Utilitaires partagés pour tous les PDF générés par l'application
-// (bons de commande, catalogue produits, journal d'activité).
-// Choix délibéré : aucune couleur, uniquement du noir/gris — une mise en
-// page éditoriale, sobre, avec une police de titre distinctive (Newsreader).
+// (bons de commande, catalogue produits, inventaire, relevés de caisse,
+// journal d'activité…).
+//
+// Style : moderne et lisible — bande d'en-tête colorée, titres en gras,
+// tableaux à en-tête teinté et lignes alternées, pastilles de statut
+// colorées, filets très discrets. Une seule couleur d'accent (indigo) pour
+// rester sobre à l'impression ; le texte reste noir/gris foncé pour un
+// contraste maximal.
+//
+// L'API (noms, paramètres, valeurs de retour) est identique à l'ancienne
+// version : les PDF existants gardent leur code et prennent le nouveau style.
 
-const path = require('path');
+const NOIR = '#1b1f2a';
+const GRIS = '#586174';
+const GRIS_CLAIR = '#8b93a5';
+const TRAIT = '#e4e8f0';
+const FOND_ALTERNE = '#f6f8fc';
 
-const NOIR = '#111111';
-const GRIS = '#6b6b6b';
-const GRIS_CLAIR = '#a3a3a3';
-const TRAIT = '#d9d9d9';
+const ACCENT = '#4f46e5';
+const ACCENT_FONCE = '#312e81';
+const ACCENT_CLAIR = '#eef0ff';
+const TEXTE_SUR_BANDE = '#c7d2fe';
 
-const POLICE_TITRE = path.join(__dirname, '..', 'assets', 'fonts', 'Newsreader.ttf');
+const DANGER = '#b91c1c';
+const DANGER_CLAIR = '#fee2e2';
+const AVERTISSEMENT = '#b45309';
+const AVERTISSEMENT_CLAIR = '#fef3c7';
+const SUCCES = '#15803d';
+const SUCCES_CLAIR = '#dcfce7';
 
+// Couleurs des pastilles de statut de stock (voir dessinerBadge).
+const BADGES_STATUT = {
+  Rupture: { texte: DANGER, fond: DANGER_CLAIR },
+  Faible: { texte: AVERTISSEMENT, fond: AVERTISSEMENT_CLAIR },
+  'En stock': { texte: SUCCES, fond: SUCCES_CLAIR },
+};
+
+// La police 'Titre' est utilisée par certains PDF (totaux, titres). On la
+// mappe sur Helvetica-Bold : plus moderne qu'une serif, et plus aucun
+// fichier de police externe à déployer (l'ancienne Newsreader.ttf n'est plus
+// nécessaire).
 function enregistrerPolices(doc) {
-  doc.registerFont('Titre', POLICE_TITRE);
+  doc.registerFont('Titre', 'Helvetica-Bold');
 }
 
 // Formate un montant avec un espace normal comme séparateur de milliers
@@ -25,39 +53,48 @@ function formatMontant(valeur) {
   return signe + String(Math.abs(entier)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
-// En-tête sobre : nom du commerce en petites capitales grises, titre du
-// document en grand, en police éditoriale, une ligne discrète d'informations
-// légales (NINEA/RCCM/adresse) alignée à droite si elle a été renseignée,
-// un filet fin en dessous.
+// En-tête : bande colorée pleine largeur avec le nom du commerce (petites
+// capitales), le titre du document en grand et blanc, et une ligne de
+// sous-titre. Une ligne discrète d'informations légales (adresse / NINEA /
+// RCCM) s'affiche sous la bande si elle a été renseignée.
 // `merchant` est optionnel : { ninea, rccm, address, ... } — permet aussi
 // d'activer le pied de page automatique sur les pages suivantes (voir
 // activerPiedDePageAuto).
+// Retourne l'ordonnée à laquelle le contenu peut commencer.
 function dessinerEntete(doc, { businessName, titre, sousTitre, merchant }) {
   enregistrerPolices(doc);
   const largeurPage = doc.page.width;
   const xTexte = 50;
+  const largeurTexte = largeurPage - 100;
 
-  doc.fillColor(GRIS).font('Helvetica').fontSize(9)
-    .text((businessName || 'Commerce').toUpperCase(), xTexte, 50, { characterSpacing: 1 });
+  doc.rect(0, 0, largeurPage, 112).fill(ACCENT_FONCE);
+  doc.rect(0, 112, largeurPage, 3).fill(ACCENT);
 
-  doc.fillColor(NOIR).font('Titre').fontSize(26).text(titre, xTexte, 66);
+  doc.fillColor(TEXTE_SUR_BANDE).font('Helvetica-Bold').fontSize(8)
+    .text((businessName || 'Commerce').toUpperCase(), xTexte, 30, {
+      width: largeurTexte, height: 11, ellipsis: true, characterSpacing: 1.2,
+    });
+
+  doc.fillColor('#ffffff').font('Titre').fontSize(24)
+    .text(titre || '', xTexte, 46, { width: largeurTexte, height: 30, ellipsis: true });
 
   if (sousTitre) {
-    doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(9).text(sousTitre, xTexte, 98);
+    doc.fillColor(TEXTE_SUR_BANDE).font('Helvetica').fontSize(9)
+      .text(sousTitre, xTexte, 82, { width: largeurTexte, height: 24, ellipsis: true });
   }
 
+  let yContenu = 138;
   if (merchant && (merchant.ninea || merchant.rccm || merchant.address)) {
     const parts = [merchant.address, merchant.ninea && `NINEA ${merchant.ninea}`, merchant.rccm && `RCCM ${merchant.rccm}`].filter(Boolean);
     doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(7.5)
-      .text(parts.join(' · '), 50, 50, { width: largeurPage - 100, align: 'right' });
+      .text(parts.join(' · '), xTexte, 124, { width: largeurTexte, height: 10, ellipsis: true });
+    yContenu = 148;
   }
-
-  doc.moveTo(50, 122).lineTo(largeurPage - 50, 122).strokeColor(TRAIT).lineWidth(0.75).stroke();
 
   if (merchant) activerPiedDePageAuto(doc, merchant);
 
   doc.fillColor(NOIR).font('Helvetica');
-  return 142;
+  return yContenu;
 }
 
 // Pied de page professionnel : coordonnées bancaires / Mobile Money et
@@ -107,29 +144,65 @@ function activerPiedDePageAuto(doc, merchant) {
   });
 }
 
-// En-tête de tableau : simple filet, libellés en petites capitales grises.
+// En-tête de tableau : bandeau arrondi teinté, libellés en petites capitales
+// gras de la couleur d'accent. Retourne l'ordonnée de la première ligne.
 function dessinerEnteteTableau(doc, y, colonnes) {
   const largeurPage = doc.page.width;
-  doc.fillColor(GRIS).fontSize(8).font('Helvetica');
+  doc.roundedRect(50, y - 4, largeurPage - 100, 22, 4).fill(ACCENT_CLAIR);
+  doc.fillColor(ACCENT_FONCE).font('Helvetica-Bold').fontSize(7.5);
   colonnes.forEach((col) => {
-    doc.text(col.texte.toUpperCase(), col.x, y, { width: col.largeur, align: col.aligner || 'left', characterSpacing: 0.5 });
+    doc.text(col.texte.toUpperCase(), col.x, y + 3, {
+      width: col.largeur, align: col.aligner || 'left', characterSpacing: 0.6, lineBreak: false,
+    });
   });
-  doc.moveTo(50, y + 16).lineTo(largeurPage - 50, y + 16).strokeColor(TRAIT).lineWidth(0.75).stroke();
   doc.fillColor(NOIR).font('Helvetica');
-  return y + 24;
+  return y + 26;
 }
 
+// Filet de séparation très discret entre deux blocs.
 function traitSeparateur(doc, y) {
   const largeurPage = doc.page.width;
-  doc.moveTo(50, y).lineTo(largeurPage - 50, y).strokeColor(TRAIT).lineWidth(0.75).stroke();
+  doc.moveTo(50, y).lineTo(largeurPage - 50, y).strokeColor(TRAIT).lineWidth(0.6).stroke();
+}
+
+// Pastille colorée (statut de stock, etc.) : texte centré sur fond arrondi.
+// `couleurs` = { texte, fond } (voir BADGES_STATUT).
+function dessinerBadge(doc, { x, y, texte, largeur = 50, couleurs }) {
+  const c = couleurs || { texte: GRIS, fond: FOND_ALTERNE };
+  doc.roundedRect(x, y, largeur, 13, 6.5).fill(c.fond);
+  doc.fillColor(c.texte).font('Helvetica-Bold').fontSize(7)
+    .text(texte, x, y + 3.5, { width: largeur, align: 'center', lineBreak: false });
+  doc.fillColor(NOIR).font('Helvetica');
+}
+
+// Bandeau de total mis en valeur (fond teinté arrondi). Dessine seulement le
+// fond : le caller écrit ensuite ses libellés/valeurs par-dessus.
+function dessinerBandeTotal(doc, y, hauteur = 28) {
+  doc.roundedRect(50, y, doc.page.width - 100, hauteur, 5).fill(ACCENT_CLAIR);
+  doc.fillColor(ACCENT_FONCE).font('Helvetica-Bold');
 }
 
 module.exports = {
-  COULEURS: { encre: NOIR, muted: GRIS, mutedClair: GRIS_CLAIR, bordure: TRAIT, fondAlterne: '#f6f6f6' },
+  COULEURS: {
+    encre: NOIR,
+    muted: GRIS,
+    mutedClair: GRIS_CLAIR,
+    bordure: TRAIT,
+    fondAlterne: FOND_ALTERNE,
+    accent: ACCENT,
+    accentFonce: ACCENT_FONCE,
+    accentClair: ACCENT_CLAIR,
+    danger: DANGER,
+    succes: SUCCES,
+    avertissement: AVERTISSEMENT,
+  },
+  BADGES_STATUT,
   formatMontant,
   dessinerEntete,
   dessinerEnteteTableau,
   dessinerPiedDePage,
+  dessinerBadge,
+  dessinerBandeTotal,
   traitSeparateur,
   enregistrerPolices,
 };
