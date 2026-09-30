@@ -27,6 +27,7 @@ const prescriptionsRoutes = require('./routes/prescriptions.routes');
 const returnsRoutes = require('./routes/returns.routes');
 const payrollRoutes = require('./routes/payroll.routes');
 const insurersRoutes = require('./routes/insurers.routes');
+const zakatRoutes = require('./routes/zakat.routes');
 
 const app = express();
 
@@ -71,6 +72,7 @@ app.use('/prescriptions', prescriptionsRoutes);
 app.use('/returns', returnsRoutes);
 app.use('/payroll', payrollRoutes);
 app.use('/insurers', insurersRoutes);
+app.use('/zakat', zakatRoutes);
 
 // Gestion des routes inconnues
 app.use((req, res) => {

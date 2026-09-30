@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+
+const SECTEURS_ZAKAT = ['grossiste', 'electromenager'];
 
 function IconEntreprise() {
   return (
@@ -24,6 +27,10 @@ function fichierVersBase64(fichier) {
 }
 
 export function SettingsPage() {
+  const { merchant } = useAuth();
+  const voitZakat = SECTEURS_ZAKAT.includes(merchant?.sector);
+  const [onglet, setOnglet] = useState('informations');
+
   const [profil, setProfil] = useState(null);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
@@ -31,6 +38,25 @@ export function SettingsPage() {
   const [enregistrement, setEnregistrement] = useState(false);
   const [nouveauLogo, setNouveauLogo] = useState(null); // data URI en attente d'envoi
   const [apercuLogo, setApercuLogo] = useState(null);
+
+  const [zakat, setZakat] = useState(null);
+  const [chargementZakat, setChargementZakat] = useState(false);
+  const [erreurZakat, setErreurZakat] = useState('');
+
+  function chargerZakat() {
+    setChargementZakat(true);
+    setErreurZakat('');
+    api
+      .getZakat()
+      .then(setZakat)
+      .catch((err) => setErreurZakat(err.message))
+      .finally(() => setChargementZakat(false));
+  }
+
+  useEffect(() => {
+    if (onglet === 'zakat' && voitZakat && !zakat) chargerZakat();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onglet]);
 
   function charger() {
     setChargement(true);
@@ -100,6 +126,19 @@ export function SettingsPage() {
         <h1>Entreprise</h1>
       </div>
 
+      {voitZakat && (
+        <div className="onglets">
+          <button className={onglet === 'informations' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('informations')}>
+            Informations
+          </button>
+          <button className={onglet === 'zakat' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('zakat')}>
+            Zakat
+          </button>
+        </div>
+      )}
+
+      {onglet === 'informations' && (
+        <>
       <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 20, maxWidth: 640 }}>
         Ces informations apparaissent automatiquement sur les factures (logo, NINEA, RCCM, adresse en
         entête ; coordonnées bancaires, Mobile Money et conditions de règlement en pied de page) pour
@@ -212,6 +251,55 @@ export function SettingsPage() {
             {enregistrement ? 'Enregistrement…' : 'Enregistrer'}
           </button>
         </form>
+      )}
+        </>
+      )}
+
+      {onglet === 'zakat' && voitZakat && (
+        <>
+          <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 20, maxWidth: 640 }}>
+            Zakat sur les biens de commerce (zakat al-tijara) : 2,5 % de la valeur du stock, augmentée des
+            créances clients non réglées et diminuée des dettes fournisseurs non réglées.
+          </p>
+
+          {erreurZakat && <div className="erreur">{erreurZakat}</div>}
+
+          {chargementZakat ? (
+            <p style={{ color: 'var(--encre-douce)' }}>Calcul…</p>
+          ) : zakat ? (
+            <>
+              <div className="ligne-stats" style={{ marginBottom: 24 }}>
+                <div className="stat">
+                  <span className="etiquette">Valeur du stock</span>
+                  <span className="valeur">{Math.round(zakat.valeurStock).toLocaleString('fr-FR')} FCFA</span>
+                </div>
+                <div className="stat">
+                  <span className="etiquette">Créances clients</span>
+                  <span className="valeur">{Math.round(zakat.creancesClients).toLocaleString('fr-FR')} FCFA</span>
+                </div>
+                <div className="stat">
+                  <span className="etiquette">Dettes fournisseurs</span>
+                  <span className="valeur">− {Math.round(zakat.dettesFournisseurs).toLocaleString('fr-FR')} FCFA</span>
+                </div>
+              </div>
+
+              <div className="modale" style={{ maxWidth: 420, padding: 20 }}>
+                <p className="etiquette" style={{ marginBottom: 6 }}>Base zakatable</p>
+                <p style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>
+                  {Math.round(zakat.base).toLocaleString('fr-FR')} FCFA
+                </p>
+                <p className="etiquette" style={{ marginBottom: 6 }}>Zakat à verser (2,5 %)</p>
+                <p style={{ fontSize: 26, fontWeight: 800, color: 'var(--accent)' }}>
+                  {Math.round(zakat.montant).toLocaleString('fr-FR')} FCFA
+                </p>
+              </div>
+
+              <button type="button" className="btn" style={{ marginTop: 16 }} onClick={chargerZakat}>
+                Recalculer
+              </button>
+            </>
+          ) : null}
+        </>
       )}
     </>
   );
