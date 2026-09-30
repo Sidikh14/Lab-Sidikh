@@ -7,6 +7,14 @@ import { ActiviteListe, initiales, couleurPour } from '../components/ActiviteLis
 import { ModaleEncaissement } from '../components/ModaleEncaissement';
 import { useLiveEvent } from '../offline/liveEvents';
 
+// Quantités : la base renvoie NUMERIC(12,3) sous forme de texte ("12.000").
+// On retire les décimales inutiles ("12"), et on garde une vraie décimale pour
+// un produit vendu au poids ("2.500" devient "2,5").
+function formaterQuantite(valeur) {
+  const n = Number(valeur);
+  return Number.isFinite(n) ? String(n).replace('.', ',') : '0';
+}
+
 function IconValeur() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -409,39 +417,15 @@ export function DashboardPage() {
       <div className="entete-page">
         <h1>Pilotage</h1>
         {estManager && warehouses.length > 0 && (
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '5px 10px 5px 11px',
-              borderRadius: 999,
-              border: '1px solid var(--trait)',
-              background: 'var(--accent-clair)',
-            }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" style={{ flexShrink: 0 }}>
-              <path d="M3 9l1.5-5h15L21 9" />
-              <path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" />
-              <path d="M9 20v-6h6v6" />
-            </svg>
-            <select
-              value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
-              style={{
-                border: 'none',
-                background: 'transparent',
-                fontSize: 13,
-                fontWeight: 600,
-                color: 'var(--accent)',
-                outline: 'none',
-                cursor: 'pointer',
-                appearance: 'none',
-                WebkitAppearance: 'none',
-                padding: 0,
-                maxWidth: 130,
-              }}
-            >
+          <div className="selecteur-boutique">
+            <span className="selecteur-boutique-icone">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 9l1.5-5h15L21 9" />
+                <path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" />
+                <path d="M9 20v-6h6v6" />
+              </svg>
+            </span>
+            <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
               {warehouses.filter((w) => w.is_active).map((w) => (
                 <option key={w.id} value={w.id}>{w.name}</option>
               ))}
@@ -725,7 +709,7 @@ export function DashboardPage() {
                       </span>
                       <div style={{ minWidth: 0, flex: 1 }}>
                         <p className="carte-a-encaisser-numero">{p.name}</p>
-                        <p className="carte-a-encaisser-client">{p.quantity_in_stock} en stock</p>
+                        <p className="carte-a-encaisser-client">{formaterQuantite(p.quantity_in_stock)} en stock</p>
                       </div>
                       <StatusBadge status={p.status} />
                     </div>
@@ -1009,7 +993,7 @@ export function DashboardPage() {
                     {commandeDetail.items.map((it) => (
                       <tr key={it.id}>
                         <td>{it.product_name}</td>
-                        <td className="chiffre">{it.quantity}</td>
+                        <td className="chiffre">{formaterQuantite(it.quantity)}</td>
                         <td className="chiffre">{Math.round(it.line_total).toLocaleString('fr-FR')} FCFA</td>
                       </tr>
                     ))}

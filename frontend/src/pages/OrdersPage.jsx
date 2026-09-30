@@ -216,9 +216,7 @@ export function OrdersPage() {
   // autres rôles sont assignés à la leur, le backend l'applique tout seul).
   // Même mémorisation locale que StockPage, pour rester cohérent d'une page à l'autre.
   const [warehouses, setWarehouses] = useState([]);
-  // Clé propre à la caisse : la page Stock peut être sur un dépôt (pas de vente),
-  // ce qui ne doit pas écraser la boutique de vente choisie ici.
-  const [warehouseId, setWarehouseId] = useState(() => (estManager ? localStorage.getItem('boutiqueVenteId') || '' : ''));
+  const [warehouseId, setWarehouseId] = useState(() => (estManager ? localStorage.getItem('boutiqueActiveId') || '' : ''));
   const [chargementBoutiques, setChargementBoutiques] = useState(estManager);
 
   useEffect(() => {
@@ -226,8 +224,7 @@ export function OrdersPage() {
     api.getWarehouses()
       .then((liste) => {
         setWarehouses(liste);
-        // Les dépôts ne vendent pas : seules les boutiques sont proposées.
-        const actives = liste.filter((w) => w.is_active && w.type !== 'depot');
+        const actives = liste.filter((w) => w.is_active);
         setWarehouseId((avant) => {
           if (avant && actives.some((w) => w.id === avant)) return avant;
           return actives[0]?.id || '';
@@ -238,7 +235,7 @@ export function OrdersPage() {
   }, [estManager]);
 
   useEffect(() => {
-    if (estManager && warehouseId) localStorage.setItem('boutiqueVenteId', warehouseId);
+    if (estManager && warehouseId) localStorage.setItem('boutiqueActiveId', warehouseId);
   }, [estManager, warehouseId]);
 
   const [rechercheCaisse, setRechercheCaisse] = useState('');
@@ -795,15 +792,9 @@ export function OrdersPage() {
 
   const apercuCaisse = useMemo(() => {
     const sousTotal = lignesPanier.reduce((sum, l) => sum + l.option.price * l.quantity, 0);
-    // TVA uniquement sur les lignes dont le produit est soumis à la TVA
-    // (même règle que le backend, tous secteurs).
-    const baseTaxable = lignesPanier.reduce(
-      (sum, l) => (l.produit.tva_applicable === false ? sum : sum + l.option.price * l.quantity),
-      0
-    );
-    const tva = Math.round(baseTaxable * 0.18);
+    const tva = tvaApplicable ? Math.round(sousTotal * 0.18) : 0;
     return { sousTotal, tva, total: sousTotal + tva };
-  }, [lignesPanier]);
+  }, [lignesPanier, tvaApplicable]);
 
   const necessiteOrdonnance = estPharmacie && lignesPanier.some((l) => l.produit.requires_prescription);
 
@@ -980,41 +971,17 @@ export function OrdersPage() {
     <>
       <div className="entete-page">
         <h1>Ventes & caisse</h1>
-        {estManager && warehouses.some((w) => w.type !== 'depot') && (
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: '5px 10px 5px 11px',
-              borderRadius: 999,
-              border: '1px solid var(--trait)',
-              background: 'var(--accent-clair)',
-            }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" style={{ flexShrink: 0 }}>
-              <path d="M3 9l1.5-5h15L21 9" />
-              <path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" />
-              <path d="M9 20v-6h6v6" />
-            </svg>
-            <select
-              value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
-              style={{
-                border: 'none',
-                background: 'transparent',
-                fontSize: 13,
-                fontWeight: 600,
-                color: 'var(--accent)',
-                outline: 'none',
-                cursor: 'pointer',
-                appearance: 'none',
-                WebkitAppearance: 'none',
-                padding: 0,
-                maxWidth: 130,
-              }}
-            >
-              {warehouses.filter((w) => w.is_active && w.type !== 'depot').map((w) => (
+        {estManager && warehouses.length > 0 && (
+          <div className="selecteur-boutique">
+            <span className="selecteur-boutique-icone">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 9l1.5-5h15L21 9" />
+                <path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" />
+                <path d="M9 20v-6h6v6" />
+              </svg>
+            </span>
+            <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
+              {warehouses.filter((w) => w.is_active).map((w) => (
                 <option key={w.id} value={w.id}>{w.name}</option>
               ))}
             </select>
@@ -1022,7 +989,7 @@ export function OrdersPage() {
         )}
       </div>
 
-      {estManager && !chargementBoutiques && !warehouses.some((w) => w.type !== 'depot') && (
+      {estManager && !chargementBoutiques && warehouses.length === 0 && (
         <p className="etat-vide">Aucune {secteurConfig.libelleBoutique.toLowerCase()} n'a encore été créée. Créez-en une avant d'enregistrer des ventes.</p>
       )}
 
@@ -1226,14 +1193,17 @@ export function OrdersPage() {
               )}
             </div>
 
-            {/* La TVA est réglée produit par produit dans le Stock (produits exonérés). */}
+            <label className="case-a-cocher" style={{ margin: '12px 0' }}>
+              <input type="checkbox" checked={tvaApplicable} onChange={(e) => setTvaApplicable(e.target.checked)} />
+              Vente avec TVA (18 %)
+            </label>
 
             <div className="ticket-totaux">
               <div className="ticket-total-ligne">
                 <span>Sous-total</span>
                 <span className="chiffre">{Math.round(apercuCaisse.sousTotal).toLocaleString('fr-FR')}</span>
               </div>
-              {apercuCaisse.tva > 0 && (
+              {tvaApplicable && (
                 <div className="ticket-total-ligne">
                   <span>TVA (18 %)</span>
                   <span className="chiffre">{Math.round(apercuCaisse.tva).toLocaleString('fr-FR')}</span>

@@ -59,42 +59,51 @@ export function Topbar({ onOuvrirMenu }) {
 
   return (
     <header className="barre-haut">
-      <button type="button" className="bouton-menu-mobile" onClick={onOuvrirMenu} aria-label="Ouvrir le menu">
-        <IconMenu />
-      </button>
-      <span className="barre-haut-commerce">{merchant?.businessName}</span>
-
-      <form className="barre-haut-recherche" onSubmit={handleRecherche}>
-        <IconRecherche />
-        <input
-          type="text"
-          placeholder="Rechercher un produit…"
-          value={recherche}
-          onChange={(e) => setRecherche(e.target.value)}
-        />
-      </form>
-
-      <button
-        type="button"
-        className="barre-haut-cloche"
-        onClick={() => navigate('/')}
-        aria-label={`${enRupture} produit(s) en rupture`}
-      >
-        <IconCloche />
-        {enRupture > 0 && <span className="barre-haut-badge">{enRupture}</span>}
-      </button>
-
-      <div className="barre-haut-avatar-zone">
-        <button type="button" className="avatar avatar--bouton" onClick={() => setMenuOuvert((v) => !v)}>
-          {initiales}
+      <div className="barre-haut-gauche">
+        <button type="button" className="bouton-menu-mobile" onClick={onOuvrirMenu} aria-label="Ouvrir le menu">
+          <IconMenu />
         </button>
-        {menuOuvert && (
-          <div className="barre-haut-menu" onMouseLeave={() => setMenuOuvert(false)}>
-            <p className="barre-haut-menu-nom">{user?.fullName}</p>
-            <p className="barre-haut-menu-role">{user?.role}</p>
-            <button type="button" onClick={logout}>Se déconnecter</button>
-          </div>
-        )}
+      </div>
+
+      <div className="barre-haut-marque">
+        <span className="barre-haut-trait" aria-hidden="true" />
+        <span className="barre-haut-commerce">{merchant?.businessName}</span>
+        <span className="barre-haut-trait" aria-hidden="true" />
+      </div>
+
+      <div className="barre-haut-droite">
+        <form className="barre-haut-recherche" onSubmit={handleRecherche}>
+          <IconRecherche />
+          <input
+            type="text"
+            placeholder="Rechercher un produit…"
+            value={recherche}
+            onChange={(e) => setRecherche(e.target.value)}
+          />
+        </form>
+
+        <button
+          type="button"
+          className="barre-haut-cloche"
+          onClick={() => navigate('/')}
+          aria-label={`${enRupture} produit(s) en rupture`}
+        >
+          <IconCloche />
+          {enRupture > 0 && <span className="barre-haut-badge">{enRupture}</span>}
+        </button>
+
+        <div className="barre-haut-avatar-zone">
+          <button type="button" className="avatar avatar--bouton" onClick={() => setMenuOuvert((v) => !v)}>
+            {initiales}
+          </button>
+          {menuOuvert && (
+            <div className="barre-haut-menu" onMouseLeave={() => setMenuOuvert(false)}>
+              <p className="barre-haut-menu-nom">{user?.fullName}</p>
+              <p className="barre-haut-menu-role">{user?.role}</p>
+              <button type="button" onClick={logout}>Se déconnecter</button>
+            </div>
+          )}
+        </div>
       </div>
     </header>
   );

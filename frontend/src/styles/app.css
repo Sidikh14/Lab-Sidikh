@@ -426,30 +426,35 @@
 
 .onglets {
   display: flex;
-  gap: 4px;
-  border-bottom: 1px solid var(--trait);
+  gap: 6px;
+  border-bottom: none;
   margin-bottom: 24px;
+  flex-wrap: wrap;
 }
 
 .onglet {
-  background: none;
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 10px 4px;
-  margin-right: 20px;
-  font-size: 14px;
-  font-weight: 500;
+  background: var(--carte);
+  border: 1px solid var(--trait);
+  border-radius: 999px;
+  padding: 9px 18px;
+  margin-right: 0;
+  font-size: 13.5px;
+  font-weight: 600;
   color: var(--encre-douce);
   cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition), box-shadow var(--transition);
 }
 
 .onglet:hover {
   color: var(--encre);
+  border-color: var(--trait-fort);
 }
 
 .onglet.actif {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  color: var(--encre);
+  background: var(--carte);
+  border-color: var(--encre);
+  box-shadow: var(--ombre-legere);
 }
 
 .zone-principale {
@@ -460,7 +465,8 @@
 }
 
 .barre-haut {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 16px;
   padding: 16px 32px;
@@ -468,13 +474,43 @@
   border-bottom: 1px solid var(--trait);
 }
 
+.barre-haut-gauche {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.barre-haut-marque {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.barre-haut-trait {
+  width: 44px;
+  height: 1px;
+  flex-shrink: 0;
+  background: linear-gradient(to right, transparent, var(--accent), transparent);
+  opacity: 0.6;
+}
+
 .barre-haut-commerce {
   font-family: var(--font-marque);
   font-weight: 800;
-  font-size: 21px;
-  letter-spacing: -0.01em;
+  font-size: 20px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--encre);
   white-space: nowrap;
+}
+
+.barre-haut-droite {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-self: end;
 }
 
 .barre-haut-recherche {
@@ -697,6 +733,43 @@
   margin-bottom: 24px;
   gap: 16px;
   flex-wrap: wrap;
+}
+
+.selecteur-boutique {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px 7px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--trait);
+  background: var(--carte);
+  box-shadow: var(--ombre-legere);
+}
+
+.selecteur-boutique-icone {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent-clair);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.selecteur-boutique select {
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--encre);
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0;
+  max-width: 140px;
 }
 
 .entete-page h1 {
@@ -1330,7 +1403,7 @@ table.registre tr:last-child td {
     padding: 12px 16px;
   }
 
-  .barre-haut-commerce {
+  .barre-haut-marque {
     display: none;
   }
 
