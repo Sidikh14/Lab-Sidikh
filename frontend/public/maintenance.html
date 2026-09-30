@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#6d3fd9">
+<title>Mise à jour en cours</title>
+<style>
+:root{
+  /* Couleurs du secteur (écrasées par le script) */
+  --s1:#6d3fd9; --s2:#22b8cf; --stxt:#5228b8;
+  --bg:#eef0f3; --ink:#14181f; --muted:#5d6675;
+  --card:rgba(255,255,255,.74); --line:rgba(20,24,31,.10); --cell:#f7f8fa;
+  --accent:var(--s1); --accent2:var(--s2); --accent-text:var(--stxt);
+  --glow1:color-mix(in srgb,var(--s1) 22%,var(--bg));
+  --glow2:color-mix(in srgb,var(--s2) 20%,var(--bg));
+  --shadow:0 20px 50px -22px color-mix(in srgb,var(--s1) 55%,transparent);
+  box-sizing:border-box;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1014; --ink:#ecf0f4; --muted:#9ea8b7;
+    --card:rgba(22,27,34,.74); --line:rgba(255,255,255,.09); --cell:#10141a;
+    --accent:color-mix(in srgb,var(--s1) 72%,#fff);
+    --accent2:color-mix(in srgb,var(--s2) 75%,#fff);
+    --accent-text:color-mix(in srgb,var(--s1) 60%,#fff);
+    --glow1:color-mix(in srgb,var(--s1) 26%,var(--bg));
+    --glow2:color-mix(in srgb,var(--s2) 22%,var(--bg));
+    --shadow:0 20px 50px -22px rgba(0,0,0,.8);
+  }
+}
+*,*::before,*::after{box-sizing:inherit}
+html,body{height:100%;margin:0}
+body{
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  color:var(--ink);line-height:1.6;
+  background:
+    radial-gradient(60% 50% at 15% 10%,var(--glow1),transparent 70%),
+    radial-gradient(55% 50% at 90% 95%,var(--glow2),transparent 70%),
+    var(--bg);
+  display:grid;place-items:center;
+  padding:max(24px,env(safe-area-inset-top)) 20px max(24px,env(safe-area-inset-bottom));
+}
+main{
+  width:100%;max-width:520px;text-align:center;
+  background:var(--card);border:1px solid var(--line);border-radius:28px;
+  padding:36px 28px 32px;box-shadow:var(--shadow);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+}
+.art{width:min(250px,70%);margin:0 auto 4px;display:block;overflow:visible}
+.gear{transform-box:fill-box;transform-origin:center}
+.ga{animation:spin 14s linear infinite}
+.gb{animation:spin 9.3s linear infinite reverse}
+@keyframes spin{to{transform:rotate(360deg)}}
+.status{
+  display:inline-flex;align-items:center;gap:8px;margin:12px 0 16px;
+  padding:6px 14px;border-radius:999px;font-size:.88rem;font-weight:600;
+  color:var(--accent-text);background:color-mix(in srgb,var(--accent) 14%,transparent);
+}
+.status i{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.7)}}
+h1{
+  font-family:Georgia,"Times New Roman",serif;font-weight:600;
+  font-size:clamp(1.8rem,6vw,2.4rem);line-height:1.15;letter-spacing:-.01em;margin:0 0 12px;
+}
+p{margin:0 auto;max-width:42ch;color:var(--muted)}
+.back{margin:28px 0 4px}
+.back[hidden]{display:none}
+.back small{display:block;color:var(--muted);font-size:.9rem;margin-bottom:10px}
+.cells{display:flex;justify-content:center;gap:10px}
+.cell{min-width:76px;padding:12px 8px 10px;border-radius:14px;background:var(--cell);border:1px solid var(--line)}
+.cell b{display:block;font-family:Georgia,serif;font-size:1.9rem;line-height:1.1;font-variant-numeric:tabular-nums}
+.cell span{font-size:.78rem;color:var(--muted)}
+.cell[hidden]{display:none}
+[hidden]{display:none !important}
+.done{font-family:Georgia,serif;font-size:1.3rem}
+footer{margin-top:26px;padding-top:18px;border-top:1px solid var(--line);font-size:.88rem;color:var(--muted)}
+a{color:var(--accent-text);font-weight:600}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+@media (prefers-reduced-motion:reduce){.gear,.status i{animation:none}}
+@media (max-width:380px){main{padding:28px 18px}.cell{min-width:64px}}
+</style>
+</head>
+<body>
+<main>
+  <svg class="art" viewBox="0 0 230 190" role="img" aria-label="Engrenages en mouvement">
+    <g class="gear ga">
+      <circle cx="80" cy="112" r="47" fill="none" stroke="var(--accent)" stroke-width="12" stroke-dasharray="12.3 12.3"/>
+      <circle cx="80" cy="112" r="42" fill="var(--accent)"/>
+      <circle cx="80" cy="112" r="16" fill="var(--bg)"/>
+      <circle cx="80" cy="112" r="6" fill="var(--accent)"/>
+    </g>
+    <g class="gear gb">
+      <circle cx="154" cy="74" r="32" fill="none" stroke="var(--accent2)" stroke-width="10" stroke-dasharray="12.5 12.6"/>
+      <circle cx="154" cy="74" r="28" fill="var(--accent2)"/>
+      <circle cx="154" cy="74" r="11" fill="var(--bg)"/>
+      <circle cx="154" cy="74" r="4" fill="var(--accent2)"/>
+    </g>
+    <circle cx="198" cy="150" r="5" fill="var(--accent2)" opacity=".5"/>
+    <circle cx="28" cy="40" r="4" fill="var(--accent2)" opacity=".4"/>
+  </svg>
+
+  <div class="status"><i></i><span>Maintenance en cours</span></div>
+  <h1 id="title">Nous revenons très vite</h1>
+  <p id="message">Nous améliorons le logiciel. Il sera de nouveau disponible dans quelques instants. Vos données sont en sécurité, rien n'est perdu.</p>
+
+  <div class="back" id="back" hidden>
+    <small id="backLabel">Retour estimé dans</small>
+    <div class="cells" id="cells">
+      <div class="cell" id="cH"><b id="h">00</b><span>heures</span></div>
+      <div class="cell"><b id="m">00</b><span>minutes</span></div>
+      <div class="cell"><b id="s">00</b><span>secondes</span></div>
+    </div>
+    <div class="done" id="done" hidden>Quelques minutes encore</div>
+  </div>
+
+  <footer>
+    Cette page se rafraîchit automatiquement.
+    <span id="contactWrap" hidden><br>Besoin d'aide ? <a id="contact" href="#"></a></span>
+  </footer>
+</main>
+
+<script>
+/* ====== À MODIFIER ====== */
+var CONFIG = {
+  titre: "Nous revenons très vite",
+  message: "Nous améliorons le logiciel. Il sera de nouveau disponible dans quelques instants. Vos données sont en sécurité, rien n'est perdu.",
+  retour: "",            // Heure de retour estimée, ex : "2026-09-30T18:30:00Z" (vide = pas de compte à rebours)
+  contact: "",           // Ex : "support@monsite.com" (vide = masqué)
+  rafraichirSecondes: 30,// Vérifie toutes les X secondes auprès du serveur si la maintenance est terminée
+  cleSecteur: "secteurActif" // Clé localStorage où l'application enregistre le secteur du commerçant connecté
+};
+
+/* Couleurs par secteur : s1 = principale, s2 = secondaire, txt = version foncée pour le texte.
+   Remplacez-les par les valeurs exactes de votre sectorConfig.js si elles diffèrent. */
+var SECTEURS = {
+  grossiste:     { s1: "#6d3fd9", s2: "#22b8cf", txt: "#5228b8" },
+  pharmacie:     { s1: "#1a9a57", s2: "#7cc99b", txt: "#0f6b3a" },
+  textile:       { s1: "#d23a3a", s2: "#f08a8a", txt: "#a82626" },
+  electromenager:{ s1: "#d9a404", s2: "#f2cf6b", txt: "#8a6a02" }
+};
+/* ======================== */
+
+var $ = function (id) { return document.getElementById(id); };
+
+/* Secteur : ?secteur=pharmacie dans l'URL, sinon valeur mémorisée par l'application, sinon grossiste */
+function normaliser(v) {
+  return String(v || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z]/g, "");
+}
+function lireSecteur() {
+  var cle = null;
+  try { cle = new URLSearchParams(location.search).get("secteur"); } catch (e) {}
+  if (!cle) { try { cle = localStorage.getItem(CONFIG.cleSecteur); } catch (e) {} }
+  cle = normaliser(cle);
+  return SECTEURS[cle] ? cle : "grossiste";
+}
+var theme = SECTEURS[lireSecteur()];
+var root = document.documentElement;
+root.style.setProperty("--s1", theme.s1);
+root.style.setProperty("--s2", theme.s2);
+root.style.setProperty("--stxt", theme.txt);
+document.querySelector('meta[name="theme-color"]').setAttribute("content", theme.s1);
+
+if (CONFIG.contact) {
+  $("contact").textContent = CONFIG.contact;
+  $("contact").href = "mailto:" + CONFIG.contact;
+  $("contactWrap").hidden = false;
+}
+
+/* Infos mémorisées par l'application au moment du blocage (URL de l'API, message, heure de retour) */
+var info = {};
+try { info = JSON.parse(localStorage.getItem("maintenanceInfo") || "{}") || {}; } catch (e) {}
+
+var target = NaN;
+function pad(n) { return String(n).padStart(2, "0"); }
+
+function tick() {
+  if (isNaN(target)) { $("back").hidden = true; return; }
+  $("back").hidden = false;
+  var s = Math.floor((target - Date.now()) / 1000);
+  if (s <= 0) {
+    $("cells").hidden = true;
+    $("done").hidden = false;
+    $("backLabel").textContent = "Presque terminé";
+    return;
+  }
+  $("cells").hidden = false;
+  $("done").hidden = true;
+  $("backLabel").textContent = "Retour estimé dans";
+  var h = Math.floor(s / 3600);
+  $("cH").hidden = h === 0;
+  $("h").textContent = pad(h);
+  $("m").textContent = pad(Math.floor((s % 3600) / 60));
+  $("s").textContent = pad(s % 60);
+}
+
+function afficher(message, retour) {
+  $("title").textContent = CONFIG.titre;
+  $("message").textContent = message || CONFIG.message;
+  var r = retour || CONFIG.retour;
+  target = r ? new Date(r).getTime() : NaN;
+  tick();
+}
+
+/* Demande au serveur si la maintenance est toujours active ; sinon retour au logiciel */
+function verifier() {
+  if (!info.apiUrl) return;
+  fetch(info.apiUrl + "/maintenance/status?sector=" + encodeURIComponent(lireSecteur()), { cache: "no-store" })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.enabled) { location.replace("/"); return; }
+      afficher(d.message, d.returnAt);
+    })
+    .catch(function () { /* serveur injoignable (ex. réveil de Render) : on réessaiera */ });
+}
+
+afficher(info.message, info.returnAt);
+setInterval(tick, 1000);
+setInterval(verifier, CONFIG.rafraichirSecondes * 1000);
+verifier();
+</script>
+</body>
+</html>
