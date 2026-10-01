@@ -4,6 +4,11 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { getSecteurConfig } from '../config/sectorConfig';
 import { useLiveEvent } from '../offline/liveEvents';
+import { StylesModernes } from '../components/StylesModernes';
+
+function initialesMembre(nom) {
+  return (nom || '?').split(' ').filter(Boolean).map((mot) => mot[0]).slice(0, 2).join('').toUpperCase();
+}
 
 function IconEquipe() {
   return (
@@ -165,6 +170,7 @@ export function TeamPage() {
 
   return (
     <>
+      <StylesModernes />
       <div className="entete-page">
         <h1>Équipe</h1>
       </div>
@@ -430,8 +436,26 @@ function EquipeTab() {
 
       {erreur && <div className="erreur">{erreur}</div>}
 
-      <div className="barre-filtres">
-        <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
+      <div className="md-kpis">
+        <div className="md-kpi md-kpi--hero">
+          <span className="md-kpi-icone"><IconEquipe /></span>
+          <p className="md-kpi-label">Membres</p>
+          <p className="md-kpi-valeur">{membres.length}</p>
+        </div>
+        <div className="md-kpi">
+          <span className="md-kpi-icone"><IconEquipe /></span>
+          <p className="md-kpi-label">Actifs</p>
+          <p className="md-kpi-valeur">{membres.filter((m) => m.is_active).length}</p>
+        </div>
+        <div className={'md-kpi' + (membres.some((m) => !m.is_active) ? ' md-kpi--alerte' : '')}>
+          <span className="md-kpi-icone"><IconCadenas /></span>
+          <p className="md-kpi-label">Désactivés</p>
+          <p className="md-kpi-valeur">{membres.filter((m) => !m.is_active).length}</p>
+        </div>
+      </div>
+
+      <div className="md-outils">
+        <div className="champ-avec-icone md-recherche">
           <span className="champ-icone"><IconRecherche /></span>
           <input
             type="text"
@@ -441,39 +465,23 @@ function EquipeTab() {
             onChange={(e) => setRecherche(e.target.value)}
           />
         </div>
-        <div
-          className="filtre-pilules"
-          style={{
-            display: 'flex',
-            gap: 4,
-            padding: 4,
-            background: 'var(--fond-alterne, rgba(0,0,0,0.03))',
-            borderRadius: 999,
-            border: '1px solid var(--trait)',
-          }}
-        >
+      </div>
+
+      <div className="md-barre-vue">
+        <div className="md-puces">
           {FILTRES_STATUT.map((f) => {
-            const actif = filtreStatut === f.value;
+            const nb =
+              f.value === 'tous'
+                ? membres.length
+                : membres.filter((m) => (f.value === 'actifs' ? m.is_active : !m.is_active)).length;
             return (
               <button
                 key={f.value}
                 type="button"
+                className={'md-puce' + (filtreStatut === f.value ? ' actif' : '')}
                 onClick={() => setFiltreStatut(f.value)}
-                style={{
-                  border: 'none',
-                  cursor: 'pointer',
-                  padding: '7px 16px',
-                  borderRadius: 999,
-                  fontSize: 13,
-                  fontWeight: actif ? 600 : 500,
-                  color: actif ? '#fff' : 'var(--encre-douce)',
-                  background: actif ? 'var(--accent)' : 'transparent',
-                  boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
-                  transition: 'background 0.15s ease, color 0.15s ease',
-                  whiteSpace: 'nowrap',
-                }}
               >
-                {f.label}
+                {f.label} <span>{nb}</span>
               </button>
             );
           })}
@@ -491,7 +499,7 @@ function EquipeTab() {
           {membresFiltres.map((m) => (
             <div key={m.id} className="carte-entite">
               <div className="carte-entite-entete">
-                <span className="carte-entite-icone"><IconEquipe /></span>
+                <span className="md-avatar">{initialesMembre(m.full_name)}</span>
                 <span className={`tampon ${m.is_active ? 'tampon-sarcelle' : 'tampon-brique'}`}>
                   {m.is_active ? 'Actif' : 'Désactivé'}
                 </span>
@@ -967,9 +975,36 @@ function SalairesTab() {
     }
   }
 
+  // Synthèse du mois affiché.
+  const masseSalariale = employes.reduce((somme, emp) => somme + Number(emp.monthly_salary || 0), 0);
+  const employesPayes = employes.filter((emp) => Boolean(emp.paid_at));
+  const montantPaye = employesPayes.reduce((somme, emp) => somme + Number(emp.paid_amount || 0), 0);
+  const resteAPayer = employes.length - employesPayes.length;
+
   return (
     <>
-      <div className="barre-filtres">
+      <div className="md-kpis">
+        <div className="md-kpi md-kpi--hero">
+          <span className="md-kpi-icone"><IconEquipe /></span>
+          <p className="md-kpi-label">Masse salariale</p>
+          <p className="md-kpi-valeur">{Math.round(masseSalariale).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-sous">{employes.length} employé(s)</p>
+        </div>
+        <div className="md-kpi">
+          <span className="md-kpi-icone"><IconEquipe /></span>
+          <p className="md-kpi-label">Déjà payé</p>
+          <p className="md-kpi-valeur">{Math.round(montantPaye).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-sous">{employesPayes.length} employé(s)</p>
+        </div>
+        <div className={'md-kpi' + (resteAPayer > 0 ? ' md-kpi--alerte' : '')}>
+          <span className="md-kpi-icone"><IconCadenas /></span>
+          <p className="md-kpi-label">Reste à payer</p>
+          <p className="md-kpi-valeur">{resteAPayer}</p>
+          <p className="md-kpi-sous">employé(s) non payé(s)</p>
+        </div>
+      </div>
+
+      <div className="md-outils">
         <div className="champ-groupe" style={{ marginBottom: 0 }}>
           <label className="etiquette" htmlFor="mois-salaires">Mois</label>
           <input
@@ -990,38 +1025,44 @@ function SalairesTab() {
       ) : employes.length === 0 ? (
         <p className="etat-vide">Aucun employé actif.</p>
       ) : (
-        <div className="liste-a-encaisser">
+        <div className="md-liste">
           {employes.map((emp) => {
             const paye = Boolean(emp.paid_at);
             return (
-              <div key={emp.id} className="carte-a-encaisser">
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <p className="carte-a-encaisser-numero">{emp.name}</p>
-                  <p className="carte-a-encaisser-client">
-                    {emp.role} · Salaire : {emp.monthly_salary ? `${Math.round(emp.monthly_salary).toLocaleString('fr-FR')} FCFA (${libelleMethode(emp.payment_method)})` : 'non configuré'}
+              <div key={emp.id} className={'md-ligne' + (!paye ? ' md-ligne--prioritaire' : '')}>
+                <div className="md-avatar">{initialesMembre(emp.name)}</div>
+
+                <div className="md-bloc">
+                  <p className="md-titre">{emp.name}</p>
+                  <p className="md-sous" style={{ textTransform: 'capitalize' }}>
+                    {emp.role} ·{' '}
+                    <span style={{ textTransform: 'none' }}>
+                      {emp.monthly_salary
+                        ? `${Math.round(emp.monthly_salary).toLocaleString('fr-FR')} FCFA (${libelleMethode(emp.payment_method)})`
+                        : 'salaire non configuré'}
+                    </span>
                   </p>
-                  {paye ? (
-                    <p style={{ color: 'var(--succes, #1a7f37)', fontSize: 12, marginTop: 2 }}>
-                      Payé le {new Date(emp.paid_at).toLocaleDateString('fr-FR')} — {Math.round(emp.paid_amount).toLocaleString('fr-FR')} FCFA via {libelleMethode(emp.paid_method)}
-                    </p>
-                  ) : (
-                    <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 2 }}>
-                      Non payé pour {formatMois(mois)}
-                    </p>
-                  )}
                 </div>
-                <button className="btn" onClick={() => ouvrirConfig(emp)}>Configurer</button>
-                <button className="btn" onClick={() => ouvrirPrimesFixes(emp)}>Primes fixes</button>
-                <button className="btn" disabled={!emp.monthly_salary} onClick={() => ouvrirBulletin(emp)}>
-                  Bulletin
-                </button>
-                <button
-                  className="btn btn-principal"
-                  disabled={!emp.payslip_net}
-                  onClick={() => ouvrirPaiement(emp)}
-                >
-                  {paye ? 'Modifier le paiement' : 'Marquer comme payé'}
-                </button>
+
+                <div className="md-bloc md-bloc--montant">
+                  <span className={`tampon ${paye ? 'tampon-sarcelle' : 'tampon-brique'}`}>{paye ? 'Payé' : 'Non payé'}</span>
+                  <p className="md-sous">
+                    {paye
+                      ? `Le ${new Date(emp.paid_at).toLocaleDateString('fr-FR')} · ${Math.round(emp.paid_amount).toLocaleString('fr-FR')} FCFA via ${libelleMethode(emp.paid_method)}`
+                      : `Pour ${formatMois(mois)}`}
+                  </p>
+                </div>
+
+                <div className="md-actions">
+                  <button className="btn" onClick={() => ouvrirConfig(emp)}>Configurer</button>
+                  <button className="btn" onClick={() => ouvrirPrimesFixes(emp)}>Primes fixes</button>
+                  <button className="btn" disabled={!emp.monthly_salary} onClick={() => ouvrirBulletin(emp)}>
+                    Bulletin
+                  </button>
+                  <button className="btn btn-principal" disabled={!emp.payslip_net} onClick={() => ouvrirPaiement(emp)}>
+                    {paye ? 'Modifier le paiement' : 'Marquer comme payé'}
+                  </button>
+                </div>
               </div>
             );
           })}

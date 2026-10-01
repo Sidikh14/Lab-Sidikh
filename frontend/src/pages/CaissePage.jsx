@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useLiveEvent } from '../offline/liveEvents';
 
+import { StylesModernes } from '../components/StylesModernes';
 const MOYENS_PAIEMENT = [
   { value: 'especes', label: 'Espèces' },
   { value: 'wave', label: 'Wave' },
@@ -279,8 +280,16 @@ export function CaissePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onglet, activeWarehouseId]);
 
+  // Totaux affichés au-dessus des listes (sorties, entrées, relevés).
+  const totalSorties = sorties.reduce((somme, x) => somme + Number(x.amount || 0), 0);
+  const totalEntrees = entrees.reduce((somme, x) => somme + Number(x.amount || 0), 0);
+  const totalReleveEntrees = mouvementsReleve.filter((m) => m.sens === 'entree').reduce((somme, m) => somme + Number(m.amount || 0), 0);
+  const totalReleveSorties = mouvementsReleve.filter((m) => m.sens !== 'entree').reduce((somme, m) => somme + Number(m.amount || 0), 0);
+  const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
+
   return (
     <>
+      <StylesModernes />
       <div className="entete-page">
         <h1>Caisse</h1>
         {estManager && warehouses.length > 0 && (
@@ -308,21 +317,21 @@ export function CaissePage() {
       {erreur && <div className="erreur">{erreur}</div>}
 
       {!estCaissier && (
-        <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 24 }}>
-          <div className="stat">
-            <span className="stat-icone"><IconEspeces /></span>
-            <span className="etiquette">Solde en caisse (espèces)</span>
-            <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('especes')).toLocaleString('fr-FR')} FCFA`}</span>
+        <div className="md-kpis">
+          <div className="md-kpi md-kpi--hero">
+            <span className="md-kpi-icone"><IconEspeces /></span>
+            <p className="md-kpi-label">Solde en caisse (espèces)</p>
+            <p className="md-kpi-valeur">{chargementSoldes ? '…' : <>{fcfa(soldeDe('especes'))} <small>FCFA</small></>}</p>
           </div>
-          <div className="stat">
-            <span className="stat-icone"><IconTelephone /></span>
-            <span className="etiquette">Solde Wave</span>
-            <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('wave')).toLocaleString('fr-FR')} FCFA`}</span>
+          <div className="md-kpi">
+            <span className="md-kpi-icone"><IconTelephone /></span>
+            <p className="md-kpi-label">Solde Wave</p>
+            <p className="md-kpi-valeur">{chargementSoldes ? '…' : <>{fcfa(soldeDe('wave'))} <small>FCFA</small></>}</p>
           </div>
-          <div className="stat">
-            <span className="stat-icone"><IconTelephone /></span>
-            <span className="etiquette">Solde Orange Money</span>
-            <span className="valeur">{chargementSoldes ? '…' : `${Math.round(soldeDe('orange_money')).toLocaleString('fr-FR')} FCFA`}</span>
+          <div className="md-kpi">
+            <span className="md-kpi-icone"><IconTelephone /></span>
+            <p className="md-kpi-label">Solde Orange Money</p>
+            <p className="md-kpi-valeur">{chargementSoldes ? '…' : <>{fcfa(soldeDe('orange_money'))} <small>FCFA</small></>}</p>
           </div>
         </div>
       )}
@@ -344,9 +353,11 @@ export function CaissePage() {
 
       {onglet === 'cloture' && (
         <>
-          <div className="champ-groupe" style={{ maxWidth: 220, marginBottom: 20 }}>
-            <label className="etiquette" htmlFor="c-date">Date</label>
-            <input id="c-date" type="date" className="champ" value={dateCloture} onChange={(e) => setDateCloture(e.target.value)} />
+          <div className="md-outils" style={{ marginBottom: 16 }}>
+            <div className="champ-groupe" style={{ marginBottom: 0 }}>
+              <label className="etiquette" htmlFor="c-date">Date</label>
+              <input id="c-date" type="date" className="champ" value={dateCloture} onChange={(e) => setDateCloture(e.target.value)} />
+            </div>
           </div>
 
           {chargementResume ? (
@@ -362,10 +373,8 @@ export function CaissePage() {
                   return (
                     <div
                       key={m.method}
+                      className="md-carte"
                       style={{
-                        border: '1px solid var(--trait)',
-                        borderRadius: 'var(--rayon-petit)',
-                        padding: 16,
                         display: 'grid',
                         gridTemplateColumns: estCaissier ? '1fr auto' : '1fr auto auto',
                         gap: 16,
@@ -421,8 +430,8 @@ export function CaissePage() {
 
       {onglet === 'sorties' && (
         <>
-          <div className="modale" style={{ maxWidth: 480, marginBottom: 24, padding: 20 }}>
-            <h2 style={{ fontSize: 16, marginBottom: 12 }}>Nouvelle sortie de caisse</h2>
+          <div className="md-carte md-form">
+            <h2>Nouvelle sortie de caisse</h2>
             <form onSubmit={handleAjouterSortie}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="s-moyen">Moyen de paiement</label>
@@ -473,7 +482,7 @@ export function CaissePage() {
             </form>
           </div>
 
-          <div className="barre-filtres" style={{ marginBottom: 16 }}>
+          <div className="md-outils" style={{ marginBottom: 16 }}>
             <div className="champ-groupe" style={{ marginBottom: 0 }}>
               <label className="etiquette" htmlFor="sp-debut">Du</label>
               <input id="sp-debut" type="date" className="champ" value={periodeSorties.from} onChange={(e) => setPeriodeSorties({ ...periodeSorties, from: e.target.value })} />
@@ -489,6 +498,16 @@ export function CaissePage() {
           ) : sorties.length === 0 ? (
             <p className="etat-vide">Aucune sortie de caisse sur cette période.</p>
           ) : (
+            <>
+            <div className="md-kpis">
+              <div className="md-kpi md-kpi--hero">
+                <span className="md-kpi-icone"><IconEspeces /></span>
+                <p className="md-kpi-label">Total des sorties</p>
+                <p className="md-kpi-valeur">{fcfa(totalSorties)} <small>FCFA</small></p>
+                <p className="md-kpi-sous">{sorties.length} sortie(s)</p>
+              </div>
+            </div>
+            <div className="md-table">
             <table className="registre">
               <thead>
                 <tr>
@@ -511,14 +530,16 @@ export function CaissePage() {
                 ))}
               </tbody>
             </table>
+            </div>
+            </>
           )}
         </>
       )}
 
       {onglet === 'entrees' && (
         <>
-          <div className="modale" style={{ maxWidth: 480, marginBottom: 24, padding: 20 }}>
-            <h2 style={{ fontSize: 16, marginBottom: 12 }}>Nouvelle entrée de caisse</h2>
+          <div className="md-carte md-form">
+            <h2>Nouvelle entrée de caisse</h2>
             <form onSubmit={handleAjouterEntree}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="e-moyen">Moyen de paiement</label>
@@ -569,7 +590,7 @@ export function CaissePage() {
             </form>
           </div>
 
-          <div className="barre-filtres" style={{ marginBottom: 16 }}>
+          <div className="md-outils" style={{ marginBottom: 16 }}>
             <div className="champ-groupe" style={{ marginBottom: 0 }}>
               <label className="etiquette" htmlFor="ep-debut">Du</label>
               <input id="ep-debut" type="date" className="champ" value={periodeEntrees.from} onChange={(e) => setPeriodeEntrees({ ...periodeEntrees, from: e.target.value })} />
@@ -585,6 +606,16 @@ export function CaissePage() {
           ) : entrees.length === 0 ? (
             <p className="etat-vide">Aucune entrée de caisse sur cette période.</p>
           ) : (
+            <>
+            <div className="md-kpis">
+              <div className="md-kpi md-kpi--hero">
+                <span className="md-kpi-icone"><IconEspeces /></span>
+                <p className="md-kpi-label">Total des entrées</p>
+                <p className="md-kpi-valeur">{fcfa(totalEntrees)} <small>FCFA</small></p>
+                <p className="md-kpi-sous">{entrees.length} entrée(s)</p>
+              </div>
+            </div>
+            <div className="md-table">
             <table className="registre">
               <thead>
                 <tr>
@@ -607,13 +638,15 @@ export function CaissePage() {
                 ))}
               </tbody>
             </table>
+            </div>
+            </>
           )}
         </>
       )}
 
       {onglet === 'releves' && (
         <>
-          <div className="barre-filtres" style={{ marginBottom: 16 }}>
+          <div className="md-outils" style={{ marginBottom: 16 }}>
             <div className="champ-groupe" style={{ marginBottom: 0 }}>
               <label className="etiquette" htmlFor="r-moyen">Moyen de paiement</label>
               <select id="r-moyen" className="champ" value={releveMoyen} onChange={(e) => setReleveMoyen(e.target.value)}>
@@ -656,6 +689,26 @@ export function CaissePage() {
           ) : mouvementsReleve.length === 0 ? (
             <p className="etat-vide">Aucun mouvement pour ce moyen de paiement sur cette période.</p>
           ) : (
+            <>
+            <div className="md-kpis">
+              <div className="md-kpi">
+                <span className="md-kpi-icone"><IconEspeces /></span>
+                <p className="md-kpi-label">Entrées</p>
+                <p className="md-kpi-valeur">+{fcfa(totalReleveEntrees)} <small>FCFA</small></p>
+              </div>
+              <div className="md-kpi md-kpi--alerte">
+                <span className="md-kpi-icone"><IconEspeces /></span>
+                <p className="md-kpi-label">Sorties</p>
+                <p className="md-kpi-valeur">-{fcfa(totalReleveSorties)} <small>FCFA</small></p>
+              </div>
+              <div className="md-kpi md-kpi--hero">
+                <span className="md-kpi-icone"><IconEspeces /></span>
+                <p className="md-kpi-label">Solde de la période</p>
+                <p className="md-kpi-valeur">{totalReleveEntrees - totalReleveSorties >= 0 ? '+' : '-'}{fcfa(Math.abs(totalReleveEntrees - totalReleveSorties))} <small>FCFA</small></p>
+                <p className="md-kpi-sous">{mouvementsReleve.length} mouvement(s)</p>
+              </div>
+            </div>
+            <div className="md-table">
             <table className="registre">
               <thead>
                 <tr>
@@ -695,6 +748,8 @@ export function CaissePage() {
                 })}
               </tbody>
             </table>
+            </div>
+            </>
           )}
         </>
       )}

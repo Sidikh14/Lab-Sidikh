@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
 import { ComptageTab } from './ComptageTab';
 import { getSecteurConfig } from '../config/sectorConfig';
+import { StylesModernes } from '../components/StylesModernes';
 
 const ROLES_GESTION = ['manager', 'gerant'];
 // Reliquat (commande client en attente sur rupture de stock) : mêmes
@@ -736,8 +737,19 @@ export function StockPage() {
     }
   }
 
+  // Indicateurs affichés en haut des onglets Catalogue, Reliquats et Rapport.
+  const valeurStockCatalogue = products.reduce((somme, p) => somme + Number(p.unit_price || 0) * Number(p.quantity_in_stock || 0), 0);
+  const nbRupture = products.filter((p) => p.status === 'rupture').length;
+  const nbFaible = products.filter((p) => p.status === 'faible').length;
+  const totalAcommander = reservations.reduce((somme, g) => somme + Number(g.quantiteRestanteTotale || 0), 0);
+  const nbClientsReliquat = reservations.reduce((somme, g) => somme + g.reservations.length, 0);
+  const rapportCA = rapport.reduce((somme, r) => somme + Number(r.chiffre_affaires || 0), 0);
+  const rapportMarge = rapport.reduce((somme, r) => somme + Number(r.marge || 0), 0);
+  const rapportQteVendue = rapport.reduce((somme, r) => somme + Number(r.quantite_vendue || 0), 0);
+
   return (
     <>
+      <StylesModernes />
       <div className="entete-page">
         <h1>{secteurConfig.libelleProduit}s</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -803,8 +815,38 @@ export function StockPage() {
 
       {onglet === 'catalogue' && (
         <>
-          <div className="barre-filtres">
-            <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
+          <div className="md-kpis">
+            <div className="md-kpi md-kpi--hero">
+              <span className="md-kpi-icone"><IconBoite /></span>
+              <p className="md-kpi-label">{secteurConfig.libelleProduit}s</p>
+              <p className="md-kpi-valeur">{products.length}</p>
+              <p className="md-kpi-sous">référencé(s)</p>
+            </div>
+            <div className="md-kpi">
+              <span className="md-kpi-icone"><IconBoite /></span>
+              <p className="md-kpi-label">Valeur du stock</p>
+              <p className="md-kpi-valeur">{Math.round(valeurStockCatalogue).toLocaleString('fr-FR')} <small>FCFA</small></p>
+            </div>
+            <div
+              className={'md-kpi md-kpi--clic' + (nbRupture > 0 ? ' md-kpi--alerte' : '')}
+              onClick={() => setFiltreStatut('rupture')}
+            >
+              <span className="md-kpi-icone"><IconBoite /></span>
+              <p className="md-kpi-label">En rupture</p>
+              <p className="md-kpi-valeur">{nbRupture}</p>
+            </div>
+            <div
+              className={'md-kpi md-kpi--clic' + (nbFaible > 0 ? ' md-kpi--alerte' : '')}
+              onClick={() => setFiltreStatut('faible')}
+            >
+              <span className="md-kpi-icone"><IconBoite /></span>
+              <p className="md-kpi-label">Stock faible</p>
+              <p className="md-kpi-valeur">{nbFaible}</p>
+            </div>
+          </div>
+
+          <div className="md-outils">
+            <div className="champ-avec-icone md-recherche">
               <span className="champ-icone"><IconRecherche /></span>
               <input
                 type="text"
@@ -814,48 +856,31 @@ export function StockPage() {
                 onChange={(e) => setRecherche(e.target.value)}
               />
             </div>
-            <div
-              className="filtre-pilules"
-              style={{
-                display: 'flex',
-                gap: 4,
-                padding: 4,
-                background: 'var(--fond-alterne, rgba(0,0,0,0.03))',
-                borderRadius: 999,
-                border: '1px solid var(--trait)',
-              }}
-            >
+            <div className="md-groupe">
+              <button className="btn" onClick={handleExportCsv}>Exporter CSV</button>
+              <button className="btn" onClick={() => api.downloadProductsPdf(estManager ? warehouseId : undefined).catch((err) => setErreur(err.message))}>Exporter PDF</button>
+              {peutGerer && <button className="btn" onClick={() => setModaleEntreeOuverte(true)}>Entrée de stock</button>}
+              {peutGerer && <button className="btn" onClick={ouvrirRevisionPrix}>Réviser les prix</button>}
+            </div>
+          </div>
+
+          <div className="md-barre-vue">
+            <div className="md-puces">
               {FILTRES_STATUT.map((f) => {
-                const actif = filtreStatut === f.value;
+                const nb = f.value === 'tous' ? products.length : products.filter((p) => p.status === f.value).length;
                 return (
                   <button
                     key={f.value}
                     type="button"
+                    className={'md-puce' + (filtreStatut === f.value ? ' actif' : '')}
                     onClick={() => setFiltreStatut(f.value)}
-                    style={{
-                      border: 'none',
-                      cursor: 'pointer',
-                      padding: '7px 16px',
-                      borderRadius: 999,
-                      fontSize: 13,
-                      fontWeight: actif ? 600 : 500,
-                      color: actif ? '#fff' : 'var(--encre-douce)',
-                      background: actif ? 'var(--accent)' : 'transparent',
-                      boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
-                      transition: 'background 0.15s ease, color 0.15s ease',
-                      whiteSpace: 'nowrap',
-                    }}
                   >
-                    {f.label}
+                    {f.label} <span>{nb}</span>
                   </button>
                 );
               })}
             </div>
-            <button className="btn" onClick={handleExportCsv}>Exporter CSV</button>
-            <button className="btn" onClick={() => api.downloadProductsPdf(estManager ? warehouseId : undefined).catch((err) => setErreur(err.message))}>Exporter PDF</button>
-            {peutGerer && <button className="btn" onClick={() => setModaleEntreeOuverte(true)}>Entrée de stock</button>}
-            {peutGerer && <button className="btn" onClick={ouvrirRevisionPrix}>Réviser les prix</button>}
-            <div style={{ display: 'flex', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', overflow: 'hidden' }}>
+            <div className="md-vues">
               <button
                 type="button"
                 onClick={() => changerVueProduits('grille')}
@@ -892,7 +917,8 @@ export function StockPage() {
                 : `Aucun ${secteurConfig.libelleProduit.toLowerCase()} ne correspond à ces filtres.`}
             </p>
           ) : vueProduits === 'liste' ? (
-            <table className="registre" style={{ marginBottom: 20 }}>
+            <div className="md-table">
+            <table className="registre">
               <thead>
                 <tr>
                   <th>{secteurConfig.libelleProduit}</th>
@@ -932,6 +958,7 @@ export function StockPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           ) : (
             <div className="grille-produits">
               {produitsFiltres.map((p) => (
@@ -1044,6 +1071,24 @@ export function StockPage() {
 
       {onglet === 'reliquats' && (
         <>
+          <div className="md-kpis">
+            <div className="md-kpi md-kpi--hero">
+              <span className="md-kpi-icone"><IconBoite /></span>
+              <p className="md-kpi-label">À commander</p>
+              <p className="md-kpi-valeur">{Math.round(totalAcommander)} <small>unité(s)</small></p>
+            </div>
+            <div className="md-kpi">
+              <span className="md-kpi-icone"><IconBoite /></span>
+              <p className="md-kpi-label">Produits concernés</p>
+              <p className="md-kpi-valeur">{reservations.length}</p>
+            </div>
+            <div className="md-kpi">
+              <span className="md-kpi-icone"><IconBoite /></span>
+              <p className="md-kpi-label">Réservations clients</p>
+              <p className="md-kpi-valeur">{nbClientsReliquat}</p>
+            </div>
+          </div>
+
           {chargementReservations ? (
             <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
           ) : reservations.length === 0 ? (
@@ -1051,21 +1096,19 @@ export function StockPage() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {reservations.map((groupe) => (
-                <div
-                  key={groupe.productId}
-                  style={{ border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', padding: '14px 16px', background: 'var(--surface)' }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div key={groupe.productId} className="md-carte">
+                  <div className="md-carte-tete">
                     <span style={{ fontWeight: 700, fontSize: 15 }}>
                       {groupe.productName}
                       <span className="chiffre" style={{ fontWeight: 400, fontSize: 12, color: 'var(--encre-douce)', marginLeft: 8 }}>
                         Réf. {groupe.productSku}
                       </span>
                     </span>
-                    <span className="chiffre" style={{ fontWeight: 700 }}>
+                    <span className="tampon tampon-laiton">
                       {groupe.quantiteRestanteTotale} unité(s) à commander
                     </span>
                   </div>
+                  <div className="md-table md-table--interne">
                   <table className="registre">
                     <thead>
                       <tr>
@@ -1138,6 +1181,7 @@ export function StockPage() {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               ))}
             </div>
@@ -1147,7 +1191,7 @@ export function StockPage() {
 
       {onglet === 'rapport' && (
         <>
-          <div className="barre-filtres" style={{ marginBottom: 16 }}>
+          <div className="md-outils">
             <div className="champ-groupe" style={{ marginBottom: 0 }}>
               <label className="etiquette" htmlFor="rap-debut">Du</label>
               <input id="rap-debut" type="date" className="champ" value={rapportDebut} onChange={(e) => setRapportDebut(e.target.value)} />
@@ -1164,12 +1208,33 @@ export function StockPage() {
             </button>
           </div>
 
+          {!chargementRapport && rapport.length > 0 && (
+            <div className="md-kpis">
+              <div className="md-kpi md-kpi--hero">
+                <span className="md-kpi-icone"><IconBoite /></span>
+                <p className="md-kpi-label">Chiffre d'affaires</p>
+                <p className="md-kpi-valeur">{Math.round(rapportCA).toLocaleString('fr-FR')} <small>FCFA</small></p>
+              </div>
+              <div className="md-kpi">
+                <span className="md-kpi-icone"><IconBoite /></span>
+                <p className="md-kpi-label">Marge</p>
+                <p className="md-kpi-valeur">{Math.round(rapportMarge).toLocaleString('fr-FR')} <small>FCFA</small></p>
+                {rapportCA > 0 && <p className="md-kpi-sous">{Math.round((rapportMarge / rapportCA) * 100)} % du CA</p>}
+              </div>
+              <div className="md-kpi">
+                <span className="md-kpi-icone"><IconBoite /></span>
+                <p className="md-kpi-label">Quantité vendue</p>
+                <p className="md-kpi-valeur">{Math.round(rapportQteVendue).toLocaleString('fr-FR')}</p>
+              </div>
+            </div>
+          )}
+
           {chargementRapport ? (
             <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
           ) : rapport.length === 0 ? (
             <p className="etat-vide">Aucun article.</p>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
+            <div className="md-table">
               <table className="registre">
                 <thead>
                   <tr>

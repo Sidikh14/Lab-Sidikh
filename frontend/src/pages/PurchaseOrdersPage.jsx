@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { StylesModernes } from '../components/StylesModernes';
 
 const STATUTS = ['envoyee', 'recue', 'annulee'];
 const LABEL_STATUT = { envoyee: 'Envoyée', recue: 'Reçue', annulee: 'Annulée' };
@@ -32,6 +33,7 @@ export function PurchaseOrdersPage() {
   const [modaleOuverte, setModaleOuverte] = useState(false);
   const [supplierId, setSupplierId] = useState('');
   const [notes, setNotes] = useState('');
+  const [filtreStatut, setFiltreStatut] = useState('tous');
   const [lignes, setLignes] = useState([{ productId: '', quantity: 1, unitCost: '' }]);
 
   // Boutique active — même sélecteur/clé localStorage que les autres pages.
@@ -132,8 +134,16 @@ export function PurchaseOrdersPage() {
     }
   }
 
+  const commandesFiltrees = filtreStatut === 'tous' ? commandes : commandes.filter((c) => c.status === filtreStatut);
+  const nbParStatut = (statut) => commandes.filter((c) => c.status === statut).length;
+  const montantEngage = commandes
+    .filter((c) => c.status !== 'annulee')
+    .reduce((somme, c) => somme + Number(c.total_amount || 0), 0);
+  const totalEstime = lignes.reduce((somme, l) => somme + (Number(l.quantity) || 0) * (Number(l.unitCost) || 0), 0);
+
   return (
     <>
+      <StylesModernes />
       <div className="entete-page">
         <h1>Commandes fournisseurs</h1>
         {estManager && warehouses.length > 0 && (
@@ -184,10 +194,43 @@ export function PurchaseOrdersPage() {
 
       {erreur && <div className="erreur">{erreur}</div>}
 
-      <div className="barre-outils">
-        <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{commandes.length} commande(s)</span>
+      <div className="md-kpis">
+        <div className="md-kpi md-kpi--hero">
+          <span className="md-kpi-icone"><IconBonAchat /></span>
+          <p className="md-kpi-label">Montant engagé</p>
+          <p className="md-kpi-valeur">{Math.round(montantEngage).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-sous">hors commandes annulées</p>
+        </div>
+        <div className="md-kpi">
+          <span className="md-kpi-icone"><IconBonAchat /></span>
+          <p className="md-kpi-label">Commandes</p>
+          <p className="md-kpi-valeur">{commandes.length}</p>
+        </div>
+        <div className="md-kpi">
+          <span className="md-kpi-icone"><IconBonAchat /></span>
+          <p className="md-kpi-label">En attente de réception</p>
+          <p className="md-kpi-valeur">{nbParStatut('envoyee')}</p>
+        </div>
+      </div>
+
+      <div className="md-outils" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="md-puces">
+          <button type="button" className={'md-puce' + (filtreStatut === 'tous' ? ' actif' : '')} onClick={() => setFiltreStatut('tous')}>
+            Toutes <span>{commandes.length}</span>
+          </button>
+          {STATUTS.map((st) => (
+            <button
+              key={st}
+              type="button"
+              className={'md-puce' + (filtreStatut === st ? ' actif' : '')}
+              onClick={() => setFiltreStatut(st)}
+            >
+              {LABEL_STATUT[st]} <span>{nbParStatut(st)}</span>
+            </button>
+          ))}
+        </div>
         <button className="btn btn-principal" onClick={() => setModaleOuverte(true)} disabled={suppliers.length === 0 || !activeWarehouseId}>
-          Nouvelle commande
+          + Nouvelle commande
         </button>
       </div>
 
@@ -199,30 +242,38 @@ export function PurchaseOrdersPage() {
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
       ) : commandes.length === 0 ? (
         suppliers.length > 0 && <p className="etat-vide">Aucune commande fournisseur pour le moment.</p>
+      ) : commandesFiltrees.length === 0 ? (
+        <p className="etat-vide">Aucune commande avec ce statut.</p>
       ) : (
-        <div className="liste-a-encaisser">
-          {commandes.map((c) => (
-            <div key={c.id} className="carte-a-encaisser">
-              <span className="stat-icone" style={{ ...COULEUR_STATUT[c.status], width: 36, height: 36, flexShrink: 0 }}>
+        <div className="md-liste">
+          {commandesFiltrees.map((c) => (
+            <div key={c.id} className={'md-ligne' + (c.status === 'envoyee' ? ' md-ligne--prioritaire' : '')}>
+              <span className="md-avatar" style={COULEUR_STATUT[c.status]}>
                 <IconBonAchat />
               </span>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <p className="carte-a-encaisser-numero">{c.supplier_name}</p>
-                <p className="carte-a-encaisser-client">{Number(c.total_amount).toLocaleString('fr-FR')} FCFA</p>
+              <div className="md-bloc">
+                <p className="md-titre">{c.supplier_name}</p>
+                <p className="md-sous">
+                  {c.created_at ? `Créée le ${new Date(c.created_at).toLocaleDateString('fr-FR')}` : 'Commande fournisseur'}
+                </p>
               </div>
-              <select
-                className="champ"
-                style={{ width: 'auto', padding: '5px 8px', fontSize: 13 }}
-                value={c.status}
-                onChange={(e) => handleStatut(c, e.target.value)}
-              >
-                {STATUTS.map((s) => (
-                  <option key={s} value={s}>{LABEL_STATUT[s]}</option>
-                ))}
-              </select>
-              <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handlePdf(c)}>
-                PDF
-              </button>
+              <div className="md-bloc md-bloc--montant">
+                <p className="md-montant">{Math.round(Number(c.total_amount)).toLocaleString('fr-FR')} FCFA</p>
+                <span className="tampon" style={COULEUR_STATUT[c.status]}>{LABEL_STATUT[c.status]}</span>
+              </div>
+              <div className="md-actions">
+                <select
+                  className="champ"
+                  style={{ width: 'auto', padding: '5px 8px', fontSize: 13 }}
+                  value={c.status}
+                  onChange={(e) => handleStatut(c, e.target.value)}
+                >
+                  {STATUTS.map((st) => (
+                    <option key={st} value={st}>{LABEL_STATUT[st]}</option>
+                  ))}
+                </select>
+                <button className="btn" onClick={() => handlePdf(c)}>PDF</button>
+              </div>
             </div>
           ))}
         </div>
@@ -250,7 +301,10 @@ export function PurchaseOrdersPage() {
 
               <label className="etiquette">Articles à commander</label>
               {lignes.map((ligne, index) => (
-                <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <div
+                  key={index}
+                  style={{ display: 'flex', gap: 8, marginBottom: 8, padding: 8, borderRadius: 12, background: 'var(--fond, #f9fafb)', border: '1px solid var(--trait, #e5e7eb)' }}
+                >
                   <select
                     className="champ"
                     value={ligne.productId}
@@ -286,9 +340,16 @@ export function PurchaseOrdersPage() {
                   )}
                 </div>
               ))}
-              <button type="button" className="btn" onClick={ajouterLigne} style={{ marginBottom: 16 }}>
-                Ajouter un article
+              <button type="button" className="btn" onClick={ajouterLigne} style={{ marginBottom: 12 }}>
+                + Ajouter un article
               </button>
+
+              {totalEstime > 0 && (
+                <div className="md-carte" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', marginBottom: 16 }}>
+                  <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>Total estimé</span>
+                  <strong style={{ fontSize: 18 }}>{Math.round(totalEstime).toLocaleString('fr-FR')} FCFA</strong>
+                </div>
+              )}
 
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="po-notes">Notes (facultatif)</label>

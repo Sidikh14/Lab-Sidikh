@@ -114,16 +114,16 @@ function abreger(n) {
 const CSS_DASHBOARD = `
 .db-salut{margin:-6px 0 18px;font-size:14px;color:var(--encre-douce)}
 .db-actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
-.db-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:20px}
-.db-kpi{display:flex;flex-direction:column;gap:4px;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:16px;padding:16px 18px;transition:border-color .15s,box-shadow .15s}
+.db-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px}
+.db-kpi{display:flex;flex-direction:column;gap:4px;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:14px;padding:12px 14px;transition:border-color .15s,box-shadow .15s}
 .db-kpi--clic{cursor:pointer}
 .db-kpi--clic:hover{border-color:var(--accent);box-shadow:0 6px 18px rgba(17,24,39,.08)}
-.db-kpi-icone{display:flex;align-items:center;justify-content:center;width:36px;height:36px;margin-bottom:8px;border-radius:10px;background:#eef2ff;background:var(--accent-clair,#eef2ff);color:var(--accent)}
+.db-kpi-icone{display:flex;align-items:center;justify-content:center;width:30px;height:30px;margin-bottom:6px;border-radius:9px;background:#eef2ff;background:var(--accent-clair,#eef2ff);color:var(--accent)}
 .db-kpi--alerte .db-kpi-icone{background:var(--danger-clair,#fef2f2);color:var(--danger,#b91c1c)}
-.db-kpi-label{margin:0;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--encre-douce)}
-.db-kpi-valeur{margin:0;font-size:24px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
-.db-kpi-valeur small{font-size:13px;font-weight:500;color:var(--encre-douce)}
-.db-kpi-sous{margin:0;font-size:12px;color:var(--encre-douce)}
+.db-kpi-label{margin:0;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--encre-douce)}
+.db-kpi-valeur{margin:0;font-size:20px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.db-kpi-valeur small{font-size:12px;font-weight:500;color:var(--encre-douce)}
+.db-kpi-sous{margin:0;font-size:11px;color:var(--encre-douce)}
 .db-kpi--hero{background:var(--accent);border-color:var(--accent);color:#fff}
 .db-kpi--hero .db-kpi-icone{background:rgba(255,255,255,.18);color:#fff}
 .db-kpi--hero .db-kpi-label,.db-kpi--hero .db-kpi-sous,.db-kpi--hero .db-kpi-valeur small{color:rgba(255,255,255,.8)}
@@ -688,12 +688,6 @@ export function DashboardPage() {
               </div>
             )}
 
-            <div className="db-actions">
-              <button className="btn btn-principal" onClick={() => navigate('/ventes')}>+ Nouvelle vente</button>
-              <button className="btn" onClick={() => navigate('/stock')}>Produits</button>
-              <button className="btn" onClick={() => navigate('/clients')}>Clients</button>
-            </div>
-
             <div className="db-kpis">
               <div className="db-kpi db-kpi--hero">
                 <span className="db-kpi-icone"><IconVentes /></span>
@@ -718,14 +712,6 @@ export function DashboardPage() {
                 <p className="db-kpi-valeur">{alertesStock.length}</p>
                 <p className="db-kpi-sous">{enRupture.length} rupture(s) · {enFaible.length} stock faible</p>
               </div>
-              {!estPharmacie && (
-                <div className="db-kpi">
-                  <span className="db-kpi-icone"><IconHorloge /></span>
-                  <p className="db-kpi-label">En attente</p>
-                  <p className="db-kpi-valeur">{commandesEnAttente.length}</p>
-                  <p className="db-kpi-sous">à encaisser</p>
-                </div>
-              )}
               <div className={'db-kpi' + (vueEquipe ? ' db-kpi--clic' : '')} onClick={vueEquipe ? () => setOnglet('suivi') : undefined}>
                 <span className="db-kpi-icone"><IconCamion /></span>
                 <p className="db-kpi-label">À livrer</p>
