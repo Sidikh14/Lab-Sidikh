@@ -63,6 +63,15 @@ function IconListe() {
   );
 }
 
+function IconRetour() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 14L4 9l5-5" />
+      <path d="M4 9h10a6 6 0 0 1 0 12h-3" />
+    </svg>
+  );
+}
+
 function IconCamera() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -177,6 +186,13 @@ function optionsDeVente(produit) {
   return [detail, ...gros];
 }
 
+// Quantité affichée : entier pour les produits au détail, 1 décimale max
+// (sans zéros inutiles) pour les produits vendus au poids (kg).
+function formaterQuantite(valeur, auPoids) {
+  const n = Number(valeur) || 0;
+  return auPoids ? String(Math.round(n * 10) / 10) : String(Math.round(n));
+}
+
 function cleLigne(productId, unitId) {
   return `${productId}::${unitId || 'detail'}`;
 }
@@ -205,6 +221,10 @@ const CSS_HISTORIQUE = `
 .hv-puce:hover{border-color:var(--accent)}
 .hv-puce.actif{background:var(--accent);border-color:var(--accent);color:#fff}
 .hv-puce span{opacity:.75;font-variant-numeric:tabular-nums}
+.hv-titre-section{margin:8px 0 10px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--encre-douce)}
+.hv-motif{margin:4px 0 0;font-size:13px;color:var(--encre-douce)}
+.hv-carte--statique{cursor:default}
+.hv-carte--statique:hover{transform:none;box-shadow:none;border-color:var(--trait,#e5e7eb)}
 .hv-liste{display:flex;flex-direction:column;gap:10px}
 .hv-carte{display:grid;grid-template-columns:44px minmax(0,1.5fr) minmax(0,1fr) auto;gap:14px;align-items:center;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:14px;padding:12px 16px;cursor:pointer;transition:box-shadow .15s,border-color .15s,transform .15s}
 .hv-carte:hover{border-color:var(--accent);box-shadow:0 6px 18px rgba(17,24,39,.08);transform:translateY(-1px)}
@@ -449,6 +469,7 @@ export function OrdersPage() {
           productName: it.product_name,
           maxQuantity: it.quantity,
           unitPrice: it.line_total / it.quantity,
+          auPoids: Boolean(products.find((p) => p.id === it.product_id)?.is_weighted),
           quantity: 0,
         }))
       );
@@ -1025,6 +1046,7 @@ export function OrdersPage() {
   const chiffreAffairesHistorique = ordersFiltres
     .filter((o) => o.status !== 'annulee')
     .reduce((somme, o) => somme + (Number(o.total_amount) || 0), 0);
+  const montantTotalRembourse = retours.reduce((somme, r) => somme + (Number(r.refund_amount) || 0), 0);
   const nbEnAttenteHistorique = ordersFiltres.filter((o) => o.status === 'en_attente').length;
 
   return (
@@ -1462,117 +1484,124 @@ export function OrdersPage() {
 
       {onglet === 'retours' && peutTraiterRetour && (
         <>
+          <div className="hv-kpis">
+            <div className="hv-kpi">
+              <p className="hv-kpi-label">Retours</p>
+              <p className="hv-kpi-valeur">{retours.length}</p>
+            </div>
+            <div className="hv-kpi hv-kpi--accent">
+              <p className="hv-kpi-label">Montant remboursé</p>
+              <p className="hv-kpi-valeur">
+                {Math.round(montantTotalRembourse).toLocaleString('fr-FR')} <small>FCFA</small>
+              </p>
+            </div>
+            {estPharmacie && (
+              <div className="hv-kpi">
+                <p className="hv-kpi-label">Demandes en attente</p>
+                <p className="hv-kpi-valeur">{demandesRetourEnAttente.length}</p>
+              </div>
+            )}
+          </div>
+
           {estPharmacie && (
             <>
-              <div className="barre-outils">
-                <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{demandesRetour.length} demande(s) de retour</span>
-              </div>
+              <p className="hv-titre-section">Demandes de retour · {demandesRetour.length}</p>
 
               {chargementDemandesRetour ? (
                 <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
               ) : demandesRetour.length === 0 ? (
                 <p className="etat-vide">Aucune demande de retour pour le moment.</p>
               ) : (
-                <table className="registre" style={{ marginBottom: 24 }}>
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Commande</th>
-                      <th>{libelleClient}</th>
-                      <th>Motif</th>
-                      <th>Remboursement</th>
-                      <th>Demandé par</th>
-                      <th>Statut</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {demandesRetour.map((d) => (
-                      <tr key={d.id}>
-                        <td>{new Date(d.created_at).toLocaleDateString('fr-FR')}</td>
-                        <td className="chiffre">#{d.order_seq ?? d.order_id}</td>
-                        <td>{d.client_name || `${libelleClient} de passage`}</td>
-                        <td>{d.reason}</td>
-                        <td className="chiffre">
-                          {Math.round(d.refund_amount).toLocaleString('fr-FR')} FCFA ({LABEL_MOYEN_PAIEMENT[d.refund_method] || d.refund_method})
-                        </td>
-                        <td>{d.requested_by_name}</td>
-                        <td>
-                          <span className={`tampon ${d.status === 'validee' ? 'tampon-sarcelle' : d.status === 'refusee' ? 'tampon-brique' : 'tampon-laiton'}`}>
-                            {d.status === 'validee' ? 'Validée' : d.status === 'refusee' ? 'Refusée' : 'En attente'}
-                          </span>
-                        </td>
-                        <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {d.status === 'en_attente' && (
-                            <>
-                              <button
-                                className="btn btn-principal"
-                                style={{ padding: '5px 10px', fontSize: 13 }}
-                                disabled={demandeEnCoursTraitement === d.id}
-                                onClick={() => approuverDemandeRetour(d)}
-                              >
-                                Valider
-                              </button>
-                              <button
-                                className="btn btn-brique"
-                                style={{ padding: '5px 10px', fontSize: 13 }}
-                                disabled={demandeEnCoursTraitement === d.id}
-                                onClick={() => refuserDemandeRetour(d)}
-                              >
-                                Refuser
-                              </button>
-                            </>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="hv-liste" style={{ marginBottom: 28 }}>
+                  {demandesRetour.map((d) => (
+                    <div
+                      key={d.id}
+                      className={'hv-carte hv-carte--statique' + (d.status === 'en_attente' ? ' hv-carte--prioritaire' : '')}
+                    >
+                      <div className="hv-avatar"><IconRetour /></div>
+
+                      <div className="hv-bloc">
+                        <p className="hv-numero chiffre">Commande #{d.order_seq ?? d.order_id}</p>
+                        <p className="hv-sous">
+                          {d.client_name || `${libelleClient} de passage`} · {new Date(d.created_at).toLocaleDateString('fr-FR')} · par {d.requested_by_name}
+                        </p>
+                        {d.reason && <p className="hv-motif">{d.reason}</p>}
+                      </div>
+
+                      <div className="hv-bloc hv-bloc--montant">
+                        <p className="hv-montant">{Math.round(d.refund_amount).toLocaleString('fr-FR')} FCFA</p>
+                        <p className="hv-sous" style={{ marginBottom: 4 }}>{LABEL_MOYEN_PAIEMENT[d.refund_method] || d.refund_method}</p>
+                        <span className={`tampon ${d.status === 'validee' ? 'tampon-sarcelle' : d.status === 'refusee' ? 'tampon-brique' : 'tampon-laiton'}`}>
+                          {d.status === 'validee' ? 'Validée' : d.status === 'refusee' ? 'Refusée' : 'En attente'}
+                        </span>
+                      </div>
+
+                      <div className="hv-actions">
+                        {d.status === 'en_attente' && (
+                          <>
+                            <button
+                              className="btn btn-principal"
+                              style={{ padding: '5px 10px', fontSize: 13 }}
+                              disabled={demandeEnCoursTraitement === d.id}
+                              onClick={() => approuverDemandeRetour(d)}
+                            >
+                              Valider
+                            </button>
+                            <button
+                              className="btn btn-brique"
+                              style={{ padding: '5px 10px', fontSize: 13 }}
+                              disabled={demandeEnCoursTraitement === d.id}
+                              onClick={() => refuserDemandeRetour(d)}
+                            >
+                              Refuser
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </>
           )}
 
-          <div className="barre-outils">
-            <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{retours.length} retour(s)</span>
-          </div>
+          <p className="hv-titre-section">Retours enregistrés · {retours.length}</p>
 
           {chargementRetours ? (
             <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
           ) : retours.length === 0 ? (
             <p className="etat-vide">Aucun retour enregistré pour le moment.</p>
           ) : (
-            <table className="registre">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Commande</th>
-                  <th>Produit</th>
-                  <th>Qté</th>
-                  <th>{libelleClient}</th>
-                  <th>Motif</th>
-                  <th>Remboursement</th>
-                  <th>Enregistré par</th>
-                </tr>
-              </thead>
-              <tbody>
-                {retours.map((r) => (
-                  <tr key={r.id}>
-                    <td>{new Date(r.created_at).toLocaleDateString('fr-FR')}</td>
-                    <td className="chiffre">#{r.order_id}</td>
-                    <td>{r.product_name}</td>
-                    <td className="chiffre">{r.quantity}</td>
-                    <td>{r.client_name || `${libelleClient} de passage`}</td>
-                    <td>{r.reason}</td>
-                    <td className="chiffre">
-                      {r.refund_amount
-                        ? `${Math.round(r.refund_amount).toLocaleString('fr-FR')} FCFA (${LABEL_MOYEN_PAIEMENT[r.refund_method] || r.refund_method})`
-                        : '—'}
-                    </td>
-                    <td>{r.recorded_by_name}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div className="hv-liste">
+              {retours.map((r) => (
+                <div key={r.id} className="hv-carte hv-carte--statique">
+                  <div className="hv-avatar"><IconRetour /></div>
+
+                  <div className="hv-bloc">
+                    <p className="hv-numero">
+                      {r.product_name} <span className="chiffre" style={{ color: 'var(--encre-douce)', fontWeight: 500 }}>× {formaterQuantite(r.quantity, r.is_weighted ?? Boolean(products.find((p) => p.id === r.product_id)?.is_weighted))}{(r.is_weighted ?? products.find((p) => p.id === r.product_id)?.is_weighted) ? ' kg' : ''}</span>
+                    </p>
+                    <p className="hv-sous">
+                      Commande #{r.order_id} · {r.client_name || `${libelleClient} de passage`} · {new Date(r.created_at).toLocaleDateString('fr-FR')}
+                    </p>
+                    {r.reason && <p className="hv-motif">{r.reason}</p>}
+                  </div>
+
+                  <div className="hv-bloc hv-bloc--montant">
+                    <p className="hv-montant">
+                      {r.refund_amount ? `${Math.round(r.refund_amount).toLocaleString('fr-FR')} FCFA` : '—'}
+                    </p>
+                    {r.refund_amount ? (
+                      <p className="hv-sous">{LABEL_MOYEN_PAIEMENT[r.refund_method] || r.refund_method}</p>
+                    ) : null}
+                  </div>
+
+                  <div className="hv-actions">
+                    <span className="hv-sous">par {r.recorded_by_name}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </>
       )}
@@ -1589,38 +1618,31 @@ export function OrdersPage() {
                   {retourCommande.client_name || `${libelleClient} de passage`}
                 </p>
 
-                <table className="registre" style={{ marginBottom: 16 }}>
-                  <thead>
-                    <tr>
-                      <th>Produit</th>
-                      <th>Vendu</th>
-                      <th>Qté retournée</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {retourLignes.map((l) => (
-                      <tr key={l.productId}>
-                        <td>{l.productName}</td>
-                        <td className="chiffre">{l.maxQuantity}</td>
-                        <td>
-                          <input
-                            type="number"
-                            className="champ"
-                            min="0"
-                            max={l.maxQuantity}
-                            step="1"
-                            value={l.quantity || ''}
-                            placeholder="0"
-                            onChange={(e) => {
-                              const val = Math.max(0, Math.min(l.maxQuantity, Number(e.target.value) || 0));
-                              changerQuantiteRetour(l.productId, val);
-                            }}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="hv-detail-lignes" style={{ marginBottom: 16 }}>
+                  {retourLignes.map((l) => (
+                    <div key={l.productId} className="hv-detail-ligne" style={{ gridTemplateColumns: 'minmax(0,1fr) auto 90px' }}>
+                      <span>{l.productName}</span>
+                      <span className="chiffre" style={{ color: 'var(--encre-douce)', fontSize: 13 }}>
+                        Vendu : {formaterQuantite(l.maxQuantity, l.auPoids)}{l.auPoids ? ' kg' : ''}
+                      </span>
+                      <input
+                        type="number"
+                        className="champ"
+                        min="0"
+                        max={l.maxQuantity}
+                        step={l.auPoids ? '0.1' : '1'}
+                        value={l.quantity || ''}
+                        placeholder="0"
+                        onChange={(e) => {
+                          const saisi = Number(e.target.value) || 0;
+                          const arrondi = l.auPoids ? Math.round(saisi * 10) / 10 : Math.round(saisi);
+                          const val = Math.max(0, Math.min(l.maxQuantity, arrondi));
+                          changerQuantiteRetour(l.productId, val);
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
 
                 <div className="champ-groupe">
                   <label className="etiquette" htmlFor="retour-motif">Motif du retour *</label>
