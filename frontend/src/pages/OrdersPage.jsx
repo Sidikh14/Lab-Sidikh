@@ -187,6 +187,56 @@ function codeInterne(produit) {
   return produit.sku || produit.id.slice(0, 6).toUpperCase();
 }
 
+// Styles propres à l'onglet Historique (préfixe hv-). Ils s'appuient sur les
+// variables CSS existantes (--accent, --trait, --surface, --encre-douce…).
+const CSS_HISTORIQUE = `
+.hv-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+.hv-kpi{background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:14px;padding:14px 16px}
+.hv-kpi-label{margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--encre-douce)}
+.hv-kpi-valeur{margin:0;font-size:22px;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums}
+.hv-kpi-valeur small{font-size:13px;font-weight:500;color:var(--encre-douce)}
+.hv-kpi--accent .hv-kpi-valeur{color:var(--accent)}
+.hv-outils{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:14px;padding:12px 14px;margin-bottom:12px}
+.hv-recherche{flex:1 1 260px;min-width:0}
+.hv-export{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+.hv-export .champ-groupe{margin-bottom:0}
+.hv-puces{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
+.hv-puce{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--trait,#e5e7eb);border-radius:999px;background:var(--surface,#fff);color:var(--encre-douce);font-size:13px;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.hv-puce:hover{border-color:var(--accent)}
+.hv-puce.actif{background:var(--accent);border-color:var(--accent);color:#fff}
+.hv-puce span{opacity:.75;font-variant-numeric:tabular-nums}
+.hv-liste{display:flex;flex-direction:column;gap:10px}
+.hv-carte{display:grid;grid-template-columns:44px minmax(0,1.5fr) minmax(0,1fr) auto;gap:14px;align-items:center;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:14px;padding:12px 16px;cursor:pointer;transition:box-shadow .15s,border-color .15s,transform .15s}
+.hv-carte:hover{border-color:var(--accent);box-shadow:0 6px 18px rgba(17,24,39,.08);transform:translateY(-1px)}
+.hv-carte--prioritaire{border-left:4px solid var(--accent)}
+.hv-avatar{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;background:#eef2ff;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent)}
+.hv-bloc{min-width:0}
+.hv-numero{margin:0;font-size:15px;font-weight:700}
+.hv-sous{margin:2px 0 0;font-size:13px;color:var(--encre-douce);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hv-montant{margin:0 0 4px;font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.hv-retour{display:block;margin-top:4px;font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--brique,#B84A3E)}
+.hv-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.hv-detail-entete{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;font-size:13px;color:var(--encre-douce)}
+.hv-detail-lignes{border:1px solid var(--trait,#e5e7eb);border-radius:12px;overflow:hidden;margin-bottom:12px}
+.hv-detail-ligne{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:10px 14px;font-size:14px}
+.hv-detail-ligne+.hv-detail-ligne{border-top:1px solid var(--trait,#e5e7eb)}
+.hv-detail-total{display:flex;justify-content:space-between;align-items:center;padding:14px 16px;margin-bottom:16px;border-radius:12px;background:var(--fond,#f9fafb);font-size:15px}
+.hv-detail-total strong{font-size:20px;font-variant-numeric:tabular-nums}
+@media (max-width:760px){
+  .hv-carte{grid-template-columns:44px minmax(0,1fr)}
+  .hv-carte .hv-bloc--montant,.hv-carte .hv-actions{grid-column:1 / -1}
+  .hv-actions{justify-content:flex-start}
+}
+`;
+
+const LABEL_STATUT_VENTE = {
+  en_attente: 'En attente',
+  validee: 'Validées',
+  livree: 'Livrées',
+  annulee: 'Annulées',
+  renvoyee_vendeur: 'Renvoyées',
+};
+
 export function OrdersPage() {
   const { user, merchant } = useAuth();
   const secteurConfig = getSecteurConfig(merchant?.sector);
@@ -281,6 +331,7 @@ export function OrdersPage() {
   const [exportFin, setExportFin] = useState(() => new Date().toISOString().slice(0, 10));
   const [exportEnCours, setExportEnCours] = useState(false);
   const [rechercheHistorique, setRechercheHistorique] = useState('');
+  const [filtreStatut, setFiltreStatut] = useState('tous');
 
   async function ouvrirDetailHistorique(order) {
     setChargementDetailCommande(true);
@@ -959,16 +1010,26 @@ export function OrdersPage() {
     : orders;
 
   const rechercheHistoriqueNormalisee = rechercheHistorique.trim().toLowerCase();
-  const ordersFiltres = ordersTries.filter((o) => {
+  const ordersRecherche = ordersTries.filter((o) => {
     const correspondRecherche =
       !rechercheHistoriqueNormalisee ||
       (o.order_number || '').toLowerCase().includes(rechercheHistoriqueNormalisee) ||
       (o.client_name || '').toLowerCase().includes(rechercheHistoriqueNormalisee);
     return correspondRecherche;
   });
+  const compteParStatut = ordersRecherche.reduce((acc, o) => {
+    acc[o.status] = (acc[o.status] || 0) + 1;
+    return acc;
+  }, {});
+  const ordersFiltres = filtreStatut === 'tous' ? ordersRecherche : ordersRecherche.filter((o) => o.status === filtreStatut);
+  const chiffreAffairesHistorique = ordersFiltres
+    .filter((o) => o.status !== 'annulee')
+    .reduce((somme, o) => somme + (Number(o.total_amount) || 0), 0);
+  const nbEnAttenteHistorique = ordersFiltres.filter((o) => o.status === 'en_attente').length;
 
   return (
     <>
+      <style>{CSS_HISTORIQUE}</style>
       <div className="entete-page">
         <h1>Ventes & caisse</h1>
         {estManager && warehouses.length > 0 && (
@@ -1245,8 +1306,25 @@ export function OrdersPage() {
 
       {onglet === 'historique' && (
         <>
-          <div className="barre-filtres">
-            <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
+          <div className="hv-kpis">
+            <div className="hv-kpi">
+              <p className="hv-kpi-label">Ventes</p>
+              <p className="hv-kpi-valeur">{ordersFiltres.length}</p>
+            </div>
+            <div className="hv-kpi hv-kpi--accent">
+              <p className="hv-kpi-label">Chiffre d'affaires</p>
+              <p className="hv-kpi-valeur">
+                {Math.round(chiffreAffairesHistorique).toLocaleString('fr-FR')} <small>FCFA</small>
+              </p>
+            </div>
+            <div className="hv-kpi">
+              <p className="hv-kpi-label">En attente d'encaissement</p>
+              <p className="hv-kpi-valeur">{nbEnAttenteHistorique}</p>
+            </div>
+          </div>
+
+          <div className="hv-outils">
+            <div className="champ-avec-icone hv-recherche" style={{ marginBottom: 0 }}>
               <span className="champ-icone"><IconRecherche /></span>
               <input
                 type="text"
@@ -1256,21 +1334,37 @@ export function OrdersPage() {
                 onChange={(e) => setRechercheHistorique(e.target.value)}
               />
             </div>
+            <div className="hv-export">
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ov-debut">Du</label>
+                <input id="ov-debut" type="date" className="champ" value={exportDebut} onChange={(e) => setExportDebut(e.target.value)} />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="ov-fin">Au</label>
+                <input id="ov-fin" type="date" className="champ" value={exportFin} onChange={(e) => setExportFin(e.target.value)} />
+              </div>
+              <button className="btn" onClick={exporterVentesPdf} disabled={exportEnCours}>
+                {exportEnCours ? 'Génération…' : 'Exporter PDF'}
+              </button>
+            </div>
           </div>
 
-          <div className="barre-filtres" style={{ marginBottom: 16 }}>
-            <span style={{ color: 'var(--encre-douce)', fontSize: 14, alignSelf: 'center' }}>{ordersFiltres.length} vente(s)</span>
-            <div className="champ-groupe" style={{ marginBottom: 0 }}>
-              <label className="etiquette" htmlFor="ov-debut">Du</label>
-              <input id="ov-debut" type="date" className="champ" value={exportDebut} onChange={(e) => setExportDebut(e.target.value)} />
-            </div>
-            <div className="champ-groupe" style={{ marginBottom: 0 }}>
-              <label className="etiquette" htmlFor="ov-fin">Au</label>
-              <input id="ov-fin" type="date" className="champ" value={exportFin} onChange={(e) => setExportFin(e.target.value)} />
-            </div>
-            <button className="btn" style={{ alignSelf: 'flex-end' }} onClick={exporterVentesPdf} disabled={exportEnCours}>
-              {exportEnCours ? 'Génération…' : 'Exporter PDF'}
+          <div className="hv-puces">
+            <button type="button" className={'hv-puce' + (filtreStatut === 'tous' ? ' actif' : '')} onClick={() => setFiltreStatut('tous')}>
+              Toutes <span>{ordersRecherche.length}</span>
             </button>
+            {Object.entries(LABEL_STATUT_VENTE)
+              .filter(([statut]) => compteParStatut[statut] > 0)
+              .map(([statut, libelle]) => (
+                <button
+                  key={statut}
+                  type="button"
+                  className={'hv-puce' + (filtreStatut === statut ? ' actif' : '')}
+                  onClick={() => setFiltreStatut(statut)}
+                >
+                  {libelle} <span>{compteParStatut[statut]}</span>
+                </button>
+              ))}
           </div>
 
           {chargement ? (
@@ -1280,96 +1374,88 @@ export function OrdersPage() {
               {orders.length === 0 ? 'Aucune vente enregistrée pour le moment.' : 'Aucune vente ne correspond à ces filtres.'}
             </p>
           ) : (
-            <table className="registre">
-              <thead>
-                <tr>
-                  <th>N° commande</th>
-                  <th>{libelleClient}</th>
-                  <th>Montant</th>
-                  <th>Statut</th>
-                  {(peutEncaisser || peutGererStatut || peutTraiterRenvoi || peutTraiterRetour || peutDemanderRetour) && <th>Actions</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {ordersFiltres.map((o) => (
-                  <tr
+            <div className="hv-liste">
+              {ordersFiltres.map((o) => {
+                const prioritaire =
+                  (o.status === 'en_attente' && peutEncaisserCetteCommande(o)) || (o.status === 'renvoyee_vendeur' && peutTraiterRenvoi);
+                const nomClient = o.client_name || `${libelleClient} de passage`;
+                return (
+                  <div
                     key={o.id}
-                    className={
-                      'ligne-cliquable' +
-                      (((o.status === 'en_attente' && peutEncaisserCetteCommande(o)) || (o.status === 'renvoyee_vendeur' && peutTraiterRenvoi))
-                        ? ' ligne-prioritaire'
-                        : '')
-                    }
+                    className={'hv-carte' + (prioritaire ? ' hv-carte--prioritaire' : '')}
                     onClick={() => ouvrirDetailHistorique(o)}
                   >
-                    <td className="chiffre">{o.order_number}</td>
-                    <td>{o.client_name || `${libelleClient} de passage`}</td>
-                    <td className="chiffre">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
-                    <td>
+                    <div className="hv-avatar">{o.client_name ? o.client_name.trim()[0].toUpperCase() : 'P'}</div>
+
+                    <div className="hv-bloc">
+                      <p className="hv-numero chiffre">{o.order_number}</p>
+                      <p className="hv-sous">
+                        {nomClient}
+                        {o.created_at ? ` · ${new Date(o.created_at).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}
+                      </p>
+                    </div>
+
+                    <div className="hv-bloc hv-bloc--montant">
+                      <p className="hv-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
                       <StatusBadge status={o.status} />
-                      {o.has_return && (
-                        <span style={{ display: 'block', marginTop: 4, fontSize: 11, fontWeight: 700, color: 'var(--brique, #B84A3E)' }}>
-                          FACTURE RETOURNÉE
-                        </span>
+                      {o.has_return && <span className="hv-retour">FACTURE RETOURNÉE</span>}
+                    </div>
+
+                    <div className="hv-actions" onClick={(e) => e.stopPropagation()}>
+                      {peutEncaisserCetteCommande(o) && o.status === 'en_attente' && (
+                        <button
+                          className="btn btn-principal"
+                          style={{ padding: '5px 10px', fontSize: 13 }}
+                          disabled={chargementDetail}
+                          onClick={() => ouvrirEncaissement(o)}
+                        >
+                          Encaisser
+                        </button>
                       )}
-                    </td>
-                    {(peutEncaisser || peutGererStatut || peutTraiterRenvoi || peutTraiterRetour || peutDemanderRetour) && (
-                      <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }} onClick={(e) => e.stopPropagation()}>
-                        {peutEncaisserCetteCommande(o) && o.status === 'en_attente' && (
+                      {peutTraiterRenvoi && o.status === 'renvoyee_vendeur' && (
+                        <>
                           <button
                             className="btn btn-principal"
                             style={{ padding: '5px 10px', fontSize: 13 }}
                             disabled={chargementDetail}
-                            onClick={() => ouvrirEncaissement(o)}
+                            onClick={() => demarrerModification(o)}
                           >
-                            Encaisser
+                            Modifier
                           </button>
-                        )}
-                        {peutTraiterRenvoi && o.status === 'renvoyee_vendeur' && (
-                          <>
-                            <button
-                              className="btn btn-principal"
-                              style={{ padding: '5px 10px', fontSize: 13 }}
-                              disabled={chargementDetail}
-                              onClick={() => demarrerModification(o)}
-                            >
-                              Modifier
-                            </button>
-                            <button
-                              className="btn btn-brique"
-                              style={{ padding: '5px 10px', fontSize: 13 }}
-                              onClick={() => annulerCommandeRenvoyee(o)}
-                            >
-                              Annuler
-                            </button>
-                          </>
-                        )}
-                        {peutGererStatut && o.status === 'validee' && o.client_name && (
-                          <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handleStatut(o, 'livree')}>
-                            Marquer livrée
-                          </button>
-                        )}
-                        {peutGererStatut && ['en_attente', 'validee'].includes(o.status) && (
-                          <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handleStatut(o, 'annulee')}>
+                          <button
+                            className="btn btn-brique"
+                            style={{ padding: '5px 10px', fontSize: 13 }}
+                            onClick={() => annulerCommandeRenvoyee(o)}
+                          >
                             Annuler
                           </button>
-                        )}
-                        {(peutTraiterRetour || peutDemanderRetour) && !o.has_return && ['validee', 'livree'].includes(o.status) && (
-                          <button
-                            className="btn"
-                            style={{ padding: '5px 10px', fontSize: 13 }}
-                            disabled={chargementRetourCommande}
-                            onClick={() => ouvrirRetour(o)}
-                          >
-                            {peutTraiterRetour ? 'Retour' : 'Demander un retour'}
-                          </button>
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        </>
+                      )}
+                      {peutGererStatut && o.status === 'validee' && o.client_name && (
+                        <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handleStatut(o, 'livree')}>
+                          Marquer livrée
+                        </button>
+                      )}
+                      {peutGererStatut && ['en_attente', 'validee'].includes(o.status) && (
+                        <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handleStatut(o, 'annulee')}>
+                          Annuler
+                        </button>
+                      )}
+                      {(peutTraiterRetour || peutDemanderRetour) && !o.has_return && ['validee', 'livree'].includes(o.status) && (
+                        <button
+                          className="btn"
+                          style={{ padding: '5px 10px', fontSize: 13 }}
+                          disabled={chargementRetourCommande}
+                          onClick={() => ouvrirRetour(o)}
+                        >
+                          {peutTraiterRetour ? 'Retour' : 'Demander un retour'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </>
       )}
@@ -1969,35 +2055,29 @@ export function OrdersPage() {
             ) : (
               <>
                 <h2>{detailCommande.order_number}</h2>
-                {detailCommande.has_return && (
-                  <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--brique, #B84A3E)', marginBottom: 4 }}>
-                    FACTURE RETOURNÉE
-                  </p>
-                )}
-                <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-                  {detailCommande.client_name || `${libelleClient} de passage`} · <StatusBadge status={detailCommande.status} />
-                </p>
-                <table className="registre" style={{ marginBottom: 16 }}>
-                  <thead>
-                    <tr>
-                      <th>Produit</th>
-                      <th>Qté</th>
-                      <th>Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detailCommande.items.map((it) => (
-                      <tr key={it.id}>
-                        <td>{it.product_name}</td>
-                        <td className="chiffre">{it.quantity}</td>
-                        <td className="chiffre">{Math.round(it.line_total).toLocaleString('fr-FR')} FCFA</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <p style={{ fontWeight: 700, textAlign: 'right', marginBottom: 16 }}>
-                  Total : {Math.round(detailCommande.total_amount).toLocaleString('fr-FR')} FCFA
-                </p>
+                <div className="hv-detail-entete">
+                  <span>{detailCommande.client_name || `${libelleClient} de passage`}</span>
+                  <span>·</span>
+                  <StatusBadge status={detailCommande.status} />
+                  {detailCommande.has_return && (
+                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.04em', color: 'var(--brique, #B84A3E)' }}>
+                      FACTURE RETOURNÉE
+                    </span>
+                  )}
+                </div>
+                <div className="hv-detail-lignes">
+                  {detailCommande.items.map((it) => (
+                    <div key={it.id} className="hv-detail-ligne">
+                      <span>{it.product_name}</span>
+                      <span className="chiffre" style={{ color: 'var(--encre-douce)' }}>× {it.quantity}</span>
+                      <span className="chiffre" style={{ fontWeight: 600 }}>{Math.round(it.line_total).toLocaleString('fr-FR')} FCFA</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="hv-detail-total">
+                  <span>Total</span>
+                  <strong>{Math.round(detailCommande.total_amount).toLocaleString('fr-FR')} FCFA</strong>
+                </div>
                 <div className="actions-modale">
                   <button className="btn" onClick={() => setDetailCommande(null)}>Fermer</button>
                   {detailCommande.needs_delivery && (
