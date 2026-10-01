@@ -119,6 +119,15 @@ async function requestFormData(path, formData) {
   return body;
 }
 
+function qs(params = {}) {
+  const s = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== '') s.set(k, v);
+  });
+  const texte = s.toString();
+  return texte ? `?${texte}` : '';
+}
+
 export const api = {
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
@@ -320,6 +329,27 @@ export const api = {
     request(`/admin/merchants/${id}/warehouse-limit`, { method: 'PATCH', body: JSON.stringify({ maxWarehouses }) }),
   deleteMerchant: (id) => request(`/admin/merchants/${id}`, { method: 'DELETE' }),
   getMerchantTeam: (id) => request(`/admin/merchants/${id}/users`),
+
+  // Accès au module comptabilité, donné par l'owner commerçant par commerçant.
+  setMerchantAccounting: (id, enabled) =>
+    request(`/admin/merchants/${id}/accounting`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+
+  // Comptabilité (manager, si le module est activé).
+  getAccountingAccess: () => request('/accounting/access'),
+  getAccountingAccounts: () => request('/accounting/accounts'),
+  createAccountingAccount: (data) =>
+    request('/accounting/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  updateAccountingAccount: (id, data) =>
+    request(`/accounting/accounts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  getAccountingJournals: () => request('/accounting/journals'),
+  getAccountingEntries: (params) => request(`/accounting/entries${qs(params)}`),
+  createAccountingEntry: (data) =>
+    request('/accounting/entries', { method: 'POST', body: JSON.stringify(data) }),
+  deleteAccountingEntry: (id) => request(`/accounting/entries/${id}`, { method: 'DELETE' }),
+  getAccountingLedger: (params) => request(`/accounting/ledger${qs(params)}`),
+  getAccountingTrialBalance: (params) => request(`/accounting/trial-balance${qs(params)}`),
+  getAccountingIncomeStatement: (params) => request(`/accounting/income-statement${qs(params)}`),
+  getAccountingBalanceSheet: (params) => request(`/accounting/balance-sheet${qs(params)}`),
 
   // Maintenance par secteur (owner).
   getMaintenance: () => request('/admin/maintenance'),

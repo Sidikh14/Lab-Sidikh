@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getSecteurConfig } from '../config/sectorConfig';
+import { useAccountingAccess } from '../hooks/useAccountingAccess';
 
 function IconDashboard() {
   return (
@@ -125,6 +126,16 @@ function IconTransferts() {
   );
 }
 
+function IconComptabilite() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V4z" />
+      <path d="M5 17a3 3 0 0 1 3-3h11" />
+      <path d="M9 8h6M9 11h4" />
+    </svg>
+  );
+}
+
 const TOUS_LES_LIENS = [
   { to: '/stock', label: 'Produits', icone: IconStock, module: 'stock' },
   { to: '/ventes', label: 'Ventes', icone: IconVentes, module: 'ventes' },
@@ -162,6 +173,8 @@ function IconFermer() {
 export function Sidebar({ ouvert = false, onFermer }) {
   const { user, merchant, logout } = useAuth();
   const secteurConfig = getSecteurConfig(merchant?.sector);
+  // Module comptabilité : visible seulement si l'owner a donné l'accès.
+  const { enabled: comptaActive } = useAccountingAccess();
   const autorises = modulesAutorises(user);
   // "Fournisseurs" héberge aussi l'onglet Achats depuis la fusion des pages
   // (20/09) : le lien reste visible si le membre a l'un OU l'autre module.
@@ -221,6 +234,14 @@ export function Sidebar({ ouvert = false, onFermer }) {
             <NavLink to="/entreprise" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
               <IconEntreprise />
               Entreprise
+            </NavLink>
+          </li>
+        )}
+        {estManager && comptaActive && (
+          <li>
+            <NavLink to="/comptabilite" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
+              <IconComptabilite />
+              Comptabilité
             </NavLink>
           </li>
         )}

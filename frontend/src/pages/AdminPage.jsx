@@ -153,6 +153,15 @@ export function AdminPage() {
     }
   }
 
+  async function basculerComptabilite(commercant) {
+    try {
+      await api.setMerchantAccounting(commercant.id, !commercant.accounting_enabled);
+      await charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
   function ouvrirModalePlafond(commercant, type) {
     setModalePlafond({ commercant, type });
     setValeurPlafond(String(type === 'comptes' ? commercant.max_team_members : commercant.max_warehouses));
@@ -333,6 +342,9 @@ export function AdminPage() {
                   <button type="button" className="btn" style={boutonPetit} onClick={() => basculerStatutCommercant(c)}>
                     <IconCadenas />
                     {c.is_active ? 'Bloquer' : 'Débloquer'}
+                  </button>
+                  <button type="button" className="btn" style={boutonPetit} onClick={() => basculerComptabilite(c)}>
+                    {c.accounting_enabled ? 'Retirer la comptabilité' : 'Donner accès à la comptabilité'}
                   </button>
                   <button type="button" className="btn" style={boutonPetit} onClick={() => ouvrirModalePlafond(c, 'comptes')}>
                     <IconJauge />

@@ -8,6 +8,7 @@ const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { addLot } = require('../utils/lots');
 const { invalidateMaintenanceCache } = require('../middleware/maintenance');
+const { initialiserComptabilite } = require('../utils/accountingSetup');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -64,7 +65,7 @@ router.use(requireRole('owner'));
 router.get('/merchants', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT m.id, m.business_name, m.sector, m.email, m.is_active,
+      `SELECT m.id, m.business_name, m.sector, m.email, m.is_active, m.accounting_enabled,
               m.max_team_members, m.max_warehouses, m.created_at,
               (SELECT COUNT(*)::int FROM users u WHERE u.merchant_id = m.id) AS member_count,
               (SELECT COUNT(*)::int FROM warehouses w WHERE w.merchant_id = m.id) AS warehouse_count
@@ -138,6 +139,37 @@ router.patch('/merchants/:id/warehouse-limit', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la mise à jour du plafond.' });
+  }
+});
+
+// PATCH /admin/merchants/:id/accounting — donne ou retire l'accès au module
+// comptabilité. À la première activation, le plan comptable SYSCOHADA et les
+// journaux sont créés ; en retirant l'accès, les données sont conservées.
+router.patch('/merchants/:id/accounting', async (req, res) => {
+  const { enabled } = req.body;
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'enabled doit être un booléen.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `UPDATE merchants SET accounting_enabled = $1 WHERE id = $2 RETURNING id, business_name, accounting_enabled`,
+      [enabled, req.params.id]
+    );
+    if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Commerçant introuvable.' });
+    }
+    if (enabled) await initialiserComptabilite(client, req.params.id);
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors de la mise à jour de l'accès comptabilité." });
+  } finally {
+    client.release();
   }
 });
 

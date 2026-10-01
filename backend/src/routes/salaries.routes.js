@@ -23,6 +23,19 @@ function moisSuivant(moisStr) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function moisPrecedent(moisStr) {
+  const [annee, mois] = moisStr.split('-').map(Number);
+  const d = new Date(annee, mois - 2, 1); // mois est 1-indexé => mois - 2 donne le mois précédent
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Rappel de salaire : paie en fin de mois, pas au début.
+//  - à partir du 26 : rappel de payer le mois EN COURS ;
+//  - du 1er au 5 : rappel de ce qui reste impayé du mois PRÉCÉDENT ;
+//  - entre les deux : aucun rappel.
+const JOUR_DEBUT_RAPPEL = 26;
+const JOUR_FIN_RAPPEL_RETARD = 5;
+
 // Mois le plus avancé accessible : le mois en cours tant qu'il n'est pas
 // entièrement soldé, sinon le mois suivant (jamais plus loin).
 async function calculerMoisMax(merchantId) {
@@ -190,13 +203,20 @@ router.post('/:userId/pay', async (req, res) => {
   }
 });
 
-// GET /salaries/alert - employés non payés ce mois, actif seulement entre le 1er et le 5
+// GET /salaries/alert - employés non payés pour le mois concerné par le rappel
+// (voir JOUR_DEBUT_RAPPEL / JOUR_FIN_RAPPEL_RETARD) ; `month` indique ce mois.
 router.get('/alert', async (req, res) => {
   try {
     const day = new Date().getDate();
-    if (day < 1 || day > 5) return res.json({ show: false, unpaid: [] });
+    let month;
+    if (day >= JOUR_DEBUT_RAPPEL) {
+      month = moisActuel();
+    } else if (day <= JOUR_FIN_RAPPEL_RETARD) {
+      month = moisPrecedent(moisActuel());
+    } else {
+      return res.json({ show: false, unpaid: [] });
+    }
 
-    const month = moisActuel();
     const { rows } = await pool.query(
       `SELECT u.id, u.full_name AS name
        FROM users u
