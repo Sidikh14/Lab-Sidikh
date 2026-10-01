@@ -162,6 +162,17 @@ function modulesAutorises(user) {
   return MODULES_PAR_DEFAUT[user.role] || [];
 }
 
+const TITRE_SECTION = {
+  listStyle: 'none',
+  margin: '16px 0 4px',
+  padding: '0 12px',
+  fontSize: 11,
+  fontWeight: 600,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  opacity: 0.55,
+};
+
 function IconFermer() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -207,6 +218,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
           </button>
         </div>
       </div>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', overflowY: 'auto' }}>
       <ul className="nav-liste">
         <li>
           <NavLink to="/" end className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
@@ -214,6 +226,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
             Tableau de bord
           </NavLink>
         </li>
+        <li style={TITRE_SECTION}>Stock</li>
         {liens.map((lien) => {
           const Icone = lien.icone;
           return (
@@ -237,14 +250,6 @@ export function Sidebar({ ouvert = false, onFermer }) {
             </NavLink>
           </li>
         )}
-        {estManager && comptaActive && (
-          <li>
-            <NavLink to="/comptabilite" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
-              <IconComptabilite />
-              Comptabilité
-            </NavLink>
-          </li>
-        )}
         {voitEquipe && (
           <li>
             <NavLink to="/boutiques" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
@@ -262,6 +267,18 @@ export function Sidebar({ ouvert = false, onFermer }) {
           </li>
         )}
       </ul>
+      {estManager && comptaActive && (
+        <ul className="nav-liste">
+          <li style={TITRE_SECTION}>Comptabilité</li>
+          <li>
+            <NavLink to="/comptabilite" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
+              <IconComptabilite />
+              Comptabilité
+            </NavLink>
+          </li>
+        </ul>
+      )}
+      </div>
       {user && (
         <div className="pied-sidebar">
           <span className="avatar">{initiales}</span>
