@@ -350,6 +350,20 @@ export const api = {
   getAccountingTrialBalance: (params) => request(`/accounting/trial-balance${qs(params)}`),
   getAccountingIncomeStatement: (params) => request(`/accounting/income-statement${qs(params)}`),
   getAccountingBalanceSheet: (params) => request(`/accounting/balance-sheet${qs(params)}`),
+  syncAccounting: () => request('/accounting/sync', { method: 'POST' }),
+
+  // Charges (loyer, électricité…) comptabilisées automatiquement.
+  getAccountingCharges: () => request('/accounting/charges'),
+  createAccountingCharge: (data) =>
+    request('/accounting/charges', { method: 'POST', body: JSON.stringify(data) }),
+  updateAccountingCharge: (id, data) =>
+    request(`/accounting/charges/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  generateAccountingCharges: () => request('/accounting/charges/generate', { method: 'POST' }),
+  payAccountingCharge: (id, data) =>
+    request(`/accounting/charges/${id}/pay`, { method: 'POST', body: JSON.stringify(data) }),
+  getAccountingChargePostings: (params) => request(`/accounting/charges/postings${qs(params)}`),
+  cancelAccountingChargePosting: (id) =>
+    request(`/accounting/charges/postings/${id}`, { method: 'DELETE' }),
 
   // Maintenance par secteur (owner).
   getMaintenance: () => request('/admin/maintenance'),

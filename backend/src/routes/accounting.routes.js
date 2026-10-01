@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { requireModule } = require('../middleware/modules');
 const { logActivity } = require('../utils/activityLog');
+const { initialiserComptabilite } = require('../utils/accountingSetup');
 
 const router = express.Router();
 router.use(authenticate);
@@ -32,6 +33,14 @@ router.get('/access', async (req, res) => {
 // Tout le reste : manager uniquement ET module activé par l'owner.
 router.use(requireRole('manager'));
 router.use(requireModule('comptabilite'));
+
+// Les consultations (journal, grand livre, balance, résultat, bilan) lancent
+// d'abord la synchronisation automatique (au plus une fois toutes les 30 s) :
+// rien n'est à saisir ni à actualiser à la main.
+router.use(['/entries', '/ledger', '/trial-balance', '/income-statement', '/balance-sheet'], async (req, res, next) => {
+  if (req.method === 'GET') await assurerSynchro(req.user.merchantId, req.user.id);
+  next();
+});
 
 // ---------- Plan comptable ----------
 
@@ -564,6 +573,491 @@ router.delete('/charges/postings/:id', async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+// ---------- Synchronisation automatique ----------
+
+const DELAI_SYNCHRO_MS = 30000;
+const ETAT_SYNCHRO = new Map(); // merchantId -> { at, dernier, enCours }
+const PLAN_VERIFIE = new Set();
+
+// Insère des écritures automatiques par paquets de 500 (indispensable à la
+// première synchronisation, qui peut reprendre des milliers de ventes).
+async function creerEnLot(client, merchantId, userId, type, lot) {
+  if (lot.length === 0) return;
+  const base = await client.query(
+    `SELECT COALESCE(MAX(entry_number), 0) AS n FROM accounting_entries WHERE merchant_id = $1`,
+    [merchantId]
+  );
+  let numero = Number(base.rows[0].n);
+  for (let i = 0; i < lot.length; i += 500) {
+    const morceau = lot.slice(i, i + 500);
+    const numeros = morceau.map(() => ++numero);
+    const ins = await client.query(
+      `INSERT INTO accounting_entries (merchant_id, journal_id, entry_number, entry_date, reference, label, source_type, source_id, source_sig, created_by)
+       SELECT $1::uuid, t.j, t.n, t.d::date, t.r, t.l, $2::text, t.sid, t.sig, $3::uuid
+       FROM unnest($4::uuid[], $5::bigint[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[]) AS t(j, n, d, r, l, sid, sig)
+       RETURNING id, source_id`,
+      [merchantId, type, userId || null, morceau.map((e) => e.journalId), numeros, morceau.map((e) => e.date),
+        morceau.map((e) => e.reference || null), morceau.map((e) => e.label), morceau.map((e) => e.sourceId), morceau.map((e) => e.sig)]
+    );
+    const idParSource = new Map(ins.rows.map((r) => [r.source_id, r.id]));
+    const entrees = [];
+    const comptes = [];
+    const debits = [];
+    const credits = [];
+    const libelles = [];
+    for (const e of morceau) {
+      for (const l of e.lignes) {
+        entrees.push(idParSource.get(e.sourceId));
+        comptes.push(l.accountId);
+        debits.push(l.debit);
+        credits.push(l.credit);
+        libelles.push(e.label);
+      }
+    }
+    await client.query(
+      `INSERT INTO accounting_lines (entry_id, merchant_id, account_id, debit, credit, label)
+       SELECT t.e, $1::uuid, t.a, t.d, t.c, t.l
+       FROM unnest($2::uuid[], $3::uuid[], $4::numeric[], $5::numeric[], $6::text[]) AS t(e, a, d, c, l)`,
+      [merchantId, entrees, comptes, debits, credits, libelles]
+    );
+  }
+}
+
+// Compare les écritures voulues (calculées depuis la source) à celles déjà
+// générées : supprime ce qui n'existe plus ou a changé, crée ce qui manque.
+async function reconcilier(client, merchantId, userId, refs, type, voulues) {
+  const existantes = await client.query(
+    `SELECT id, source_id, source_sig FROM accounting_entries WHERE merchant_id = $1 AND source_type = $2`,
+    [merchantId, type]
+  );
+  const parSource = new Map(voulues.map((v) => [v.sourceId, v]));
+  const ok = new Set();
+  const aSupprimer = [];
+  for (const ex of existantes.rows) {
+    const v = parSource.get(ex.source_id);
+    if (v && v.sig === ex.source_sig && !ok.has(ex.source_id)) ok.add(ex.source_id);
+    else aSupprimer.push(ex.id);
+  }
+  if (aSupprimer.length > 0) {
+    await client.query(`DELETE FROM accounting_entries WHERE merchant_id = $1 AND id = ANY($2::uuid[])`, [merchantId, aSupprimer]);
+  }
+  const aCreer = [];
+  const erreurs = [];
+  for (const v of voulues) {
+    if (ok.has(v.sourceId)) continue;
+    const journalId = refs.journaux.get(v.journal);
+    const lignes = v.lignes
+      .filter((l) => l.debit > 0 || l.credit > 0)
+      .map((l) => ({ accountId: refs.comptesParCode.get(l.compte), debit: l.debit, credit: l.credit }));
+    if (!journalId || lignes.some((l) => !l.accountId)) {
+      erreurs.push(`${type} : compte ou journal manquant pour « ${v.label} »`);
+      continue;
+    }
+    const totalDebit = arrondi(lignes.reduce((t, l) => t + l.debit, 0));
+    const totalCredit = arrondi(lignes.reduce((t, l) => t + l.credit, 0));
+    if (totalDebit <= 0 || totalDebit !== totalCredit) {
+      erreurs.push(`${type} : écriture déséquilibrée ignorée (« ${v.label} »)`);
+      continue;
+    }
+    aCreer.push({ ...v, journalId, lignes });
+  }
+  await creerEnLot(client, merchantId, userId, type, aCreer);
+  return { crees: aCreer.length, supprimees: aSupprimer.length, erreurs };
+}
+
+// --- Sources : chacune renvoie les écritures qu'elle doit produire ---
+
+// Salaires versés (net payé) : débit 661 rémunérations, crédit trésorerie.
+async function lireSalaires(client, merchantId, debut) {
+  const r = await client.query(
+    `SELECT sp.id::text AS id, sp.month, sp.amount, sp.payment_method,
+            to_char(sp.paid_at::date, 'YYYY-MM-DD') AS d, u.full_name
+     FROM salary_payments sp JOIN users u ON u.id = sp.user_id
+     WHERE u.merchant_id = $1 AND sp.paid_at::date >= $2::date`,
+    [merchantId, debut]
+  );
+  return r.rows
+    .filter((row) => COMPTE_PAR_MODE[row.payment_method] && row.payment_method !== 'a_payer')
+    .map((row) => {
+      const montant = Number(row.amount);
+      return {
+        sourceId: row.id,
+        date: row.d,
+        journal: JOURNAL_PAR_MODE[row.payment_method],
+        reference: `SAL-${row.month}`,
+        label: `Salaire ${row.full_name} — ${row.month}`,
+        sig: `${montant}|${row.payment_method}|${row.d}|${row.full_name}`,
+        lignes: [
+          { compte: '661', debit: montant, credit: 0 },
+          { compte: COMPTE_PAR_MODE[row.payment_method], debit: 0, credit: montant },
+        ],
+      };
+    });
+}
+
+// --- Outils communs aux sources ---
+
+const sansAccent = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+// Les modes de paiement de plusieurs tables sont du texte libre : on les
+// ramène à 'especes' | 'wave' | 'orange_money' | 'virement' | 'cheque' |
+// 'credit' (dette ou avoir) | null (non reconnu).
+function modeNormalise(texte) {
+  const t = sansAccent(texte);
+  if (!t) return null;
+  if (t.includes('wave')) return 'wave';
+  if (t.includes('orange')) return 'orange_money';
+  if (t.includes('cheque')) return 'cheque';
+  if (t.includes('virement') || t.includes('banque') || t.includes('bank')) return 'virement';
+  if (t.includes('credit') || t.includes('dette') || t.includes('avoir') || t.includes('a_payer')) return 'credit';
+  if (t.includes('espece') || t.includes('cash') || t.includes('caisse')) return 'especes';
+  return null;
+}
+// mode -> [compte de trésorerie, journal]
+const TRESORERIE = {
+  especes: ['571', 'CA'], wave: ['5211', 'BQ'], orange_money: ['5212', 'BQ'], virement: ['521', 'BQ'], cheque: ['513', 'BQ'],
+};
+const tresorerie = (mode) => TRESORERIE[mode] || TRESORERIE.especes;
+const ligne = (compte, debit, credit) => ({ compte, debit: arrondi(debit), credit: arrondi(credit) });
+const SQL_JOUR_TZ = (col) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD')`;
+
+// Ventes validées ou livrées : produit (701) et TVA (443) d'un côté ; caisse,
+// banque, clients (411) ou assurance (4111) de l'autre ; plus la sortie de
+// stock au prix de revient (débit 6031, crédit 311).
+async function lireVentes(client, merchantId, debut) {
+  const r = await client.query(
+    `SELECT o.id::text AS id, o.order_seq, o.payment_method::text AS pm,
+            COALESCE(o.total_amount, 0) AS total, COALESCE(o.tva_amount, 0) AS tva,
+            ${SQL_JOUR_TZ('COALESCE(o.validated_at, o.delivered_at, o.created_at)')} AS d,
+            COALESCE((SELECT SUM(oi.quantity * COALESCE(oi.unit_cost, 0)) FROM order_items oi WHERE oi.order_id = o.id), 0) AS cogs,
+            COALESCE((SELECT SUM(c.amount) FROM insurer_copayments c WHERE c.order_id = o.id), 0) AS copay,
+            (SELECT c.payment_method FROM insurer_copayments c WHERE c.order_id = o.id LIMIT 1) AS copay_pm
+     FROM orders o
+     WHERE o.merchant_id = $1 AND o.status IN ('validee', 'livree')
+       AND COALESCE(o.validated_at, o.delivered_at, o.created_at) >= $2::date`,
+    [merchantId, debut]
+  );
+  const out = [];
+  for (const row of r.rows) {
+    const total = arrondi(row.total);
+    if (!(total > 0)) continue;
+    const tva = Math.min(arrondi(row.tva), total);
+    const ht = arrondi(total - tva);
+    const cogs = arrondi(row.cogs);
+    const lignes = [];
+    if (row.pm === 'a_credit') {
+      lignes.push(ligne('411', total, 0));
+    } else if (row.pm === 'tiers_payant') {
+      const part = Math.min(arrondi(row.copay), total);
+      if (part > 0) lignes.push(ligne(tresorerie(modeNormalise(row.copay_pm))[0], part, 0));
+      if (total - part > 0) lignes.push(ligne('4111', total - part, 0));
+    } else {
+      lignes.push(ligne(tresorerie(modeNormalise(row.pm))[0], total, 0));
+    }
+    if (ht > 0) lignes.push(ligne('701', 0, ht));
+    if (tva > 0) lignes.push(ligne('443', 0, tva));
+    if (cogs > 0) {
+      lignes.push(ligne('6031', cogs, 0));
+      lignes.push(ligne('311', 0, cogs));
+    }
+    out.push({
+      sourceId: row.id, date: row.d, journal: 'VT', reference: row.order_seq ? `V${row.order_seq}` : null,
+      label: `Vente${row.order_seq ? ` n°${row.order_seq}` : ''}`,
+      sig: `${total}|${tva}|${row.pm}|${cogs}|${row.copay}|${row.d}`,
+      lignes,
+    });
+  }
+  return out;
+}
+
+// Retours clients remboursés : annule la vente (701, TVA) et remet en stock
+// au prix de revient de la vente d'origine.
+async function lireRetours(client, merchantId, debut) {
+  const r = await client.query(
+    `SELECT pr.id::text AS id, pr.refund_amount AS refund, pr.refund_method, pr.quantity,
+            ${SQL_JOUR_TZ('pr.created_at')} AS d, o.order_seq,
+            COALESCE(o.total_amount, 0) AS o_total, COALESCE(o.tva_amount, 0) AS o_tva,
+            (SELECT AVG(oi.unit_cost) FROM order_items oi WHERE oi.order_id = pr.order_id AND oi.product_id = pr.product_id) AS cost
+     FROM product_returns pr LEFT JOIN orders o ON o.id = pr.order_id
+     WHERE pr.merchant_id = $1 AND pr.created_at >= $2::date AND COALESCE(pr.refund_amount, 0) > 0`,
+    [merchantId, debut]
+  );
+  const out = [];
+  for (const row of r.rows) {
+    const refund = arrondi(row.refund);
+    const oTotal = Number(row.o_total);
+    const oTva = Number(row.o_tva);
+    const tvaPart = oTotal > 0 && oTva > 0 ? arrondi(Math.min((refund * oTva) / oTotal, refund)) : 0;
+    const ht = arrondi(refund - tvaPart);
+    const mode = modeNormalise(row.refund_method);
+    const valeur = arrondi((Number(row.cost) || 0) * (Number(row.quantity) || 0));
+    const lignes = [];
+    if (ht > 0) lignes.push(ligne('701', ht, 0));
+    if (tvaPart > 0) lignes.push(ligne('443', tvaPart, 0));
+    lignes.push(mode === 'credit' ? ligne('411', 0, refund) : ligne(tresorerie(mode)[0], 0, refund));
+    if (valeur > 0) {
+      lignes.push(ligne('311', valeur, 0));
+      lignes.push(ligne('6031', 0, valeur));
+    }
+    out.push({
+      sourceId: row.id, date: row.d, journal: 'VT', reference: 'RET',
+      label: `Retour client${row.order_seq ? ` — vente n°${row.order_seq}` : ''}`,
+      sig: `${refund}|${row.refund_method}|${valeur}|${row.d}`,
+      lignes,
+    });
+  }
+  return out;
+}
+
+// Règlements reçus des clients à crédit : débit trésorerie, crédit 411.
+async function lireReglementsClients(client, merchantId, debut) {
+  const r = await client.query(
+    `SELECT id::text AS id, amount, payment_method, to_char(created_at, 'YYYY-MM-DD') AS d
+     FROM credit_payments WHERE merchant_id = $1 AND created_at >= $2::date AND COALESCE(amount, 0) > 0`,
+    [merchantId, debut]
+  );
+  return r.rows.map((row) => {
+    const montant = arrondi(row.amount);
+    const [compte, journal] = tresorerie(modeNormalise(row.payment_method));
+    return {
+      sourceId: row.id, date: row.d, journal, reference: 'RGL', label: 'Règlement client',
+      sig: `${montant}|${row.payment_method}|${row.d}`,
+      lignes: [ligne(compte, montant, 0), ligne('411', 0, montant)],
+    };
+  });
+}
+
+// Règlements reçus des assureurs (tiers payant) : débit trésorerie, crédit 4111.
+async function lireReglementsAssureurs(client, merchantId, debut) {
+  const r = await client.query(
+    `SELECT id::text AS id, amount, payment_method, ${SQL_JOUR_TZ('paid_at')} AS d
+     FROM insurer_payments WHERE merchant_id = $1 AND paid_at >= $2::date AND COALESCE(amount, 0) > 0`,
+    [merchantId, debut]
+  );
+  return r.rows.map((row) => {
+    const montant = arrondi(row.amount);
+    const [compte, journal] = tresorerie(modeNormalise(row.payment_method));
+    return {
+      sourceId: row.id, date: row.d, journal, reference: 'ASS', label: 'Règlement assureur',
+      sig: `${montant}|${row.payment_method}|${row.d}`,
+      lignes: [ligne(compte, montant, 0), ligne('4111', 0, montant)],
+    };
+  });
+}
+
+// Achats (entrées de stock avec un coût, hors transferts), regroupés par
+// jour / fournisseur / facture / mode de paiement : achat (601) contre
+// trésorerie ou fournisseurs (401), plus l'entrée en stock (311 / 6031).
+async function lireAchats(client, merchantId, debut, ctx) {
+  const jour = `COALESCE(m.movement_date, (m.created_at AT TIME ZONE 'UTC')::date)`;
+  const r = await client.query(
+    `SELECT MIN(m.id::text) AS id, SUM(m.total_cost) AS total, m.payment_method AS pm, m.cash_method AS cm,
+            m.invoice_number AS inv, to_char(${jour}, 'YYYY-MM-DD') AS d, MAX(s.name) AS supplier
+     FROM stock_movements m LEFT JOIN suppliers s ON s.id = m.supplier_id
+     WHERE m.merchant_id = $1 AND m.movement_type = 'entree' AND m.transfer_id IS NULL
+       AND COALESCE(m.total_cost, 0) > 0 AND ${jour} >= $2::date
+     GROUP BY m.supplier_id, m.payment_method, m.cash_method, m.invoice_number, ${jour}`,
+    [merchantId, debut]
+  );
+  const sansCout = await client.query(
+    `SELECT COUNT(*) AS n FROM stock_movements m
+     WHERE m.merchant_id = $1 AND m.movement_type = 'entree' AND m.transfer_id IS NULL
+       AND COALESCE(m.total_cost, 0) = 0 AND ${jour} >= $2::date`,
+    [merchantId, debut]
+  );
+  if (Number(sansCout.rows[0].n) > 0) {
+    ctx.avertissements.push(`${sansCout.rows[0].n} entrée(s) de stock sans coût d'achat : non comptabilisées comme achats (elles apparaissent dans l'ajustement automatique du stock).`);
+  }
+  let inconnus = 0;
+  const out = r.rows.map((row) => {
+    const total = arrondi(row.total);
+    const p = modeNormalise(row.pm);
+    const c = modeNormalise(row.cm);
+    let compteCredit = '401';
+    if (p !== 'credit') {
+      const mode = c && c !== 'credit' ? c : p && p !== 'credit' ? p : null;
+      if (mode) compteCredit = tresorerie(mode)[0];
+      else inconnus += 1;
+    }
+    return {
+      sourceId: row.id, date: row.d, journal: 'AC', reference: row.inv || null,
+      label: `Achat${row.supplier ? ` — ${row.supplier}` : ''}`,
+      sig: `${total}|${row.pm}|${row.cm}|${row.inv}|${row.d}|${row.supplier}`,
+      lignes: [ligne('601', total, 0), ligne(compteCredit, 0, total), ligne('311', total, 0), ligne('6031', 0, total)],
+    };
+  });
+  if (inconnus > 0) ctx.avertissements.push(`${inconnus} achat(s) au mode de paiement non reconnu : comptabilisés en dette fournisseur (401).`);
+  return out;
+}
+
+// Règlements aux fournisseurs : débit 401, crédit trésorerie.
+async function lireReglementsFournisseurs(client, merchantId, debut) {
+  const r = await client.query(
+    `SELECT sp.id::text AS id, sp.amount, sp.payment_method, to_char(sp.paid_at, 'YYYY-MM-DD') AS d, s.name AS supplier
+     FROM supplier_payments sp LEFT JOIN suppliers s ON s.id = sp.supplier_id
+     WHERE sp.merchant_id = $1 AND sp.paid_at >= $2::date AND COALESCE(sp.amount, 0) > 0`,
+    [merchantId, debut]
+  );
+  return r.rows.map((row) => {
+    const montant = arrondi(row.amount);
+    const [compte, journal] = tresorerie(modeNormalise(row.payment_method));
+    return {
+      sourceId: row.id, date: row.d, journal, reference: 'RGF',
+      label: `Règlement fournisseur${row.supplier ? ` — ${row.supplier}` : ''}`,
+      sig: `${montant}|${row.payment_method}|${row.d}|${row.supplier}`,
+      lignes: [ligne('401', montant, 0), ligne(compte, 0, montant)],
+    };
+  });
+}
+
+// Valeur du stock : le stock réel (quantités × prix de revient) est la
+// référence. Deux écritures automatiques font coïncider le compte 311 avec lui :
+//  - "ouverture" (figée) : stock déjà présent au début de la comptabilité,
+//    contrepartie 121 (report à nouveau) ;
+//  - "ecart" (recalculée) : pertes, casse ou surplus constatés ensuite, via 6031.
+async function lireStock(client, merchantId, debut, ctx) {
+  if (ctx.echec) return null; // une source a échoué : on ne touche pas au stock
+  const val = await client.query(
+    `SELECT COALESCE(SUM(ps.quantity_in_stock * COALESCE(p.cost_price, 0)), 0) AS v,
+            COUNT(*) FILTER (WHERE COALESCE(p.cost_price, 0) = 0) AS sans_prix
+     FROM product_stock ps JOIN products p ON p.id = ps.product_id
+     WHERE ps.merchant_id = $1 AND ps.quantity_in_stock > 0`,
+    [merchantId]
+  );
+  const valeurReelle = arrondi(val.rows[0].v);
+  if (Number(val.rows[0].sans_prix) > 0) {
+    ctx.avertissements.push(`${val.rows[0].sans_prix} produit(s) en stock sans prix de revient : valeur du stock sous-estimée.`);
+  }
+  const flux = await client.query(
+    `SELECT COALESCE(SUM(l.debit - l.credit), 0) AS solde
+     FROM accounting_lines l JOIN accounting_entries e ON e.id = l.entry_id JOIN accounting_accounts a ON a.id = l.account_id
+     WHERE l.merchant_id = $1 AND a.code = '311' AND e.source_type <> 'stock'`,
+    [merchantId]
+  );
+  const ledger = arrondi(flux.rows[0].solde);
+  const ouv = await client.query(
+    `SELECT COALESCE(SUM(l.debit), 0) AS montant
+     FROM accounting_entries e JOIN accounting_lines l ON l.entry_id = e.id JOIN accounting_accounts a ON a.id = l.account_id
+     WHERE e.merchant_id = $1 AND e.source_type = 'stock' AND e.source_id = 'ouverture' AND a.code = '311'`,
+    [merchantId]
+  );
+  let ouverture = arrondi(ouv.rows[0].montant);
+  if (ouverture <= 0) ouverture = Math.max(0, arrondi(valeurReelle - ledger));
+
+  const out = [];
+  if (ouverture > 0) {
+    out.push({
+      sourceId: 'ouverture', date: debut, journal: 'OD', reference: 'STOCK-INIT',
+      label: 'Stock initial (repris automatiquement)', sig: 'ouverture',
+      lignes: [ligne('311', ouverture, 0), ligne('121', 0, ouverture)],
+    });
+  }
+  const ecart = arrondi(valeurReelle - (ledger + ouverture));
+  if (Math.abs(ecart) >= 1) {
+    out.push({
+      sourceId: 'ecart', date: aujourdhui(), journal: 'OD', reference: 'STOCK-AJ',
+      label: 'Ajustement automatique de la valeur du stock', sig: String(ecart),
+      lignes: ecart > 0 ? [ligne('311', ecart, 0), ligne('6031', 0, ecart)] : [ligne('6031', -ecart, 0), ligne('311', 0, -ecart)],
+    });
+  }
+  return out;
+}
+
+// L'ordre compte : le stock vient en dernier, une fois tous les flux comptabilisés.
+const SOURCES = [
+  { type: 'vente', lire: lireVentes },
+  { type: 'retour', lire: lireRetours },
+  { type: 'reglement_client', lire: lireReglementsClients },
+  { type: 'reglement_assureur', lire: lireReglementsAssureurs },
+  { type: 'achat', lire: lireAchats },
+  { type: 'reglement_fournisseur', lire: lireReglementsFournisseurs },
+  { type: 'salaire', lire: lireSalaires },
+  { type: 'stock', lire: lireStock },
+];
+
+async function synchroniserMaintenant(merchantId, userId) {
+  const resume = { created: 0, removed: 0, errors: [], warnings: [] };
+  const ctx = { avertissements: resume.warnings, echec: false };
+  try {
+    resume.created += await genererChargesRecurrentes(merchantId, userId);
+  } catch (err) {
+    console.error('Synchro charges :', err);
+    resume.errors.push('charges');
+  }
+
+  const client = await pool.connect();
+  try {
+    const m = await client.query(
+      `SELECT COALESCE(accounting_start_date, date_trunc('year', CURRENT_DATE)::date)::text AS debut FROM merchants WHERE id = $1`,
+      [merchantId]
+    );
+    const debut = m.rows[0]?.debut;
+    if (!debut) return resume;
+
+    // Ajoute au plan comptable les comptes ajoutés depuis l'activation (une fois par démarrage).
+    if (!PLAN_VERIFIE.has(merchantId)) {
+      await initialiserComptabilite(client, merchantId);
+      PLAN_VERIFIE.add(merchantId);
+    }
+
+    for (const source of SOURCES) {
+      try {
+        await client.query('BEGIN');
+        await verrouiller(client, merchantId);
+        const comptes = await client.query(`SELECT id, code FROM accounting_accounts WHERE merchant_id = $1`, [merchantId]);
+        const journaux = await client.query(`SELECT id, code FROM accounting_journals WHERE merchant_id = $1`, [merchantId]);
+        const refs = {
+          comptesParCode: new Map(comptes.rows.map((r) => [r.code, r.id])),
+          journaux: new Map(journaux.rows.map((r) => [r.code, r.id])),
+        };
+        const voulues = await source.lire(client, merchantId, debut, ctx);
+        if (voulues === null) {
+          await client.query('ROLLBACK');
+          continue;
+        }
+        const r = await reconcilier(client, merchantId, userId, refs, source.type, voulues);
+        await client.query('COMMIT');
+        resume.created += r.crees;
+        resume.removed += r.supprimees;
+        resume.errors.push(...r.erreurs);
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error(`Synchro ${source.type} :`, err);
+        resume.errors.push(source.type);
+        ctx.echec = true;
+      }
+    }
+  } finally {
+    client.release();
+  }
+  return resume;
+}
+
+// Lance la synchronisation si elle n'a pas tourné depuis 30 s (ou si force).
+// Ne lève jamais d'erreur : un échec de synchro ne doit pas bloquer la lecture.
+async function assurerSynchro(merchantId, userId, force = false) {
+  const etat = ETAT_SYNCHRO.get(merchantId) || {};
+  if (etat.enCours) return etat.enCours;
+  if (!force && etat.at && Date.now() - etat.at < DELAI_SYNCHRO_MS) return etat.dernier;
+  const enCours = synchroniserMaintenant(merchantId, userId)
+    .catch((err) => {
+      console.error('Synchronisation comptable :', err);
+      return { created: 0, removed: 0, errors: ['synchronisation'], warnings: [] };
+    })
+    .then((resultat) => {
+      ETAT_SYNCHRO.set(merchantId, { at: Date.now(), dernier: resultat });
+      return resultat;
+    });
+  ETAT_SYNCHRO.set(merchantId, { ...etat, enCours });
+  return enCours;
+}
+
+// POST /accounting/sync — force une synchronisation immédiate (bouton "Actualiser").
+router.post('/sync', async (req, res) => {
+  const resultat = await assurerSynchro(req.user.merchantId, req.user.id, true);
+  res.json(resultat);
 });
 
 // ---------- États ----------
