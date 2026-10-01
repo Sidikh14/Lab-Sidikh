@@ -140,6 +140,25 @@ const CSS_DASHBOARD = `
 .db-histo-val{font-size:11px;white-space:nowrap;color:var(--encre-douce);font-variant-numeric:tabular-nums}
 .db-histo-col--jour .db-histo-val{color:var(--accent);font-weight:700}
 .db-histo-label{font-size:12px;color:var(--encre-douce)}
+.db-cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start;margin-bottom:24px}
+.db-puces{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
+.db-puce{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--trait,#e5e7eb);border-radius:999px;background:var(--surface,#fff);color:var(--encre-douce);font-size:12px;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.db-puce:hover{border-color:var(--accent)}
+.db-puce.actif{background:var(--accent);border-color:var(--accent);color:#fff}
+.db-puce span{opacity:.75;font-variant-numeric:tabular-nums}
+.db-titre-section{margin:14px 0 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--encre-douce)}
+.db-ligne{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--trait,#e5e7eb)}
+.db-ligne:first-of-type{border-top:none}
+.db-titre-section + .db-ligne{border-top:none}
+.db-pastille{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:38px;height:38px;border-radius:11px;font-size:14px;font-weight:700;background:#eef2ff;background:var(--accent-clair,#eef2ff);color:var(--accent)}
+.db-pastille--danger{background:var(--danger-clair,#fef2f2);color:var(--danger,#b91c1c)}
+.db-ligne-droite{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.db-montant-ligne{margin:0;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.db-table{background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:14px;overflow-x:auto}
+.db-table table{width:100%;margin:0 !important;border-collapse:collapse}
+.db-table th{padding:10px 14px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;text-align:left;color:var(--encre-douce);background:var(--fond,#f9fafb);border-bottom:1px solid var(--trait,#e5e7eb)}
+.db-table td{padding:12px 14px;border-top:1px solid var(--trait,#e5e7eb)}
+.db-table tbody tr:first-child td{border-top:none}
 .db-alerte{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--trait,#e5e7eb)}
 .db-alerte:first-child{border-top:none;padding-top:0}
 .db-alerte-nom{margin:0;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -152,7 +171,7 @@ const CSS_DASHBOARD = `
 .db-barre-montant{margin:0;font-size:14px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
 .db-barre-sous{display:block;font-size:11px;font-weight:400;color:var(--encre-douce)}
 @media (max-width:860px){
-  .db-grille{grid-template-columns:1fr}
+  .db-grille,.db-cols{grid-template-columns:1fr}
   .db-barre-ligne{grid-template-columns:minmax(0,1fr) auto}
   .db-barre-piste{grid-column:1 / -1;order:3}
 }
@@ -190,6 +209,7 @@ export function DashboardPage() {
   const [alerteSalaires, setAlerteSalaires] = useState(null);
   const [lotsBientotPerimes, setLotsBientotPerimes] = useState([]);
   const [horizonOuvert, setHorizonOuvert] = useState(null);
+  const [filtreAlerte, setFiltreAlerte] = useState('toutes');
   const [lotsPerimes, setLotsPerimes] = useState(null);
   const [registreDestructions, setRegistreDestructions] = useState(null);
   const [destructionEnCours, setDestructionEnCours] = useState(null);
@@ -823,126 +843,194 @@ export function DashboardPage() {
 
       {onglet === 'suivi' && vueEquipe && (
         <>
-          <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: 280 }}>
-              <h2 style={{ fontSize: 16, marginBottom: 12 }}>Alertes de seuil</h2>
-              {enRupture.length + enFaible.length === 0 ? (
-                <p className="etat-vide">Aucune alerte de seuil pour le moment.</p>
+          <div className="db-kpis">
+            <div className={'db-kpi' + (enRupture.length > 0 ? ' db-kpi--alerte' : '')}>
+              <span className="db-kpi-icone"><IconAlerte /></span>
+              <p className="db-kpi-label">En rupture</p>
+              <p className="db-kpi-valeur">{enRupture.length}</p>
+              <p className="db-kpi-sous">à réapprovisionner</p>
+            </div>
+            <div className={'db-kpi' + (enFaible.length > 0 ? ' db-kpi--alerte' : '')}>
+              <span className="db-kpi-icone"><IconAlerte /></span>
+              <p className="db-kpi-label">Stock faible</p>
+              <p className="db-kpi-valeur">{enFaible.length}</p>
+              <p className="db-kpi-sous">sous le seuil d'alerte</p>
+            </div>
+            <div className="db-kpi db-kpi--hero">
+              <span className="db-kpi-icone"><IconCamion /></span>
+              <p className="db-kpi-label">À livrer</p>
+              <p className="db-kpi-valeur">{aLivrer.length}</p>
+              <p className="db-kpi-sous">{fcfa(aLivrer.reduce((somme, o) => somme + Number(o.total_amount || 0), 0))} FCFA</p>
+            </div>
+            {estPharmacie && lotsPerimes && (
+              <div className={'db-kpi' + (lotsPerimes.count > 0 ? ' db-kpi--alerte' : '')}>
+                <span className="db-kpi-icone"><IconAlerte /></span>
+                <p className="db-kpi-label">Lots périmés</p>
+                <p className="db-kpi-valeur">{lotsPerimes.count}</p>
+                <p className="db-kpi-sous">{fcfa(lotsPerimes.totalValue)} FCFA à retirer</p>
+              </div>
+            )}
+          </div>
+
+          <div className="db-cols">
+            <div className="db-carte">
+              <div className="db-carte-tete">
+                <h2>Alertes de seuil</h2>
+                <span>{alertesStock.length}</span>
+              </div>
+
+              {alertesStock.length === 0 ? (
+                <p className="etat-vide" style={{ padding: '12px 0' }}>Aucune alerte de seuil pour le moment.</p>
               ) : (
-                <div className="liste-a-encaisser">
-                  {[...enRupture, ...enFaible].map((p) => (
-                    <div key={p.id} className="carte-a-encaisser">
-                      <span
-                        className="stat-icone"
-                        style={{
-                          width: 36,
-                          height: 36,
-                          flexShrink: 0,
-                          background: p.status === 'rupture' ? 'var(--danger-clair)' : 'var(--accent-clair)',
-                          color: p.status === 'rupture' ? 'var(--danger)' : 'var(--accent)',
-                        }}
+                <>
+                  <div className="db-puces">
+                    {[
+                      { valeur: 'toutes', libelle: 'Toutes', nb: alertesStock.length },
+                      { valeur: 'rupture', libelle: 'Ruptures', nb: enRupture.length },
+                      { valeur: 'faible', libelle: 'Stock faible', nb: enFaible.length },
+                    ].map((f) => (
+                      <button
+                        key={f.valeur}
+                        type="button"
+                        className={'db-puce' + (filtreAlerte === f.valeur ? ' actif' : '')}
+                        onClick={() => setFiltreAlerte(f.valeur)}
                       >
-                        <IconAlerte />
-                      </span>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <p className="carte-a-encaisser-numero">{p.name}</p>
-                        <p className="carte-a-encaisser-client">{formaterQuantite(p.quantity_in_stock)} en stock</p>
+                        {f.libelle} <span>{f.nb}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {[
+                    { statut: 'rupture', titre: 'Ruptures de stock', liste: enRupture },
+                    { statut: 'faible', titre: 'Stock faible', liste: enFaible },
+                  ]
+                    .filter((g) => g.liste.length > 0 && (filtreAlerte === 'toutes' || filtreAlerte === g.statut))
+                    .map((g) => (
+                      <div key={g.statut}>
+                        {filtreAlerte === 'toutes' && <p className="db-titre-section">{g.titre} · {g.liste.length}</p>}
+                        {g.liste.map((p) => (
+                          <div key={p.id} className="db-ligne">
+                            <span className={'db-pastille' + (g.statut === 'rupture' ? ' db-pastille--danger' : '')}>
+                              <IconAlerte />
+                            </span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p className="db-alerte-nom">{p.name}</p>
+                              <p className="db-alerte-qte">
+                                {formaterQuantite(p.quantity_in_stock)} en stock
+                                {p.quantity_alert_threshold !== undefined && p.quantity_alert_threshold !== null
+                                  ? ` · seuil ${formaterQuantite(p.quantity_alert_threshold)}`
+                                  : ''}
+                              </p>
+                            </div>
+                            <StatusBadge status={p.status} />
+                          </div>
+                        ))}
                       </div>
-                      <StatusBadge status={p.status} />
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                </>
               )}
             </div>
 
-            <div style={{ flex: 1, minWidth: 280 }}>
-              <h2 style={{ fontSize: 16, marginBottom: 12 }}>Commandes à livrer</h2>
+            <div className="db-carte">
+              <div className="db-carte-tete">
+                <h2>Commandes à livrer</h2>
+                <span>{aLivrer.length}</span>
+              </div>
+
               {aLivrer.length === 0 ? (
-                <p className="etat-vide">Aucune commande à livrer pour le moment.</p>
+                <p className="etat-vide" style={{ padding: '12px 0' }}>Aucune commande à livrer pour le moment.</p>
               ) : (
-                <div className="liste-a-encaisser">
-                  {aLivrer.map((o) => (
-                    <div key={o.id} className="carte-a-encaisser">
-                      <span className="stat-icone" style={{ width: 36, height: 36, flexShrink: 0 }}>
-                        <IconCamion />
-                      </span>
-                      <div className="ligne-cliquable" style={{ minWidth: 0, flex: 1 }} onClick={() => ouvrirDetailCommande(o.id)}>
-                        <p className="carte-a-encaisser-numero">{o.order_number}</p>
-                        <p className="carte-a-encaisser-client">{o.client_name || 'Client de passage'}</p>
-                      </div>
-                      <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
-                      <button className="btn btn-principal" onClick={() => marquerCommandeLivree(o)}>Marquer comme livrée</button>
+                aLivrer.map((o) => (
+                  <div key={o.id} className="db-ligne db-ligne--livraison">
+                    <span className="db-pastille">
+                      {o.client_name ? o.client_name.trim()[0].toUpperCase() : <IconCamion />}
+                    </span>
+                    <div className="ligne-cliquable" style={{ flex: 1, minWidth: 0 }} onClick={() => ouvrirDetailCommande(o.id)}>
+                      <p className="db-alerte-nom">{o.order_number}</p>
+                      <p className="db-alerte-qte">
+                        {o.client_name || 'Client de passage'} · {new Date(o.created_at).toLocaleDateString('fr-FR')}
+                      </p>
                     </div>
-                  ))}
-                </div>
+                    <div className="db-ligne-droite">
+                      <p className="db-montant-ligne">{fcfa(o.total_amount)} FCFA</p>
+                      <button className="btn btn-principal" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => marquerCommandeLivree(o)}>
+                        Marquer livrée
+                      </button>
+                    </div>
+                  </div>
+                ))
               )}
             </div>
           </div>
 
           {estPharmacie && (
-            <div style={{ marginTop: 24 }}>
-              <h2 style={{ fontSize: 16, marginBottom: 12 }}>Registre des destructions</h2>
-              {!registreDestructions || registreDestructions.destructions.length === 0 ? (
-                <p className="etat-vide">Aucun lot périmé détruit pour le moment.</p>
+            <div style={{ marginBottom: 24 }}>
+              <div className="db-carte-tete">
+                <h2 style={{ margin: 0, fontSize: 16 }}>Périmés imminents</h2>
+              </div>
+              {lotsBientotPerimes.every((h) => h.count === 0) ? (
+                <p className="etat-vide">Aucun lot bientôt périmé.</p>
               ) : (
-                <>
-                  <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 8 }}>
-                    {Math.round(registreDestructions.totalQuantity)} unité(s) sorties du stock · {Math.round(registreDestructions.totalValue).toLocaleString('fr-FR')} FCFA de valeur détruite
-                  </p>
-                  <div style={{ overflowX: 'auto' }}>
-                    <table className="registre" style={{ marginBottom: 16 }}>
-                      <thead>
-                        <tr>
-                          <th>Détruit le</th>
-                          <th>Produit</th>
-                          <th>N° de lot</th>
-                          <th>Péremption</th>
-                          <th>Qté</th>
-                          <th>Valeur</th>
-                          <th>Par</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {registreDestructions.destructions.map((d) => (
-                          <tr key={d.id}>
-                            <td>{new Date(d.destroyed_at).toLocaleDateString('fr-FR')}</td>
-                            <td>{d.product_name}</td>
-                            <td>{d.lot_number || '—'}</td>
-                            <td>{d.expiry_date ? new Date(d.expiry_date).toLocaleDateString('fr-FR') : '—'}</td>
-                            <td className="chiffre">{Math.round(Number(d.quantity))}</td>
-                            <td className="chiffre">{Math.round(Number(d.lost_value)).toLocaleString('fr-FR')} FCFA</td>
-                            <td>{d.destroyed_by_name || '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
+                <div className="db-kpis">
+                  {lotsBientotPerimes.map((h) => (
+                    <div
+                      key={h.horizon}
+                      className={'db-kpi' + (h.count > 0 ? ' db-kpi--clic db-kpi--alerte' : '')}
+                      onClick={() => h.count > 0 && setHorizonOuvert(h)}
+                    >
+                      <span className="db-kpi-icone"><IconAlerte /></span>
+                      <p className="db-kpi-label">
+                        {h.horizon === '3_mois' ? '≤ 3 mois' : h.horizon === '6_mois' ? '3 à 6 mois' : '6 à 12 mois'}
+                      </p>
+                      <p className="db-kpi-valeur">{h.count}</p>
+                      {h.count > 0 && <p className="db-kpi-sous">{fcfa(h.totalValue)} FCFA en jeu · voir le détail</p>}
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}
 
           {estPharmacie && (
-            <div style={{ marginTop: 24 }}>
-              <h2 style={{ fontSize: 16, marginBottom: 12 }}>Périmés imminents</h2>
-              {lotsBientotPerimes.every((h) => h.count === 0) ? (
-                <p className="etat-vide">Aucun lot bientôt périmé.</p>
+            <div style={{ marginBottom: 24 }}>
+              <div className="db-carte-tete">
+                <h2 style={{ margin: 0, fontSize: 16 }}>Registre des destructions</h2>
+                {registreDestructions && registreDestructions.destructions.length > 0 && (
+                  <span>
+                    {Math.round(registreDestructions.totalQuantity)} unité(s) · {fcfa(registreDestructions.totalValue)} FCFA détruits
+                  </span>
+                )}
+              </div>
+              {!registreDestructions || registreDestructions.destructions.length === 0 ? (
+                <p className="etat-vide">Aucun lot périmé détruit pour le moment.</p>
               ) : (
-                <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-                  {lotsBientotPerimes.map((h) => (
-                    <div key={h.horizon} className="stat" style={{ cursor: h.count > 0 ? 'pointer' : undefined }} onClick={() => h.count > 0 && setHorizonOuvert(h)}>
-                      <span className="stat-icone" style={h.count > 0 ? { background: 'var(--danger-clair)', color: 'var(--danger)' } : undefined}><IconAlerte /></span>
-                      <span className="etiquette">
-                        {h.horizon === '3_mois' ? '≤ 3 mois' : h.horizon === '6_mois' ? '3 à 6 mois' : '6 à 12 mois'}
-                      </span>
-                      <span className="valeur">{h.count}</span>
-                      {h.count > 0 && (
-                        <span style={{ fontSize: 12, color: 'var(--encre-douce)', display: 'block', marginTop: 4 }}>
-                          {Math.round(h.totalValue).toLocaleString('fr-FR')} FCFA en jeu
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                <div className="db-table">
+                  <table className="registre">
+                    <thead>
+                      <tr>
+                        <th>Détruit le</th>
+                        <th>Produit</th>
+                        <th>N° de lot</th>
+                        <th>Péremption</th>
+                        <th>Qté</th>
+                        <th>Valeur</th>
+                        <th>Par</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {registreDestructions.destructions.map((d) => (
+                        <tr key={d.id}>
+                          <td>{new Date(d.destroyed_at).toLocaleDateString('fr-FR')}</td>
+                          <td style={{ fontWeight: 600 }}>{d.product_name}</td>
+                          <td>{d.lot_number || '—'}</td>
+                          <td>{d.expiry_date ? new Date(d.expiry_date).toLocaleDateString('fr-FR') : '—'}</td>
+                          <td className="chiffre">{Math.round(Number(d.quantity))}</td>
+                          <td className="chiffre">{fcfa(d.lost_value)} FCFA</td>
+                          <td>{d.destroyed_by_name || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>

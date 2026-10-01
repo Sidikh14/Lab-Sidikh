@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useLiveEvent } from '../offline/liveEvents';
+import { StylesModernes } from '../components/StylesModernes';
 
 function IconFournisseur() {
   return (
@@ -244,8 +245,14 @@ function FournisseursTab() {
     }
   }
 
+  const nbAvecDette = suppliers.filter((x) => Number(x.debt) > 0).length;
+  const detteTotale = suppliers.reduce((somme, x) => somme + Number(x.debt || 0), 0);
+  const compteFiltreDette = (valeur) =>
+    valeur === 'tous' ? suppliers.length : valeur === 'dette' ? nbAvecDette : suppliers.length - nbAvecDette;
+
   return (
     <>
+      <StylesModernes />
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
         <button
           className="btn btn-principal"
@@ -259,8 +266,22 @@ function FournisseursTab() {
 
       {erreur && <div className="erreur">{erreur}</div>}
 
-      <div className="barre-filtres">
-        <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
+      <div className="md-kpis">
+        <div className="md-kpi md-kpi--hero">
+          <span className="md-kpi-icone"><IconFournisseur /></span>
+          <p className="md-kpi-label">Fournisseurs</p>
+          <p className="md-kpi-valeur">{suppliers.length}</p>
+        </div>
+        <div className={'md-kpi' + (detteTotale > 0 ? ' md-kpi--alerte' : '')}>
+          <span className="md-kpi-icone"><IconReglement /></span>
+          <p className="md-kpi-label">Dette totale</p>
+          <p className="md-kpi-valeur">{Math.round(detteTotale).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-sous">{nbAvecDette} fournisseur(s) concerné(s)</p>
+        </div>
+      </div>
+
+      <div className="md-outils">
+        <div className="champ-avec-icone md-recherche">
           <span className="champ-icone"><IconRecherche /></span>
           <input
             type="text"
@@ -270,78 +291,49 @@ function FournisseursTab() {
             onChange={(e) => setRecherche(e.target.value)}
           />
         </div>
-        <div
-          className="filtre-pilules"
-          style={{
-            display: 'flex',
-            gap: 4,
-            padding: 4,
-            background: 'var(--fond-alterne, rgba(0,0,0,0.03))',
-            borderRadius: 999,
-            border: '1px solid var(--trait)',
-          }}
-        >
-          {FILTRES_DETTE.map((f) => {
-            const actif = filtreDette === f.value;
-            return (
-              <button
-                key={f.value}
-                type="button"
-                onClick={() => setFiltreDette(f.value)}
-                style={{
-                  border: 'none',
-                  cursor: 'pointer',
-                  padding: '7px 16px',
-                  borderRadius: 999,
-                  fontSize: 13,
-                  fontWeight: actif ? 600 : 500,
-                  color: actif ? '#fff' : 'var(--encre-douce)',
-                  background: actif ? 'var(--accent)' : 'transparent',
-                  boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
-                  transition: 'background 0.15s ease, color 0.15s ease',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {f.label}
-              </button>
-            );
-          })}
+        <div className="md-groupe">
+          <input
+            type="date"
+            className="champ"
+            style={{ width: 150 }}
+            value={exportFrom}
+            onChange={(e) => setExportFrom(e.target.value)}
+            aria-label="Du"
+          />
+          <span style={{ color: 'var(--encre-douce)' }}>au</span>
+          <input
+            type="date"
+            className="champ"
+            style={{ width: 150 }}
+            value={exportTo}
+            onChange={(e) => setExportTo(e.target.value)}
+            aria-label="Au"
+          />
+          <button
+            className="btn"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+            onClick={handleExporterAchats}
+            disabled={exportEnCours}
+          >
+            <IconTelecharger />
+            {exportEnCours ? 'Génération…' : 'Exporter les achats (PDF)'}
+          </button>
         </div>
       </div>
 
-      <div
-        className="barre-filtres"
-        style={{ alignItems: 'center', flexWrap: 'wrap', gap: 10 }}
-      >
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--encre-douce)' }}>
-          Exporter les achats (PDF)
-        </span>
-        <input
-          type="date"
-          className="champ"
-          style={{ width: 150 }}
-          value={exportFrom}
-          onChange={(e) => setExportFrom(e.target.value)}
-          aria-label="Du"
-        />
-        <span style={{ color: 'var(--encre-douce)' }}>au</span>
-        <input
-          type="date"
-          className="champ"
-          style={{ width: 150 }}
-          value={exportTo}
-          onChange={(e) => setExportTo(e.target.value)}
-          aria-label="Au"
-        />
-        <button
-          className="btn"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
-          onClick={handleExporterAchats}
-          disabled={exportEnCours}
-        >
-          <IconTelecharger />
-          {exportEnCours ? 'Génération…' : 'Exporter'}
-        </button>
+      <div className="md-barre-vue">
+        <div className="md-puces">
+          {FILTRES_DETTE.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              className={'md-puce' + (filtreDette === f.value ? ' actif' : '')}
+              onClick={() => setFiltreDette(f.value)}
+            >
+              {f.label} <span>{compteFiltreDette(f.value)}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {chargement ? (
@@ -351,36 +343,33 @@ function FournisseursTab() {
           {suppliers.length === 0 ? 'Aucun fournisseur enregistré pour le moment.' : 'Aucun fournisseur ne correspond à ces filtres.'}
         </p>
       ) : (
-        <div className="grille-cartes">
+        <div className="md-liste">
           {suppliersFiltres.map((s) => {
             const aDette = Number(s.debt) > 0;
             return (
-              <div key={s.id} className="carte-entite">
-                <div className="carte-entite-entete">
-                  <span className="carte-entite-icone"><IconFournisseur /></span>
-                  {aDette && <span className="tampon tampon-brique">Dette</span>}
+              <div key={s.id} className={'md-ligne' + (aDette ? ' md-ligne--prioritaire' : '')}>
+                <div className="md-avatar">{(s.name || '?').trim()[0].toUpperCase()}</div>
+
+                <div className="md-bloc">
+                  <p className="md-titre">{s.name}</p>
+                  <p className="md-sous">{s.phone || s.email || 'Aucun contact enregistré'}</p>
                 </div>
-                <p className="carte-entite-nom">{s.name}</p>
-                <p className="carte-entite-detail">{s.phone || s.email || 'Aucun contact enregistré'}</p>
-                <p className="carte-entite-metrique" style={aDette ? { color: 'var(--danger)' } : undefined}>
-                  {Math.round(Number(s.debt) || 0).toLocaleString('fr-FR')} FCFA
-                </p>
-                <p className="carte-entite-souslegende">{aDette ? 'Dette en cours' : 'Aucune dette'}</p>
-                <div className="carte-entite-actions">
-                  <button
-                    className="btn"
-                    style={{ flex: 1, justifyContent: 'center', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                    onClick={() => ouvrirReglement(s)}
-                  >
+
+                <div className="md-bloc md-bloc--montant">
+                  <p className="md-montant" style={aDette ? { color: 'var(--danger)' } : undefined}>
+                    {Math.round(Number(s.debt) || 0).toLocaleString('fr-FR')} FCFA
+                  </p>
+                  <span className={`tampon ${aDette ? 'tampon-brique' : 'tampon-sarcelle'}`}>
+                    {aDette ? 'Dette en cours' : 'À jour'}
+                  </span>
+                </div>
+
+                <div className="md-actions">
+                  <button className="btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => ouvrirReglement(s)}>
                     <IconReglement />
                     Règlement
                   </button>
-                  <button
-                    className="btn"
-                    style={{ padding: '7px 10px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                    onClick={() => handleSupprimer(s)}
-                    title="Retirer ce fournisseur"
-                  >
+                  <button className="btn" onClick={() => handleSupprimer(s)} title="Retirer ce fournisseur">
                     <IconCorbeille />
                   </button>
                 </div>
@@ -526,6 +515,7 @@ function AchatsTab() {
   const [modaleOuverte, setModaleOuverte] = useState(false);
   const [supplierId, setSupplierId] = useState('');
   const [notes, setNotes] = useState('');
+  const [filtreStatut, setFiltreStatut] = useState('tous');
   const [lignes, setLignes] = useState([{ productId: '', quantity: 1, unitCost: '' }]);
 
   const [warehouses, setWarehouses] = useState([]);
@@ -625,8 +615,16 @@ function AchatsTab() {
     }
   }
 
+  const commandesFiltrees = filtreStatut === 'tous' ? commandes : commandes.filter((c) => c.status === filtreStatut);
+  const nbParStatut = (statut) => commandes.filter((c) => c.status === statut).length;
+  const montantEngage = commandes
+    .filter((c) => c.status !== 'annulee')
+    .reduce((somme, c) => somme + Number(c.total_amount || 0), 0);
+  const totalEstime = lignes.reduce((somme, l) => somme + (Number(l.quantity) || 0) * (Number(l.unitCost) || 0), 0);
+
   return (
     <>
+      <StylesModernes />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
         {estManager && warehouses.length > 0 ? (
           <div
@@ -679,8 +677,41 @@ function AchatsTab() {
 
       {erreur && <div className="erreur">{erreur}</div>}
 
-      <div className="barre-outils">
-        <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>{commandes.length} commande(s)</span>
+      <div className="md-kpis">
+        <div className="md-kpi md-kpi--hero">
+          <span className="md-kpi-icone"><IconBonAchat /></span>
+          <p className="md-kpi-label">Montant engagé</p>
+          <p className="md-kpi-valeur">{Math.round(montantEngage).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-sous">hors commandes annulées</p>
+        </div>
+        <div className="md-kpi">
+          <span className="md-kpi-icone"><IconBonAchat /></span>
+          <p className="md-kpi-label">Commandes</p>
+          <p className="md-kpi-valeur">{commandes.length}</p>
+        </div>
+        <div className="md-kpi">
+          <span className="md-kpi-icone"><IconBonAchat /></span>
+          <p className="md-kpi-label">En attente de réception</p>
+          <p className="md-kpi-valeur">{nbParStatut('envoyee')}</p>
+        </div>
+      </div>
+
+      <div className="md-barre-vue">
+        <div className="md-puces">
+          <button type="button" className={'md-puce' + (filtreStatut === 'tous' ? ' actif' : '')} onClick={() => setFiltreStatut('tous')}>
+            Toutes <span>{commandes.length}</span>
+          </button>
+          {STATUTS_ACHAT.map((st) => (
+            <button
+              key={st}
+              type="button"
+              className={'md-puce' + (filtreStatut === st ? ' actif' : '')}
+              onClick={() => setFiltreStatut(st)}
+            >
+              {LABEL_STATUT_ACHAT[st]} <span>{nbParStatut(st)}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
       {suppliers.length === 0 && !chargement && (
@@ -691,30 +722,38 @@ function AchatsTab() {
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
       ) : commandes.length === 0 ? (
         suppliers.length > 0 && <p className="etat-vide">Aucune commande fournisseur pour le moment.</p>
+      ) : commandesFiltrees.length === 0 ? (
+        <p className="etat-vide">Aucune commande avec ce statut.</p>
       ) : (
-        <div className="liste-a-encaisser">
-          {commandes.map((c) => (
-            <div key={c.id} className="carte-a-encaisser">
-              <span className="stat-icone" style={{ ...COULEUR_STATUT_ACHAT[c.status], width: 36, height: 36, flexShrink: 0 }}>
+        <div className="md-liste">
+          {commandesFiltrees.map((c) => (
+            <div key={c.id} className={'md-ligne' + (c.status === 'envoyee' ? ' md-ligne--prioritaire' : '')}>
+              <span className="md-avatar" style={COULEUR_STATUT_ACHAT[c.status]}>
                 <IconBonAchat />
               </span>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <p className="carte-a-encaisser-numero">{c.supplier_name}</p>
-                <p className="carte-a-encaisser-client">{Number(c.total_amount).toLocaleString('fr-FR')} FCFA</p>
+              <div className="md-bloc">
+                <p className="md-titre">{c.supplier_name}</p>
+                <p className="md-sous">
+                  {c.created_at ? `Créée le ${new Date(c.created_at).toLocaleDateString('fr-FR')}` : 'Commande fournisseur'}
+                </p>
               </div>
-              <select
-                className="champ"
-                style={{ width: 'auto', padding: '5px 8px', fontSize: 13 }}
-                value={c.status}
-                onChange={(e) => handleStatut(c, e.target.value)}
-              >
-                {STATUTS_ACHAT.map((s) => (
-                  <option key={s} value={s}>{LABEL_STATUT_ACHAT[s]}</option>
-                ))}
-              </select>
-              <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handlePdf(c)}>
-                PDF
-              </button>
+              <div className="md-bloc md-bloc--montant">
+                <p className="md-montant">{Math.round(Number(c.total_amount)).toLocaleString('fr-FR')} FCFA</p>
+                <span className="tampon" style={COULEUR_STATUT_ACHAT[c.status]}>{LABEL_STATUT_ACHAT[c.status]}</span>
+              </div>
+              <div className="md-actions">
+                <select
+                  className="champ"
+                  style={{ width: 'auto', padding: '5px 8px', fontSize: 13 }}
+                  value={c.status}
+                  onChange={(e) => handleStatut(c, e.target.value)}
+                >
+                  {STATUTS_ACHAT.map((st) => (
+                    <option key={st} value={st}>{LABEL_STATUT_ACHAT[st]}</option>
+                  ))}
+                </select>
+                <button className="btn" onClick={() => handlePdf(c)}>PDF</button>
+              </div>
             </div>
           ))}
         </div>
@@ -742,7 +781,10 @@ function AchatsTab() {
 
               <label className="etiquette">Articles à commander</label>
               {lignes.map((ligne, index) => (
-                <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <div
+                  key={index}
+                  style={{ display: 'flex', gap: 8, marginBottom: 8, padding: 8, borderRadius: 12, background: 'var(--fond, #f9fafb)', border: '1px solid var(--trait, #e5e7eb)' }}
+                >
                   <select
                     className="champ"
                     value={ligne.productId}
@@ -778,9 +820,16 @@ function AchatsTab() {
                   )}
                 </div>
               ))}
-              <button type="button" className="btn" onClick={ajouterLigne} style={{ marginBottom: 16 }}>
-                Ajouter un article
+              <button type="button" className="btn" onClick={ajouterLigne} style={{ marginBottom: 12 }}>
+                + Ajouter un article
               </button>
+
+              {totalEstime > 0 && (
+                <div className="md-carte" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', marginBottom: 16 }}>
+                  <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>Total estimé</span>
+                  <strong style={{ fontSize: 18 }}>{Math.round(totalEstime).toLocaleString('fr-FR')} FCFA</strong>
+                </div>
+              )}
 
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="po-notes">Notes (facultatif)</label>

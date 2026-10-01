@@ -247,6 +247,16 @@ const CSS_HISTORIQUE = `
   .hv-carte .hv-bloc--montant,.hv-carte .hv-actions{grid-column:1 / -1}
   .hv-actions{justify-content:flex-start}
 }
+.carte-caisse{border-radius:14px;transition:transform .15s,box-shadow .15s,border-color .15s}
+.carte-caisse:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(17,24,39,.09);border-color:var(--accent)}
+.ligne-caisse{border-radius:12px !important;transition:border-color .15s,box-shadow .15s}
+.ligne-caisse:hover{border-color:var(--accent) !important;box-shadow:0 4px 12px rgba(17,24,39,.06)}
+.caisse-ticket{border-radius:16px}
+.ticket-ligne-qte button{border-radius:8px}
+.ticket-total-ligne--principal .chiffre{font-size:20px;font-weight:700}
+.hv-ticket-tete{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}
+.hv-ticket-tete h2{margin:0;font-size:15px}
+.hv-ticket-tete span{font-size:12px;color:var(--encre-douce)}
 `;
 
 const LABEL_STATUT_VENTE = {
@@ -1224,6 +1234,10 @@ export function OrdersPage() {
                 </button>
               </div>
             )}
+            <div className="hv-ticket-tete">
+              <h2>Ticket</h2>
+              <span>{lignesPanier.length} article(s)</span>
+            </div>
             <div className="champ-groupe">
               <label className="etiquette" htmlFor="c-client">{libelleClient}</label>
               <select id="c-client" className="champ" value={clientId} onChange={(e) => setClientId(e.target.value)}>
