@@ -99,6 +99,65 @@ function formatMois(moisStr) {
   return `${NOMS_MOIS[Number(mois) - 1]} ${annee}`;
 }
 
+const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
+
+// Version courte pour les étiquettes de graphique : 1 250 000 -> 1,3 M, 125 000 -> 125 k.
+function abreger(n) {
+  const v = Number(n) || 0;
+  if (v >= 1000000) return `${(Math.round(v / 100000) / 10).toString().replace('.', ',')} M`;
+  if (v >= 1000) return `${Math.round(v / 1000)} k`;
+  return String(Math.round(v));
+}
+
+// Styles du tableau de bord (préfixe db-). Ils s'appuient sur les variables
+// CSS existantes (--accent, --trait, --surface, --encre-douce, --danger…).
+const CSS_DASHBOARD = `
+.db-salut{margin:-6px 0 18px;font-size:14px;color:var(--encre-douce)}
+.db-actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.db-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:20px}
+.db-kpi{display:flex;flex-direction:column;gap:4px;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:16px;padding:16px 18px;transition:border-color .15s,box-shadow .15s}
+.db-kpi--clic{cursor:pointer}
+.db-kpi--clic:hover{border-color:var(--accent);box-shadow:0 6px 18px rgba(17,24,39,.08)}
+.db-kpi-icone{display:flex;align-items:center;justify-content:center;width:36px;height:36px;margin-bottom:8px;border-radius:10px;background:#eef2ff;background:var(--accent-clair,#eef2ff);color:var(--accent)}
+.db-kpi--alerte .db-kpi-icone{background:var(--danger-clair,#fef2f2);color:var(--danger,#b91c1c)}
+.db-kpi-label{margin:0;font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--encre-douce)}
+.db-kpi-valeur{margin:0;font-size:24px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.db-kpi-valeur small{font-size:13px;font-weight:500;color:var(--encre-douce)}
+.db-kpi-sous{margin:0;font-size:12px;color:var(--encre-douce)}
+.db-kpi--hero{background:var(--accent);border-color:var(--accent);color:#fff}
+.db-kpi--hero .db-kpi-icone{background:rgba(255,255,255,.18);color:#fff}
+.db-kpi--hero .db-kpi-label,.db-kpi--hero .db-kpi-sous,.db-kpi--hero .db-kpi-valeur small{color:rgba(255,255,255,.8)}
+.db-grille{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;margin-bottom:24px}
+.db-carte{background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:16px;padding:18px}
+.db-carte-tete{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:14px}
+.db-carte-tete h2{margin:0;font-size:15px}
+.db-carte-tete span{font-size:13px;font-weight:600;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.db-lien{padding:0;border:none;background:none;color:var(--accent);font-size:13px;cursor:pointer}
+.db-histo{display:flex;align-items:flex-end;gap:10px;height:190px}
+.db-histo-col{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:6px}
+.db-histo-barre{width:100%;max-width:44px;border-radius:8px 8px 4px 4px;background:#e0e7ff;background:color-mix(in srgb,var(--accent) 22%,transparent);transition:height .3s}
+.db-histo-col--jour .db-histo-barre{background:var(--accent)}
+.db-histo-val{font-size:11px;white-space:nowrap;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.db-histo-col--jour .db-histo-val{color:var(--accent);font-weight:700}
+.db-histo-label{font-size:12px;color:var(--encre-douce)}
+.db-alerte{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--trait,#e5e7eb)}
+.db-alerte:first-child{border-top:none;padding-top:0}
+.db-alerte-nom{margin:0;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-alerte-qte{margin:2px 0 0;font-size:12px;color:var(--encre-douce)}
+.db-barres{display:flex;flex-direction:column;gap:14px}
+.db-barre-ligne{display:grid;grid-template-columns:150px minmax(0,1fr) auto;gap:12px;align-items:center}
+.db-barre-nom{margin:0;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-barre-piste{height:10px;border-radius:999px;background:var(--fond,#f3f4f6);overflow:hidden}
+.db-barre-rempli{height:100%;border-radius:999px;background:var(--accent)}
+.db-barre-montant{margin:0;font-size:14px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+.db-barre-sous{display:block;font-size:11px;font-weight:400;color:var(--encre-douce)}
+@media (max-width:860px){
+  .db-grille{grid-template-columns:1fr}
+  .db-barre-ligne{grid-template-columns:minmax(0,1fr) auto}
+  .db-barre-piste{grid-column:1 / -1;order:3}
+}
+`;
+
 export function DashboardPage() {
   const { user, merchant } = useAuth();
   const navigate = useNavigate();
@@ -412,6 +471,32 @@ export function DashboardPage() {
       resumeParVendeur[nom].total += Number(a.montant);
     });
 
+  // Données dérivées pour le tableau de bord : ventes des 7 derniers jours,
+  // alertes de stock et barres comparatives.
+  const prenom = (user?.fullName || '').trim().split(' ')[0];
+  const dateLongue = new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+  const nbVentesJour = orders.filter((o) => new Date(o.created_at).toDateString() === aujourdHui).length;
+  const jours7 = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    const cle = d.toDateString();
+    const total = orders
+      .filter((o) => new Date(o.created_at).toDateString() === cle)
+      .reduce((sum, o) => sum + Number(o.total_amount), 0);
+    return {
+      cle,
+      total,
+      estAujourdhui: i === 6,
+      label: d.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', ''),
+      titre: d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }),
+    };
+  });
+  const max7 = Math.max(1, ...jours7.map((j) => j.total));
+  const total7 = jours7.reduce((sum, j) => sum + j.total, 0);
+  const alertesStock = [...enRupture, ...enFaible];
+  const maxMois = Math.max(1, ...(chiffreAffaires?.byMonth || []).map((m) => Number(m.total) || 0));
+  const maxBoutique = Math.max(1, ...(venteParBoutique || []).map((v) => Number(v.total) || 0));
+
   return (
     <>
       <div className="entete-page">
@@ -433,6 +518,11 @@ export function DashboardPage() {
           </div>
         )}
       </div>
+
+      <style>{CSS_DASHBOARD}</style>
+      <p className="db-salut">
+        Bonjour{prenom ? ` ${prenom}` : ''} · {dateLongue}
+      </p>
 
       {estManager && !chargementBoutiques && warehouses.length === 0 && (
         <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de consulter le tableau de bord.</p>
@@ -459,16 +549,18 @@ export function DashboardPage() {
           <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
         ) : estCaissier ? (
           <>
-            <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-              <div className="stat">
-                <span className="stat-icone" style={commandesEnAttente.length > 0 ? { background: 'var(--accent-clair)', color: 'var(--accent)' } : undefined}><IconCaisse /></span>
-                <span className="etiquette">À encaisser</span>
-                <span className="valeur">{commandesEnAttente.length}</span>
+            <div className="db-kpis">
+              <div className={'db-kpi' + (commandesEnAttente.length > 0 ? ' db-kpi--hero' : '')}>
+                <span className="db-kpi-icone"><IconCaisse /></span>
+                <p className="db-kpi-label">À encaisser</p>
+                <p className="db-kpi-valeur">{commandesEnAttente.length}</p>
+                <p className="db-kpi-sous">vente(s) en attente</p>
               </div>
-              <div className="stat">
-                <span className="stat-icone"><IconVentes /></span>
-                <span className="etiquette">Encaissé aujourd'hui</span>
-                <span className="valeur">{Math.round(totalEncaisseAujourdhui).toLocaleString('fr-FR')} FCFA</span>
+              <div className="db-kpi">
+                <span className="db-kpi-icone"><IconVentes /></span>
+                <p className="db-kpi-label">Encaissé aujourd'hui</p>
+                <p className="db-kpi-valeur">{fcfa(totalEncaisseAujourdhui)} <small>FCFA</small></p>
+                <p className="db-kpi-sous">{encaissementsAujourdhui.length} encaissement(s)</p>
               </div>
             </div>
 
@@ -510,21 +602,18 @@ export function DashboardPage() {
           </>
         ) : estVendeur ? (
           <>
-            <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-              <div className="stat">
-                <span className="stat-icone"><IconVentes /></span>
-                <span className="etiquette">Mes ventes aujourd'hui</span>
-                <span className="valeur">{mesVentesAujourdhui.length}</span>
+            <div className="db-kpis">
+              <div className="db-kpi db-kpi--hero">
+                <span className="db-kpi-icone"><IconValeur /></span>
+                <p className="db-kpi-label">Total réalisé aujourd'hui</p>
+                <p className="db-kpi-valeur">{fcfa(totalMesVentesAujourdhui)} <small>FCFA</small></p>
+                <p className="db-kpi-sous">{mesVentesAujourdhui.length} vente(s)</p>
               </div>
-              <div className="stat">
-                <span className="stat-icone" style={commandesRenvoyees.length > 0 ? { background: 'var(--danger-clair)', color: 'var(--danger)' } : undefined}><IconAlerte /></span>
-                <span className="etiquette">Factures renvoyées</span>
-                <span className="valeur">{commandesRenvoyees.length}</span>
-              </div>
-              <div className="stat">
-                <span className="stat-icone"><IconValeur /></span>
-                <span className="etiquette">Total réalisé aujourd'hui</span>
-                <span className="valeur">{Math.round(totalMesVentesAujourdhui).toLocaleString('fr-FR')} FCFA</span>
+              <div className={'db-kpi' + (commandesRenvoyees.length > 0 ? ' db-kpi--alerte' : '')}>
+                <span className="db-kpi-icone"><IconAlerte /></span>
+                <p className="db-kpi-label">Factures renvoyées</p>
+                <p className="db-kpi-valeur">{commandesRenvoyees.length}</p>
+                <p className="db-kpi-sous">à corriger ou annuler</p>
               </div>
             </div>
 
@@ -599,33 +688,95 @@ export function DashboardPage() {
               </div>
             )}
 
-            <div className="ligne-stats">
-              <div className="stat">
-                <span className="stat-icone"><IconValeur /></span>
-                <span className="etiquette">Valeur du stock</span>
-                <span className="valeur">{Math.round(valeurStock).toLocaleString('fr-FR')} FCFA</span>
+            <div className="db-actions">
+              <button className="btn btn-principal" onClick={() => navigate('/ventes')}>+ Nouvelle vente</button>
+              <button className="btn" onClick={() => navigate('/stock')}>Produits</button>
+              <button className="btn" onClick={() => navigate('/clients')}>Clients</button>
+            </div>
+
+            <div className="db-kpis">
+              <div className="db-kpi db-kpi--hero">
+                <span className="db-kpi-icone"><IconVentes /></span>
+                <p className="db-kpi-label">Ventes du jour</p>
+                <p className="db-kpi-valeur">{fcfa(ventesDuJour)} <small>FCFA</small></p>
+                <p className="db-kpi-sous">
+                  {nbVentesJour} vente(s){totalRembourseAujourdhui > 0 ? ` · ${fcfa(totalRembourseAujourdhui)} FCFA remboursés` : ''}
+                </p>
               </div>
-              <div className="stat" style={{ cursor: 'pointer' }} onClick={() => setOnglet('suivi')}>
-                <span className="stat-icone" style={enRupture.length + enFaible.length > 0 ? { background: 'var(--danger-clair)', color: 'var(--danger)' } : undefined}><IconAlerte /></span>
-                <span className="etiquette">Alertes de seuil</span>
-                <span className="valeur">{enRupture.length + enFaible.length}</span>
+              <div className="db-kpi">
+                <span className="db-kpi-icone"><IconValeur /></span>
+                <p className="db-kpi-label">Valeur du stock</p>
+                <p className="db-kpi-valeur">{fcfa(valeurStock)} <small>FCFA</small></p>
+                <p className="db-kpi-sous">{products.length} produit(s)</p>
               </div>
-              <div className="stat">
-                <span className="stat-icone"><IconVentes /></span>
-                <span className="etiquette">Ventes du jour</span>
-                <span className="valeur">{Math.round(ventesDuJour).toLocaleString('fr-FR')} FCFA</span>
+              <div
+                className={'db-kpi' + (vueEquipe ? ' db-kpi--clic' : '') + (alertesStock.length > 0 ? ' db-kpi--alerte' : '')}
+                onClick={vueEquipe ? () => setOnglet('suivi') : undefined}
+              >
+                <span className="db-kpi-icone"><IconAlerte /></span>
+                <p className="db-kpi-label">Alertes de seuil</p>
+                <p className="db-kpi-valeur">{alertesStock.length}</p>
+                <p className="db-kpi-sous">{enRupture.length} rupture(s) · {enFaible.length} stock faible</p>
               </div>
               {!estPharmacie && (
-                <div className="stat">
-                  <span className="stat-icone"><IconHorloge /></span>
-                  <span className="etiquette">En attente</span>
-                  <span className="valeur">{commandesEnAttente.length}</span>
+                <div className="db-kpi">
+                  <span className="db-kpi-icone"><IconHorloge /></span>
+                  <p className="db-kpi-label">En attente</p>
+                  <p className="db-kpi-valeur">{commandesEnAttente.length}</p>
+                  <p className="db-kpi-sous">à encaisser</p>
                 </div>
               )}
-              <div className="stat" style={{ cursor: 'pointer' }} onClick={() => setOnglet('suivi')}>
-                <span className="stat-icone"><IconCamion /></span>
-                <span className="etiquette">À livrer</span>
-                <span className="valeur">{aLivrer.length}</span>
+              <div className={'db-kpi' + (vueEquipe ? ' db-kpi--clic' : '')} onClick={vueEquipe ? () => setOnglet('suivi') : undefined}>
+                <span className="db-kpi-icone"><IconCamion /></span>
+                <p className="db-kpi-label">À livrer</p>
+                <p className="db-kpi-valeur">{aLivrer.length}</p>
+                <p className="db-kpi-sous">commande(s) validée(s)</p>
+              </div>
+            </div>
+
+            <div className="db-grille">
+              <div className="db-carte">
+                <div className="db-carte-tete">
+                  <h2>Ventes des 7 derniers jours</h2>
+                  <span>{fcfa(total7)} FCFA</span>
+                </div>
+                <div className="db-histo">
+                  {jours7.map((j) => (
+                    <div
+                      key={j.cle}
+                      className={'db-histo-col' + (j.estAujourdhui ? ' db-histo-col--jour' : '')}
+                      title={`${j.titre} : ${fcfa(j.total)} FCFA`}
+                    >
+                      <span className="db-histo-val">{j.total > 0 ? abreger(j.total) : ''}</span>
+                      <div className="db-histo-barre" style={{ height: Math.max(4, Math.round((j.total / max7) * 130)) }} />
+                      <span className="db-histo-label">{j.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="db-carte">
+                <div className="db-carte-tete">
+                  <h2>Alertes de stock</h2>
+                  {vueEquipe && alertesStock.length > 0 && (
+                    <button type="button" className="db-lien" onClick={() => setOnglet('suivi')}>Tout voir</button>
+                  )}
+                </div>
+                {alertesStock.length === 0 ? (
+                  <p className="etat-vide" style={{ padding: '12px 0' }}>Aucune alerte de seuil.</p>
+                ) : (
+                  <div>
+                    {alertesStock.slice(0, 5).map((p) => (
+                      <div key={p.id} className="db-alerte">
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p className="db-alerte-nom">{p.name}</p>
+                          <p className="db-alerte-qte">{formaterQuantite(p.quantity_in_stock)} en stock</p>
+                        </div>
+                        <StatusBadge status={p.status} />
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -817,17 +968,20 @@ export function DashboardPage() {
         <>
           {estManager && chiffreAffaires && (
             <div style={{ marginBottom: 24 }}>
-              <div className="ligne-stats" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', marginBottom: 20 }}>
-                <div className="stat">
-                  <span className="stat-icone"><IconValeur /></span>
-                  <span className="etiquette">Chiffre d'affaires total</span>
-                  <span className="valeur">{Math.round(chiffreAffaires.total).toLocaleString('fr-FR')} FCFA</span>
+              <div className="db-kpis">
+                <div className="db-kpi db-kpi--hero">
+                  <span className="db-kpi-icone"><IconValeur /></span>
+                  <p className="db-kpi-label">Chiffre d'affaires total</p>
+                  <p className="db-kpi-valeur">{fcfa(chiffreAffaires.total)} <small>FCFA</small></p>
                 </div>
                 {benefice && (
-                  <div className="stat">
-                    <span className="stat-icone"><IconValeur /></span>
-                    <span className="etiquette">Bénéfice total</span>
-                    <span className="valeur">{Math.round(benefice.total).toLocaleString('fr-FR')} FCFA</span>
+                  <div className="db-kpi">
+                    <span className="db-kpi-icone"><IconVentes /></span>
+                    <p className="db-kpi-label">Bénéfice total</p>
+                    <p className="db-kpi-valeur">{fcfa(benefice.total)} <small>FCFA</small></p>
+                    {Number(chiffreAffaires.total) > 0 && (
+                      <p className="db-kpi-sous">Marge : {Math.round((Number(benefice.total) / Number(chiffreAffaires.total)) * 100)} %</p>
+                    )}
                   </div>
                 )}
               </div>
@@ -838,38 +992,46 @@ export function DashboardPage() {
               )}
 
               {chiffreAffaires.byMonth.length > 0 && (
-                <>
-                  <h2 style={{ fontSize: 16, marginBottom: 12 }}>Chiffre d'affaires par mois</h2>
-                  <div className="grille-resume-equipe">
+                <div className="db-carte">
+                  <div className="db-carte-tete">
+                    <h2>Chiffre d'affaires par mois</h2>
+                  </div>
+                  <div className="db-barres">
                     {chiffreAffaires.byMonth.map((m) => (
-                      <div key={m.month} className="carte-resume-membre">
-                        <div style={{ minWidth: 0 }}>
-                          <p className="carte-resume-membre-nom">{formatMois(m.month)}</p>
-                          {benefice && (
-                            <p style={{ fontSize: 12, margin: 0, opacity: 0.75 }}>
-                              Bénéfice : {Math.round(benefice.byMonth.find((b) => b.month === m.month)?.total || 0).toLocaleString('fr-FR')} FCFA
-                            </p>
-                          )}
+                      <div key={m.month} className="db-barre-ligne">
+                        <p className="db-barre-nom">{formatMois(m.month)}</p>
+                        <div className="db-barre-piste">
+                          <div className="db-barre-rempli" style={{ width: `${Math.max(2, ((Number(m.total) || 0) / maxMois) * 100)}%` }} />
                         </div>
-                        <p className="carte-resume-membre-total">{Math.round(m.total).toLocaleString('fr-FR')} FCFA</p>
+                        <p className="db-barre-montant">
+                          {fcfa(m.total)} FCFA
+                          {benefice && (
+                            <span className="db-barre-sous">
+                              Bénéfice : {fcfa(benefice.byMonth.find((b) => b.month === m.month)?.total || 0)} FCFA
+                            </span>
+                          )}
+                        </p>
                       </div>
                     ))}
                   </div>
-                </>
+                </div>
               )}
             </div>
           )}
 
           {vueEquipe && venteParBoutique && venteParBoutique.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <h2 style={{ fontSize: 16, marginBottom: 12 }}>Ventes par boutique</h2>
-              <div className="grille-resume-equipe">
+            <div className="db-carte" style={{ marginBottom: 24 }}>
+              <div className="db-carte-tete">
+                <h2>Ventes par boutique</h2>
+              </div>
+              <div className="db-barres">
                 {venteParBoutique.map((v) => (
-                  <div key={v.warehouseId} className="carte-resume-membre">
-                    <div style={{ minWidth: 0 }}>
-                      <p className="carte-resume-membre-nom">{v.warehouseName}</p>
+                  <div key={v.warehouseId} className="db-barre-ligne">
+                    <p className="db-barre-nom">{v.warehouseName}</p>
+                    <div className="db-barre-piste">
+                      <div className="db-barre-rempli" style={{ width: `${Math.max(2, ((Number(v.total) || 0) / maxBoutique) * 100)}%` }} />
                     </div>
-                    <p className="carte-resume-membre-total">{Math.round(v.total).toLocaleString('fr-FR')} FCFA</p>
+                    <p className="db-barre-montant">{fcfa(v.total)} FCFA</p>
                   </div>
                 ))}
               </div>
