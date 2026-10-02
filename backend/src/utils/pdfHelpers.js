@@ -1,30 +1,36 @@
 // Utilitaires partagés pour tous les PDF générés par l'application
 // (bons de commande, catalogue produits, inventaire, relevés de caisse,
-// journal d'activité…).
+// journal d'activité, bulletins de paie…).
 //
-// Style moderne : police sans empattement, une couleur d'accent, en-tête
-// avec barre d'accent, tableaux aérés.
+// Style : NOIR ET BLANC uniquement, contrastes forts, textes francs.
+//  - en-tête : bandeau noir plein, titre blanc en gras (très visible dès le
+//    premier regard) ;
+//  - tableaux : en-tête noir à texte blanc, lignes alternées en gris très clair ;
+//  - textes en noir pur, libellés en gris foncé (jamais de gris pâle).
+//
+// Changements de réglage sans toucher aux PDF :
+//  - ENTETE_BANDEAU = false  -> en-tête sans aplat noir (économise l'encre) ;
+//  - ECHELLE_TEXTE           -> taille de tous les textes (1 = taille d'origine).
 //
 // Police : si les fichiers Inter sont présents dans ./fonts
 //   Inter-Regular.ttf, Inter-Bold.ttf, Inter-Italic.ttf, Inter-BoldItalic.ttf
-// ils sont utilisés. Sinon, repli automatique sur Helvetica (intégrée aux PDF,
-// aucun fichier à déployer). Le code existant n'a pas besoin de changer.
-//
-// Couleur d'accent : modifier ACCENT ci-dessous, ou passer
-// merchant.accent_color (ex. '#0f766e') pour une couleur par commerçant.
+// ils sont utilisés. Sinon, repli sur Helvetica (intégrée aux PDF).
+// Le code existant des PDF n'a pas besoin de changer : les noms de police
+// 'Helvetica*' et 'Titre' qu'il utilise sont remplacés ici.
 
 const fs = require('fs');
 const path = require('path');
 
-const NOIR = '#111827';
-const GRIS = '#4b5563';
-const GRIS_CLAIR = '#9ca3af';
-const TRAIT = '#e5e7eb';
-const FOND_ALTERNE = '#f9fafb';
+const NOIR = '#000000';
+const GRIS = '#333333'; // libellés, texte secondaire (foncé : reste bien lisible)
+const GRIS_CLAIR = '#555555'; // légendes, informations légales
+const TRAIT = '#999999'; // filets de séparation
+const FOND_ALTERNE = '#eeeeee'; // lignes alternées des tableaux
+const BLANC = '#ffffff';
+const GRIS_SUR_NOIR = '#d4d4d4'; // texte secondaire sur le bandeau noir
 
-const ACCENT = '#4f46e5';
-
-const ECHELLE_TEXTE = 1; // Helvetica/Inter : pas d'agrandissement nécessaire
+const ENTETE_BANDEAU = true;
+const ECHELLE_TEXTE = 1.05;
 
 const DOSSIER_POLICES = path.join(__dirname, 'fonts');
 const FICHIERS_INTER = {
@@ -58,8 +64,8 @@ function tablePolices(avecInter) {
 }
 
 function enregistrerPolices(doc) {
-  if (doc._styleModerne) return; // déjà appliqué à ce document
-  doc._styleModerne = true;
+  if (doc._styleNoirBlanc) return; // déjà appliqué à ce document
+  doc._styleNoirBlanc = true;
 
   const avecInter = interDisponible();
   if (avecInter) {
@@ -77,12 +83,6 @@ function enregistrerPolices(doc) {
   doc.font('Helvetica');
 }
 
-// Couleur d'accent du commerçant si valide (#rgb ou #rrggbb), sinon défaut.
-function couleurAccent(merchant) {
-  const c = merchant && merchant.accent_color;
-  return typeof c === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c) ? c : ACCENT;
-}
-
 // Formate un montant avec un espace normal comme séparateur de milliers
 // (nécessaire : la police standard des PDF n'affiche pas correctement
 // l'espace insécable utilisé par toLocaleString('fr-FR')).
@@ -92,41 +92,45 @@ function formatMontant(valeur) {
   return signe + String(Math.abs(entier)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
-// En-tête moderne : barre d'accent verticale, nom du commerce en couleur
-// d'accent (capitales espacées), titre du document en grand gras, sous-titre
-// gris, informations légales (adresse/NINEA/RCCM) alignées à droite, filet
-// fin en dessous.
-// `merchant` est optionnel : { ninea, rccm, address, accent_color, ... } —
-// permet aussi d'activer le pied de page automatique sur les pages suivantes.
-// Retourne l'ordonnée à laquelle le contenu peut commencer.
+// En-tête : nom du commerce en petites capitales, titre du document en grand
+// gras, sous-titre, informations légales (adresse/NINEA/RCCM) à droite.
+// `merchant` est optionnel : { ninea, rccm, address, ... } — permet aussi
+// d'activer le pied de page automatique sur les pages suivantes.
+// Retourne l'ordonnée à laquelle le contenu peut commencer (toujours 142).
 function dessinerEntete(doc, { businessName, titre, sousTitre, merchant }) {
   enregistrerPolices(doc);
   const largeurPage = doc.page.width;
   const xTexte = 50;
-  const accent = couleurAccent(merchant);
-  doc._accent = accent;
 
-  // Bandeau d'accent en haut de page
-  doc.rect(0, 0, largeurPage, 6).fill(accent);
+  const couleurNom = ENTETE_BANDEAU ? BLANC : NOIR;
+  const couleurTitre = ENTETE_BANDEAU ? BLANC : NOIR;
+  const couleurSousTitre = ENTETE_BANDEAU ? GRIS_SUR_NOIR : GRIS;
+  const couleurLegal = ENTETE_BANDEAU ? GRIS_SUR_NOIR : GRIS;
 
-  doc.fillColor(accent).font('Helvetica-Bold').fontSize(9)
-    .text((businessName || 'Commerce').toUpperCase(), xTexte, 40, { characterSpacing: 1.5 });
+  if (ENTETE_BANDEAU) {
+    doc.rect(0, 0, largeurPage, 116).fill(NOIR);
+  }
 
-  doc.fillColor(NOIR).font('Titre').fontSize(22)
-    .text(titre || '', xTexte, 58, { width: largeurPage - 100, height: 34, ellipsis: true });
+  doc.fillColor(couleurNom).font('Helvetica-Bold').fontSize(9)
+    .text((businessName || 'Commerce').toUpperCase(), xTexte, 38, { characterSpacing: 1.5, width: largeurPage * 0.5, lineBreak: false });
+
+  doc.fillColor(couleurTitre).font('Titre').fontSize(26)
+    .text(titre || '', xTexte, 56, { width: largeurPage - 100, height: 36, ellipsis: true });
 
   if (sousTitre) {
-    doc.fillColor(GRIS).font('Helvetica').fontSize(9)
-      .text(sousTitre, xTexte, 94, { width: largeurPage - 100, height: 16, ellipsis: true });
+    doc.fillColor(couleurSousTitre).font('Helvetica').fontSize(10)
+      .text(sousTitre, xTexte, 92, { width: largeurPage - 100, height: 16, ellipsis: true });
   }
 
   if (merchant && (merchant.ninea || merchant.rccm || merchant.address)) {
     const parts = [merchant.address, merchant.ninea && `NINEA ${merchant.ninea}`, merchant.rccm && `RCCM ${merchant.rccm}`].filter(Boolean);
-    doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(7.5)
-      .text(parts.join('  ·  '), 50, 40, { width: largeurPage - 100, height: 12, align: 'right', ellipsis: true });
+    doc.fillColor(couleurLegal).font('Helvetica').fontSize(8)
+      .text(parts.join('  ·  '), largeurPage * 0.45, 38, { width: largeurPage * 0.55 - 50, height: 12, align: 'right', ellipsis: true });
   }
 
-  doc.moveTo(50, 122).lineTo(largeurPage - 50, 122).strokeColor(TRAIT).lineWidth(1).stroke();
+  if (!ENTETE_BANDEAU) {
+    doc.moveTo(50, 122).lineTo(largeurPage - 50, 122).strokeColor(NOIR).lineWidth(2).stroke();
+  }
 
   if (merchant) activerPiedDePageAuto(doc, merchant);
 
@@ -135,8 +139,8 @@ function dessinerEntete(doc, { businessName, titre, sousTitre, merchant }) {
 }
 
 // Pied de page : coordonnées bancaires / Mobile Money et conditions de
-// règlement, centrées en bas de page, discrètes. N'affiche rien si aucune de
-// ces informations n'a été renseignée par le commerçant.
+// règlement, centrées en bas de page. N'affiche rien si aucune de ces
+// informations n'a été renseignée par le commerçant.
 // Le caller doit l'appeler une dernière fois juste avant doc.end() — voir
 // activerPiedDePageAuto pour les pages suivantes.
 function dessinerPiedDePage(doc, merchant) {
@@ -149,8 +153,8 @@ function dessinerPiedDePage(doc, merchant) {
   if (lignes.length === 0) return;
 
   const y = doc.page.height - 60;
-  doc.moveTo(50, y).lineTo(doc.page.width - 50, y).strokeColor(TRAIT).lineWidth(1).stroke();
-  doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(7.5)
+  doc.moveTo(50, y).lineTo(doc.page.width - 50, y).strokeColor(NOIR).lineWidth(1.25).stroke();
+  doc.fillColor(GRIS).font('Helvetica').fontSize(8)
     // `height` + `ellipsis` empêchent pdfkit de faire déborder ce texte sur
     // une nouvelle page (ce qui déclencherait un addPage() automatique, donc
     // à nouveau ce pied de page : boucle infinie jusqu'au RangeError
@@ -174,18 +178,14 @@ function activerPiedDePageAuto(doc, merchant) {
   });
 }
 
-// En-tête de tableau : bandeau gris très clair, libellés en capitales
-// espacées, filet d'accent en dessous.
+// En-tête de tableau : bandeau noir, libellés blancs en gras et en capitales.
 function dessinerEnteteTableau(doc, y, colonnes) {
   const largeurPage = doc.page.width;
-  const accent = doc._accent || ACCENT;
-
-  doc.rect(50, y - 6, largeurPage - 100, 24).fill(FOND_ALTERNE);
-  doc.fillColor(GRIS).fontSize(8).font('Helvetica-Bold');
+  doc.rect(50, y - 7, largeurPage - 100, 24).fill(NOIR);
+  doc.fillColor(BLANC).fontSize(8).font('Helvetica-Bold');
   colonnes.forEach((col) => {
     doc.text(col.texte.toUpperCase(), col.x, y, { width: col.largeur, align: col.aligner || 'left', characterSpacing: 0.6, lineBreak: false });
   });
-  doc.moveTo(50, y + 18).lineTo(largeurPage - 50, y + 18).strokeColor(accent).lineWidth(1.25).stroke();
   doc.fillColor(NOIR).font('Helvetica');
   return y + 28;
 }
@@ -196,7 +196,7 @@ function traitSeparateur(doc, y) {
 }
 
 module.exports = {
-  COULEURS: { encre: NOIR, muted: GRIS, mutedClair: GRIS_CLAIR, bordure: TRAIT, fondAlterne: FOND_ALTERNE, accent: ACCENT },
+  COULEURS: { encre: NOIR, muted: GRIS, mutedClair: GRIS_CLAIR, bordure: TRAIT, fondAlterne: FOND_ALTERNE, accent: NOIR },
   formatMontant,
   dessinerEntete,
   dessinerEnteteTableau,
