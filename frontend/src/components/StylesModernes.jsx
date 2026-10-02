@@ -63,6 +63,32 @@ const CSS = `
   .md-actions{justify-content:flex-start}
 }
 
+
+.md-fiche{width:680px;max-width:95vw;max-height:92vh;overflow-y:auto}
+.md-fiche-tete{display:flex;align-items:center;gap:14px;margin-bottom:16px}
+.md-fiche-tete h2{margin:0;font-size:18px}
+.md-fiche-section{padding:14px 0;border-top:1px solid var(--trait,#e5e7eb)}
+.md-fiche-section h3{display:flex;align-items:center;gap:10px;margin:0 0 12px;font-size:14px}
+.md-fiche-section h3 small{font-size:12px;font-weight:500;color:var(--encre-douce)}
+.md-etape{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;font-size:12px;font-weight:700}
+.md-fiche-grille{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 12px}
+.md-fiche-ligne{display:grid;gap:8px;align-items:center;margin-bottom:8px}
+.md-fiche-ligne--prime{grid-template-columns:minmax(0,2fr) minmax(0,1fr) auto auto}
+.md-fiche-ligne--retenue{grid-template-columns:minmax(0,1.3fr) minmax(0,1.5fr) minmax(0,1fr) auto}
+.md-case{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--encre-douce);white-space:nowrap;cursor:pointer}
+.md-aide{margin:6px 0 0;font-size:12px;color:var(--encre-douce)}
+.md-info{margin-bottom:12px;padding:10px 12px;border-radius:10px;font-size:13px;background:var(--accent-clair,#eef2ff);color:var(--accent)}
+.md-recap{border:1px solid var(--trait,#e5e7eb);border-radius:12px;padding:12px 14px;background:var(--surface,#fff)}
+.md-recap-ligne{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:14px}
+.md-recap-ligne--doux{font-size:13px;color:var(--encre-douce);padding-left:12px}
+.md-recap-ligne--fort{font-weight:700}
+.md-recap-ligne--separe{margin-top:6px;padding-top:10px;border-top:1px dashed var(--trait,#e5e7eb)}
+.md-recap-net{display:flex;justify-content:space-between;align-items:center;margin-top:10px;padding:12px 14px;border-radius:10px;background:var(--accent);color:#fff}
+.md-recap-net strong{font-size:20px;font-variant-numeric:tabular-nums}
+@media (max-width:640px){
+  .md-fiche-grille{grid-template-columns:1fr}
+  .md-fiche-ligne--prime,.md-fiche-ligne--retenue{grid-template-columns:1fr 1fr}
+}
 .carte-produit,.carte-entite{border-radius:16px;transition:transform .15s,box-shadow .15s,border-color .15s}
 .carte-produit:hover,.carte-entite:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(17,24,39,.09)}
 .carte-entite-actions{gap:6px;flex-wrap:wrap}

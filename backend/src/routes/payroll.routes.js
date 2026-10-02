@@ -7,6 +7,13 @@ const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
 const { calculerBulletin } = require('../utils/payrollCalc');
 const {
+  LABEL_TYPE_RETENUE,
+  RetenueError,
+  normaliserRetenues,
+  verifierAbsences,
+  appliquerRetenues,
+} = require('../utils/payrollDeductions');
+const {
   dessinerEntete,
   dessinerEnteteTableau,
   dessinerPiedDePage,
@@ -140,6 +147,25 @@ router.get('/:userId/bonuses', requireRole('manager'), async (req, res) => {
   }
 });
 
+// GET /payroll/:userId/deductions?month=YYYY-MM — retenues saisies pour le mois
+router.get('/:userId/deductions', requireRole('manager'), async (req, res) => {
+  try {
+    const month = req.query.month || moisActuel();
+    const { rows } = await pool.query(
+      `SELECT sd.id, sd.type, sd.label, sd.amount
+       FROM salary_deductions sd
+       JOIN users u ON u.id = sd.user_id
+       WHERE sd.user_id = $1 AND sd.month = $2 AND u.merchant_id = $3
+       ORDER BY sd.created_at`,
+      [req.params.userId, month, req.user.merchantId]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Génération et consultation des bulletins
 // ---------------------------------------------------------------------------
@@ -150,7 +176,7 @@ router.post('/:userId/generate', requireRole('manager'), async (req, res) => {
   const client = await pool.connect();
   try {
     const { userId } = req.params;
-    const { month, bonuses } = req.body;
+    const { month, bonuses, deductions } = req.body;
     const targetMonth = month || moisActuel();
 
     const employe = await client.query(
@@ -170,12 +196,24 @@ router.post('/:userId/generate', requireRole('manager'), async (req, res) => {
       ? bonuses.filter((b) => b.label && Number(b.amount)).map((b) => ({ label: String(b.label).slice(0, 120), amount: Number(b.amount) }))
       : [];
 
-    const resultat = calculerBulletin({
-      baseSalary: employe.rows[0].monthly_salary,
-      bonuses: listeBonus,
-      settings: reglages,
-      partsFiscales: employe.rows[0].parts_fiscales,
-    });
+    // Retenues manuelles : les absences réduisent le brut (donc cotisations et
+    // impôt) ; avances/prêts/autres sont déduits du net, après impôts.
+    const retenues = normaliserRetenues(deductions);
+    const salaireBase = Number(employe.rows[0].monthly_salary);
+    let resultat;
+    try {
+      const absences = verifierAbsences(salaireBase, retenues);
+      const calcule = calculerBulletin({
+        baseSalary: salaireBase - absences,
+        bonuses: listeBonus,
+        settings: reglages,
+        partsFiscales: employe.rows[0].parts_fiscales,
+      });
+      resultat = appliquerRetenues(calcule, salaireBase, retenues);
+    } catch (err) {
+      if (err instanceof RetenueError) return res.status(400).json({ error: err.message });
+      throw err;
+    }
 
     await client.query('BEGIN');
 
@@ -184,6 +222,14 @@ router.post('/:userId/generate', requireRole('manager'), async (req, res) => {
       await client.query(
         `INSERT INTO salary_bonuses (user_id, month, label, amount) VALUES ($1, $2, $3, $4)`,
         [userId, targetMonth, b.label, b.amount]
+      );
+    }
+
+    await client.query('DELETE FROM salary_deductions WHERE user_id = $1 AND month = $2', [userId, targetMonth]);
+    for (const d of retenues) {
+      await client.query(
+        `INSERT INTO salary_deductions (user_id, month, type, label, amount) VALUES ($1, $2, $3, $4, $5)`,
+        [userId, targetMonth, d.type, d.label, d.amount]
       );
     }
 
@@ -199,7 +245,7 @@ router.post('/:userId/generate', requireRole('manager'), async (req, res) => {
         userId,
         targetMonth,
         req.user.id,
-        ...colonnes.map((c) => (c === 'bonuses_detail' ? JSON.stringify(resultat[c]) : resultat[c])),
+        ...colonnes.map((c) => (['bonuses_detail', 'deductions_detail'].includes(c) ? JSON.stringify(resultat[c]) : resultat[c])),
       ]
     );
 
@@ -366,8 +412,14 @@ function genererBulletinPDF(doc, bulletin) {
     indexLigne += 1;
   }
 
+  const retenuesDetail = Array.isArray(bulletin.deductions_detail) ? bulletin.deductions_detail : [];
+  const absencesDetail = retenuesDetail.filter((d) => d.type === 'absence');
+  const autresRetenues = retenuesDetail.filter((d) => d.type !== 'absence');
+
   ligne('Salaire de base', bulletin.base_salary);
   (bulletin.bonuses_detail || []).forEach((b) => ligne(`Prime — ${b.label}`, b.amount, { indent: true }));
+  // Les absences non rémunérées réduisent le brut : elles figurent donc dans les gains (en négatif).
+  absencesDetail.forEach((d) => ligne(`Absence — ${d.label}`, -Number(d.amount), { indent: true }));
   y += 4;
   traitSeparateur(doc, y);
   y += 10;
@@ -386,6 +438,15 @@ function genererBulletinPDF(doc, bulletin) {
   ligne('Revenu imposable', bulletin.revenu_imposable);
   ligne('Impôt sur le revenu (IRPP)', bulletin.irpp);
   ligne('TRIMF', bulletin.trimf);
+  // Avances, prêts et autres retenues : déduits du net après impôts.
+  autresRetenues.forEach((d) => {
+    const prefixe = LABEL_TYPE_RETENUE[d.type] || 'Retenue';
+    ligne(d.label && d.label !== prefixe ? `${prefixe} — ${d.label}` : prefixe, d.amount);
+  });
+  y += 4;
+  traitSeparateur(doc, y);
+  y += 10;
+  ligne('Total des retenues', Number(bulletin.gross_salary) - Number(bulletin.net_a_payer), { gras: true });
   y += 10;
 
   // --- Encart NET À PAYER, mis en évidence ---

@@ -6,6 +6,14 @@ import { getSecteurConfig } from '../config/sectorConfig';
 import { useLiveEvent } from '../offline/liveEvents';
 import { StylesModernes } from '../components/StylesModernes';
 
+const TYPES_RETENUE = [
+  { value: 'avance', label: 'Avance sur salaire', court: 'Avance' },
+  { value: 'absence', label: 'Absence non rémunérée', court: 'Absence' },
+  { value: 'pret', label: 'Remboursement de prêt', court: 'Prêt' },
+  { value: 'autre', label: 'Autre retenue', court: 'Autre retenue' },
+];
+const PRIMES_SUGGEREES = ['Transport', 'Logement', 'Ancienneté', 'Rendement', 'Panier'];
+
 function initialesMembre(nom) {
   return (nom || '?').split(' ').filter(Boolean).map((mot) => mot[0]).slice(0, 2).join('').toUpperCase();
 }
@@ -795,25 +803,21 @@ function SalairesTab() {
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
 
-  const [employeConfig, setEmployeConfig] = useState(null);
+  // Fiche de paie : salaire de base + primes + retenues + récapitulatif.
+  const [employeBulletin, setEmployeBulletin] = useState(null);
   const [salaireSaisi, setSalaireSaisi] = useState('');
   const [methodeSaisie, setMethodeSaisie] = useState('especes');
   const [partsSaisies, setPartsSaisies] = useState(1);
-
-  // Primes fixes (page distincte du bouton "Configurer") : reprises
-  // automatiquement à l'ouverture du bulletin de chaque mois.
-  const [employePrimesFixes, setEmployePrimesFixes] = useState(null);
-  const [primesFixes, setPrimesFixes] = useState([]);
+  const [primes, setPrimes] = useState([]); // { label, amount, fixe }
+  const [retenues, setRetenues] = useState([]); // { type, label, amount }
+  const [bulletinCalcule, setBulletinCalcule] = useState(null);
+  const [ficheModifiee, setFicheModifiee] = useState(false);
+  const [chargementBulletin, setChargementBulletin] = useState(false);
 
   const [employePaiement, setEmployePaiement] = useState(null);
   const [montantPaiement, setMontantPaiement] = useState('');
   const [methodePaiement, setMethodePaiement] = useState('especes');
   const [envoiEnCours, setEnvoiEnCours] = useState(false);
-
-  const [employeBulletin, setEmployeBulletin] = useState(null);
-  const [primes, setPrimes] = useState([]);
-  const [bulletinCalcule, setBulletinCalcule] = useState(null);
-  const [chargementBulletin, setChargementBulletin] = useState(false);
 
   useEffect(() => {
     api
@@ -838,62 +842,6 @@ function SalairesTab() {
 
   useEffect(charger, [mois]);
 
-  function ouvrirPrimesFixes(emp) {
-    setEmployePrimesFixes(emp);
-    setPrimesFixes(Array.isArray(emp.recurring_bonuses) ? emp.recurring_bonuses.map((p) => ({ label: p.label, amount: p.amount })) : []);
-  }
-
-  async function enregistrerPrimesFixes(e) {
-    e.preventDefault();
-    setEnvoiEnCours(true);
-    setErreur('');
-    try {
-      await api.setSalary(employePrimesFixes.id, {
-        monthlySalary: Number(employePrimesFixes.monthly_salary) || 0,
-        paymentMethod: employePrimesFixes.payment_method || 'especes',
-        partsFiscales: Number(employePrimesFixes.parts_fiscales) || 1,
-        recurringBonuses: primesFixes
-          .filter((p) => p.label && Number(p.amount))
-          .map((p) => ({ label: p.label, amount: Number(p.amount) })),
-      });
-      setEmployePrimesFixes(null);
-      charger();
-    } catch (err) {
-      setErreur(err.message);
-    } finally {
-      setEnvoiEnCours(false);
-    }
-  }
-
-  function ouvrirConfig(emp) {
-    setEmployeConfig(emp);
-    setSalaireSaisi(emp.monthly_salary || '');
-    setMethodeSaisie(emp.payment_method || 'especes');
-    setPartsSaisies(emp.parts_fiscales || 1);
-  }
-
-  async function enregistrerConfig(e) {
-    e.preventDefault();
-    if (!salaireSaisi || Number(salaireSaisi) <= 0) {
-      setErreur('Montant du salaire invalide.');
-      return;
-    }
-    setEnvoiEnCours(true);
-    try {
-      await api.setSalary(employeConfig.id, {
-        monthlySalary: Number(salaireSaisi),
-        paymentMethod: methodeSaisie,
-        partsFiscales: Number(partsSaisies) || 1,
-      });
-      setEmployeConfig(null);
-      charger();
-    } catch (err) {
-      setErreur(err.message);
-    } finally {
-      setEnvoiEnCours(false);
-    }
-  }
-
   function ouvrirPaiement(emp) {
     setEmployePaiement(emp);
     setMethodePaiement(emp.payment_method || 'especes');
@@ -903,24 +851,42 @@ function SalairesTab() {
   async function ouvrirBulletin(emp) {
     setEmployeBulletin(emp);
     setBulletinCalcule(null);
+    setFicheModifiee(false);
+    setErreur('');
+    setSalaireSaisi(emp.monthly_salary ? Math.round(Number(emp.monthly_salary)) : '');
+    setMethodeSaisie(emp.payment_method || 'especes');
+    setPartsSaisies(emp.parts_fiscales || 1);
+    setPrimes([]);
+    setRetenues([]);
     setChargementBulletin(true);
     try {
-      const existantes = await api.getSalaryBonuses(emp.id, mois);
-      if (existantes.length > 0) {
-        setPrimes(existantes.map((p) => ({ label: p.label, amount: p.amount })));
-      } else {
-        // Rien de saisi pour ce mois : on reprend les primes fixes configurées
-        // pour l'employé, sauf si un bulletin existe déjà pour ce mois.
-        let dejaGenere = false;
-        try {
-          await api.getPayslip(emp.id, mois);
-          dejaGenere = true;
-        } catch {
-          dejaGenere = false;
-        }
-        const config = Array.isArray(emp.recurring_bonuses) ? emp.recurring_bonuses : [];
-        setPrimes(dejaGenere ? [] : config.map((p) => ({ label: p.label, amount: p.amount })));
+      const fixes = Array.isArray(emp.recurring_bonuses) ? emp.recurring_bonuses : [];
+      const [primesMois, retenuesMois] = await Promise.all([
+        api.getSalaryBonuses(emp.id, mois),
+        api.getSalaryDeductions(emp.id, mois),
+      ]);
+      let bulletinExistant = null;
+      try {
+        bulletinExistant = await api.getPayslip(emp.id, mois);
+      } catch {
+        bulletinExistant = null;
       }
+
+      if (primesMois.length > 0) {
+        // Primes déjà saisies pour ce mois ; "Chaque mois" coché si elles correspondent à une prime fixe.
+        setPrimes(
+          primesMois.map((p) => ({
+            label: p.label,
+            amount: Number(p.amount),
+            fixe: fixes.some((f) => f.label === p.label && Number(f.amount) === Number(p.amount)),
+          }))
+        );
+      } else if (!bulletinExistant) {
+        // Rien de saisi et pas encore de bulletin : on reprend les primes fixes du mois précédent.
+        setPrimes(fixes.map((p) => ({ label: p.label, amount: Number(p.amount), fixe: true })));
+      }
+      setRetenues(retenuesMois.map((d) => ({ type: d.type, label: d.label, amount: Number(d.amount) })));
+      setBulletinCalcule(bulletinExistant);
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -928,28 +894,67 @@ function SalairesTab() {
     }
   }
 
-  function ajouterPrime() {
-    setPrimes((p) => [...p, { label: '', amount: '' }]);
+  function ajouterPrime(label = '') {
+    setPrimes((p) => [...p, { label, amount: '', fixe: false }]);
+    setFicheModifiee(true);
   }
 
   function modifierPrime(index, champ, valeur) {
     setPrimes((p) => p.map((prime, i) => (i === index ? { ...prime, [champ]: valeur } : prime)));
+    setFicheModifiee(true);
   }
 
   function retirerPrime(index) {
     setPrimes((p) => p.filter((_, i) => i !== index));
+    setFicheModifiee(true);
+  }
+
+  function ajouterRetenue(type) {
+    setRetenues((r) => [...r, { type, label: '', amount: '' }]);
+    setFicheModifiee(true);
+  }
+
+  function modifierRetenue(index, champ, valeur) {
+    setRetenues((r) => r.map((retenue, i) => (i === index ? { ...retenue, [champ]: valeur } : retenue)));
+    setFicheModifiee(true);
+  }
+
+  function retirerRetenue(index) {
+    setRetenues((r) => r.filter((_, i) => i !== index));
+    setFicheModifiee(true);
   }
 
   async function genererBulletin(e) {
     e.preventDefault();
+    if (!salaireSaisi || Number(salaireSaisi) <= 0) {
+      setErreur('Renseigne le salaire de base.');
+      return;
+    }
     setEnvoiEnCours(true);
     setErreur('');
     try {
-      const bonusesValides = primes
-        .filter((p) => p.label && Number(p.amount))
-        .map((p) => ({ label: p.label, amount: Number(p.amount) }));
-      const resultat = await api.generatePayslip(employeBulletin.id, { month: mois, bonuses: bonusesValides });
+      const primesValides = primes
+        .filter((p) => p.label.trim() && Number(p.amount))
+        .map((p) => ({ label: p.label.trim(), amount: Number(p.amount), fixe: Boolean(p.fixe) }));
+      const retenuesValides = retenues
+        .filter((d) => Number(d.amount) > 0)
+        .map((d) => ({ type: d.type, label: d.label.trim(), amount: Number(d.amount) }));
+
+      // 1) Salaire de base, mode de paiement, parts fiscales et primes "chaque mois".
+      await api.setSalary(employeBulletin.id, {
+        monthlySalary: Number(salaireSaisi),
+        paymentMethod: methodeSaisie,
+        partsFiscales: Number(partsSaisies) || 1,
+        recurringBonuses: primesValides.filter((p) => p.fixe).map(({ label, amount }) => ({ label, amount })),
+      });
+      // 2) Calcul et enregistrement du bulletin du mois.
+      const resultat = await api.generatePayslip(employeBulletin.id, {
+        month: mois,
+        bonuses: primesValides.map(({ label, amount }) => ({ label, amount })),
+        deductions: retenuesValides,
+      });
       setBulletinCalcule(resultat);
+      setFicheModifiee(false);
       charger();
     } catch (err) {
       setErreur(err.message);
@@ -973,6 +978,22 @@ function SalairesTab() {
     } finally {
       setEnvoiEnCours(false);
     }
+  }
+
+  // Estimation affichée dans la fiche avant le calcul exact par le serveur.
+  const fcfaFiche = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
+  const sommePrimes = primes.reduce((t, p) => t + (Number(p.amount) || 0), 0);
+  const sommeAbsences = retenues.filter((d) => d.type === 'absence').reduce((t, d) => t + (Number(d.amount) || 0), 0);
+  const sommeAutres = retenues.filter((d) => d.type !== 'absence').reduce((t, d) => t + (Number(d.amount) || 0), 0);
+  const brutEstime = (Number(salaireSaisi) || 0) + sommePrimes - sommeAbsences;
+
+  function recapLigne(libelle, montant, { signe = '', fort = false, doux = false, separe = false } = {}) {
+    return (
+      <div className={'md-recap-ligne' + (fort ? ' md-recap-ligne--fort' : '') + (doux ? ' md-recap-ligne--doux' : '') + (separe ? ' md-recap-ligne--separe' : '')}>
+        <span>{libelle}</span>
+        <span className="chiffre">{signe ? `${signe} ` : ''}{fcfaFiche(montant)} FCFA</span>
+      </div>
+    );
   }
 
   // Synthèse du mois affiché.
@@ -1045,22 +1066,31 @@ function SalairesTab() {
                 </div>
 
                 <div className="md-bloc md-bloc--montant">
-                  <span className={`tampon ${paye ? 'tampon-sarcelle' : 'tampon-brique'}`}>{paye ? 'Payé' : 'Non payé'}</span>
+                  <span className={`tampon ${paye ? 'tampon-sarcelle' : emp.payslip_net ? 'tampon-laiton' : 'tampon-brique'}`}>
+                    {paye ? 'Payé' : emp.payslip_net ? 'Bulletin prêt' : 'À préparer'}
+                  </span>
                   <p className="md-sous">
                     {paye
                       ? `Le ${new Date(emp.paid_at).toLocaleDateString('fr-FR')} · ${Math.round(emp.paid_amount).toLocaleString('fr-FR')} FCFA via ${libelleMethode(emp.paid_method)}`
-                      : `Pour ${formatMois(mois)}`}
+                      : emp.payslip_net
+                        ? `Net à payer : ${Math.round(Number(emp.payslip_net)).toLocaleString('fr-FR')} FCFA`
+                        : `Pour ${formatMois(mois)}`}
                   </p>
                 </div>
 
                 <div className="md-actions">
-                  <button className="btn" onClick={() => ouvrirConfig(emp)}>Configurer</button>
-                  <button className="btn" onClick={() => ouvrirPrimesFixes(emp)}>Primes fixes</button>
-                  <button className="btn" disabled={!emp.monthly_salary} onClick={() => ouvrirBulletin(emp)}>
-                    Bulletin
+                  <button className={'btn' + (!emp.payslip_net ? ' btn-principal' : '')} onClick={() => ouvrirBulletin(emp)}>
+                    Fiche de paie
                   </button>
-                  <button className="btn btn-principal" disabled={!emp.payslip_net} onClick={() => ouvrirPaiement(emp)}>
-                    {paye ? 'Modifier le paiement' : 'Marquer comme payé'}
+                  <button
+                    className="btn"
+                    disabled={!emp.payslip_net}
+                    onClick={() => api.previewPayslipPdf(emp.id, mois).catch((err) => setErreur(err.message))}
+                  >
+                    PDF
+                  </button>
+                  <button className={'btn' + (emp.payslip_net && !paye ? ' btn-principal' : '')} disabled={!emp.payslip_net} onClick={() => ouvrirPaiement(emp)}>
+                    {paye ? 'Modifier le paiement' : 'Payer'}
                   </button>
                 </div>
               </div>
@@ -1069,122 +1099,86 @@ function SalairesTab() {
         </div>
       )}
 
-      {employeConfig && (
-        <div className="modale-fond" onClick={() => setEmployeConfig(null)}>
-          <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Configurer le salaire — {employeConfig.name}</h2>
-            <form onSubmit={enregistrerConfig}>
-              <div className="champ-groupe">
-                <label className="etiquette" htmlFor="salaire-montant">Salaire mensuel (FCFA)</label>
-                <input
-                  id="salaire-montant"
-                  type="number"
-                  min="1"
-                  className="champ"
-                  value={salaireSaisi}
-                  onChange={(e) => setSalaireSaisi(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="champ-groupe">
-                <label className="etiquette" htmlFor="salaire-methode">Méthode de paiement</label>
-                <select
-                  id="salaire-methode"
-                  className="champ"
-                  value={methodeSaisie}
-                  onChange={(e) => setMethodeSaisie(e.target.value)}
-                >
-                  {METHODES.map((m) => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="champ-groupe">
-                <label className="etiquette" htmlFor="salaire-parts">Parts fiscales (quotient familial)</label>
-                <input
-                  id="salaire-parts"
-                  type="number"
-                  min="1"
-                  step="0.5"
-                  className="champ"
-                  value={partsSaisies}
-                  onChange={(e) => setPartsSaisies(e.target.value)}
-                />
-                <p style={{ fontSize: 12, color: 'var(--encre-douce)', marginTop: 4 }}>
-                  1 = célibataire sans enfant. Augmente selon la situation familiale déclarée par l'employé (mariage, enfants à charge…) — réduit l'impôt sur le revenu (IRPP) via le quotient familial.
-                </p>
-              </div>
-              <div className="actions-modale">
-                <button type="button" className="btn" onClick={() => setEmployeConfig(null)}>Annuler</button>
-                <button type="submit" className="btn btn-principal" disabled={envoiEnCours}>Enregistrer</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {employePrimesFixes && (
-        <div className="modale-fond" onClick={() => setEmployePrimesFixes(null)}>
-          <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Primes fixes — {employePrimesFixes.name}</h2>
-            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-              Ces primes/indemnités sont reprises automatiquement à l'ouverture du bulletin de chaque mois. Modifie-les ici une fois pour toutes.
-            </p>
-            <form onSubmit={enregistrerPrimesFixes}>
-              <div className="champ-groupe">
-                {primesFixes.map((prime, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-                    <input
-                      type="text"
-                      className="champ"
-                      placeholder="Libellé (ex. prime de transport)"
-                      value={prime.label}
-                      onChange={(e) => setPrimesFixes((l) => l.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
-                      style={{ flex: 2 }}
-                    />
-                    <input
-                      type="number"
-                      className="champ"
-                      placeholder="Montant"
-                      value={prime.amount}
-                      onChange={(e) => setPrimesFixes((l) => l.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))}
-                      style={{ flex: 1 }}
-                    />
-                    <button type="button" className="btn" onClick={() => setPrimesFixes((l) => l.filter((_, j) => j !== i))}>×</button>
-                  </div>
-                ))}
-                <button type="button" className="btn" onClick={() => setPrimesFixes((l) => [...l, { label: '', amount: '' }])}>+ Ajouter une prime</button>
-              </div>
-              <div className="actions-modale">
-                <button type="button" className="btn" onClick={() => setEmployePrimesFixes(null)}>Annuler</button>
-                <button type="submit" className="btn btn-principal" disabled={envoiEnCours}>Enregistrer</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
       {employeBulletin && (
         <div className="modale-fond" onClick={() => setEmployeBulletin(null)}>
-          <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>Bulletin de paie — {employeBulletin.name}</h2>
-            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>{formatMois(mois)}</p>
+          <div className="modale md-fiche" onClick={(e) => e.stopPropagation()}>
+            <div className="md-fiche-tete">
+              <div className="md-avatar">{initialesMembre(employeBulletin.name)}</div>
+              <div>
+                <h2>Fiche de paie</h2>
+                <p className="md-sous">{employeBulletin.name} · {formatMois(mois)}</p>
+              </div>
+            </div>
+
+            {employeBulletin.paid_at && (
+              <div className="md-info">
+                Ce mois est déjà payé. Modifier la fiche met à jour le bulletin, mais pas le paiement déjà enregistré.
+              </div>
+            )}
 
             {chargementBulletin ? (
               <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
             ) : (
               <form onSubmit={genererBulletin}>
-                <div className="champ-groupe">
-                  <label className="etiquette">Primes / indemnités du mois</label>
+                {/* 1. Salaire de base */}
+                <section className="md-fiche-section">
+                  <h3><span className="md-etape">1</span> Salaire de base</h3>
+                  <div className="md-fiche-grille">
+                    <div className="champ-groupe">
+                      <label className="etiquette" htmlFor="fp-base">Salaire mensuel (FCFA)</label>
+                      <input
+                        id="fp-base"
+                        type="number"
+                        min="1"
+                        className="champ"
+                        value={salaireSaisi}
+                        onChange={(e) => { setSalaireSaisi(e.target.value); setFicheModifiee(true); }}
+                        required
+                      />
+                    </div>
+                    <div className="champ-groupe">
+                      <label className="etiquette" htmlFor="fp-methode">Mode de paiement</label>
+                      <select
+                        id="fp-methode"
+                        className="champ"
+                        value={methodeSaisie}
+                        onChange={(e) => setMethodeSaisie(e.target.value)}
+                      >
+                        {METHODES.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="champ-groupe">
+                      <label className="etiquette" htmlFor="fp-parts">Parts fiscales</label>
+                      <input
+                        id="fp-parts"
+                        type="number"
+                        min="1"
+                        step="0.5"
+                        className="champ"
+                        value={partsSaisies}
+                        onChange={(e) => { setPartsSaisies(e.target.value); setFicheModifiee(true); }}
+                      />
+                    </div>
+                  </div>
+                  <p className="md-aide">
+                    Parts fiscales : 1 = célibataire sans enfant. Elles augmentent avec la situation familiale et réduisent l'IRPP (quotient familial).
+                  </p>
+                </section>
+
+                {/* 2. Primes et indemnités */}
+                <section className="md-fiche-section">
+                  <h3><span className="md-etape">2</span> Primes et indemnités <small>+ ajoutées au brut</small></h3>
+                  {primes.length === 0 && <p className="md-aide">Aucune prime ce mois-ci.</p>}
                   {primes.map((prime, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                    <div key={i} className="md-fiche-ligne md-fiche-ligne--prime">
                       <input
                         type="text"
                         className="champ"
                         placeholder="Libellé (ex. prime de transport)"
                         value={prime.label}
                         onChange={(e) => modifierPrime(i, 'label', e.target.value)}
-                        style={{ flex: 2 }}
                       />
                       <input
                         type="number"
@@ -1192,41 +1186,117 @@ function SalairesTab() {
                         placeholder="Montant"
                         value={prime.amount}
                         onChange={(e) => modifierPrime(i, 'amount', e.target.value)}
-                        style={{ flex: 1 }}
                       />
-                      <button type="button" className="btn" onClick={() => retirerPrime(i)}>×</button>
+                      <label className="md-case" title="Reprise automatiquement chaque mois">
+                        <input type="checkbox" checked={Boolean(prime.fixe)} onChange={(e) => modifierPrime(i, 'fixe', e.target.checked)} />
+                        Chaque mois
+                      </label>
+                      <button type="button" className="btn" onClick={() => retirerPrime(i)} aria-label="Retirer cette prime">×</button>
                     </div>
                   ))}
-                  <button type="button" className="btn" onClick={ajouterPrime}>+ Ajouter une prime</button>
-                </div>
+                  <div className="md-puces" style={{ marginTop: 8 }}>
+                    {PRIMES_SUGGEREES.map((nom) => (
+                      <button key={nom} type="button" className="md-puce" onClick={() => ajouterPrime(nom)}>+ {nom}</button>
+                    ))}
+                    <button type="button" className="md-puce" onClick={() => ajouterPrime('')}>+ Autre prime</button>
+                  </div>
+                </section>
 
-                <button type="submit" className="btn btn-principal" disabled={envoiEnCours} style={{ marginTop: 12 }}>
-                  {envoiEnCours ? 'Calcul…' : 'Calculer et enregistrer le bulletin'}
-                </button>
+                {/* 3. Retenues */}
+                <section className="md-fiche-section">
+                  <h3><span className="md-etape">3</span> Retenues <small>− déduites du salaire</small></h3>
+                  {retenues.length === 0 && <p className="md-aide">Aucune retenue ce mois-ci.</p>}
+                  {retenues.map((retenue, i) => (
+                    <div key={i} className="md-fiche-ligne md-fiche-ligne--retenue">
+                      <select className="champ" value={retenue.type} onChange={(e) => modifierRetenue(i, 'type', e.target.value)}>
+                        {TYPES_RETENUE.map((t) => (
+                          <option key={t.value} value={t.value}>{t.label}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        className="champ"
+                        placeholder="Précision (ex. 2 jours d'absence)"
+                        value={retenue.label}
+                        onChange={(e) => modifierRetenue(i, 'label', e.target.value)}
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        className="champ"
+                        placeholder="Montant"
+                        value={retenue.amount}
+                        onChange={(e) => modifierRetenue(i, 'amount', e.target.value)}
+                      />
+                      <button type="button" className="btn" onClick={() => retirerRetenue(i)} aria-label="Retirer cette retenue">×</button>
+                    </div>
+                  ))}
+                  <div className="md-puces" style={{ marginTop: 8 }}>
+                    {TYPES_RETENUE.map((t) => (
+                      <button key={t.value} type="button" className="md-puce" onClick={() => ajouterRetenue(t.value)}>+ {t.court}</button>
+                    ))}
+                  </div>
+                  <p className="md-aide">
+                    Une absence réduit le brut : cotisations et impôt sont recalculés. Une avance, un prêt ou une autre retenue est déduite du net, après les impôts.
+                  </p>
+                </section>
+
+                {/* 4. Récapitulatif */}
+                <section className="md-fiche-section">
+                  <h3><span className="md-etape">4</span> Récapitulatif</h3>
+                  {bulletinCalcule ? (
+                    <div className="md-recap">
+                      {recapLigne('Salaire de base', bulletinCalcule.base_salary)}
+                      {Number(bulletinCalcule.bonuses_total) !== 0 && recapLigne('Primes et indemnités', bulletinCalcule.bonuses_total, { signe: '+' })}
+                      {Number(bulletinCalcule.absences_total) > 0 && recapLigne('Absences non rémunérées', bulletinCalcule.absences_total, { signe: '−' })}
+                      {recapLigne('Salaire brut', bulletinCalcule.gross_salary, { fort: true, separe: true })}
+                      {recapLigne('IPRES (retraite)', bulletinCalcule.ipres_salarial, { signe: '−', doux: true })}
+                      {Number(bulletinCalcule.css_salarial) > 0 && recapLigne('CSS', bulletinCalcule.css_salarial, { signe: '−', doux: true })}
+                      {recapLigne('Impôt sur le revenu (IRPP)', bulletinCalcule.irpp, { signe: '−', doux: true })}
+                      {recapLigne('TRIMF', bulletinCalcule.trimf, { signe: '−', doux: true })}
+                      {Number(bulletinCalcule.deductions_total) > 0 && recapLigne('Avances, prêts et autres retenues', bulletinCalcule.deductions_total, { signe: '−' })}
+                      <div className="md-recap-net">
+                        <span>Net à payer</span>
+                        <strong>{fcfaFiche(bulletinCalcule.net_a_payer)} FCFA</strong>
+                      </div>
+                      {ficheModifiee && (
+                        <p className="md-aide" style={{ color: 'var(--danger)', marginTop: 8 }}>
+                          La fiche a été modifiée : clique sur « Recalculer et enregistrer » pour mettre à jour ces chiffres.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="md-recap">
+                      {recapLigne('Salaire de base', Number(salaireSaisi) || 0)}
+                      {sommePrimes !== 0 && recapLigne('Primes et indemnités', sommePrimes, { signe: '+' })}
+                      {sommeAbsences > 0 && recapLigne('Absences non rémunérées', sommeAbsences, { signe: '−' })}
+                      {recapLigne('Salaire brut estimé', brutEstime, { fort: true, separe: true })}
+                      {sommeAutres > 0 && recapLigne('Avances, prêts et autres retenues', sommeAutres, { signe: '−' })}
+                      <p className="md-aide" style={{ marginTop: 8 }}>
+                        Estimation avant cotisations et impôt. Clique sur « Calculer » pour obtenir le net exact.
+                      </p>
+                    </div>
+                  )}
+                </section>
+
+                <div className="actions-modale">
+                  <button type="button" className="btn" onClick={() => setEmployeBulletin(null)}>Fermer</button>
+                  {bulletinCalcule && (
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={ficheModifiee}
+                      onClick={() => api.previewPayslipPdf(employeBulletin.id, mois).catch((err) => setErreur(err.message))}
+                    >
+                      Voir / imprimer le PDF
+                    </button>
+                  )}
+                  <button type="submit" className="btn btn-principal" disabled={envoiEnCours}>
+                    {envoiEnCours ? 'Calcul…' : bulletinCalcule ? 'Recalculer et enregistrer' : 'Calculer et enregistrer'}
+                  </button>
+                </div>
               </form>
             )}
-
-            {bulletinCalcule && (
-              <div style={{ marginTop: 18, paddingTop: 14, borderTop: '1px solid var(--bordure, #e5e5e5)' }}>
-                <p className="carte-a-encaisser-client">Salaire brut : {Math.round(bulletinCalcule.gross_salary).toLocaleString('fr-FR')} FCFA</p>
-                <p className="carte-a-encaisser-client">Retenues (IPRES, IRPP, TRIMF…) : {Math.round(bulletinCalcule.gross_salary - bulletinCalcule.net_a_payer).toLocaleString('fr-FR')} FCFA</p>
-                <p className="carte-a-encaisser-client" style={{ fontWeight: 700 }}>
-                  Net à payer : {Math.round(bulletinCalcule.net_a_payer).toLocaleString('fr-FR')} FCFA
-                </p>
-                <button
-                  type="button"
-                  className="btn"
-                  style={{ marginTop: 10 }}
-                  onClick={() => api.previewPayslipPdf(employeBulletin.id, mois).catch((err) => setErreur(err.message))}
-                >
-                  Voir / imprimer le PDF
-                </button>
-              </div>
-            )}
-
-            <div className="actions-modale">
-              <button type="button" className="btn" onClick={() => setEmployeBulletin(null)}>Fermer</button>
-            </div>
           </div>
         </div>
       )}

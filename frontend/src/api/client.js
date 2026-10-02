@@ -418,6 +418,8 @@ export const api = {
     request('/payroll/settings', { method: 'PUT', body: JSON.stringify(data) }),
   getSalaryBonuses: (userId, month) =>
     request(`/payroll/${userId}/bonuses${month ? `?month=${month}` : ''}`),
+  getSalaryDeductions: (userId, month) =>
+    request(`/payroll/${userId}/deductions${month ? `?month=${month}` : ''}`),
   generatePayslip: (userId, data) =>
     request(`/payroll/${userId}/generate`, { method: 'POST', body: JSON.stringify(data) }),
   getPayslip: (userId, month) => request(`/payroll/${userId}/${month}`),

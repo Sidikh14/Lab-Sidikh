@@ -4,6 +4,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import { useLiveEvent } from '../offline/liveEvents';
 import { getSecteurConfig } from '../config/sectorConfig';
+import { StylesModernes } from '../components/StylesModernes';
 
 function IconClient() {
   return (
@@ -283,23 +284,32 @@ function ClientsTab() {
     0
   );
 
+  const nbCreances = clients.filter((c) => Number(c.balance_due) > 0).length;
+  const totalCreances = clients.reduce((t, c) => t + Number(c.balance_due || 0), 0);
+  const compteCreance = (v) => (v === 'tous' ? clients.length : v === 'creance' ? nbCreances : clients.length - nbCreances);
+
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
-        <button
-          className="btn btn-principal"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
-          onClick={() => setModaleOuverte(true)}
-        >
-          <IconPlus />
-          Nouveau {mot}
-        </button>
+      <StylesModernes />
+
+      <div className="md-kpis">
+        <div className="md-kpi md-kpi--hero">
+          <span className="md-kpi-icone"><IconClient /></span>
+          <p className="md-kpi-label">{mot.charAt(0).toUpperCase() + mot.slice(1)}s</p>
+          <p className="md-kpi-valeur">{clients.length}</p>
+        </div>
+        <div className={'md-kpi' + (totalCreances > 0 ? ' md-kpi--alerte' : '')}>
+          <span className="md-kpi-icone"><IconReglement /></span>
+          <p className="md-kpi-label">Créances en cours</p>
+          <p className="md-kpi-valeur">{Math.round(totalCreances).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-sous">{nbCreances} {mot}(s) concerné(s)</p>
+        </div>
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
 
-      <div className="barre-filtres">
-        <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
+      <div className="md-outils">
+        <div className="champ-avec-icone md-recherche">
           <span className="champ-icone"><IconRecherche /></span>
           <input
             type="text"
@@ -309,42 +319,24 @@ function ClientsTab() {
             onChange={(e) => setRecherche(e.target.value)}
           />
         </div>
-        <div
-          className="filtre-pilules"
-          style={{
-            display: 'flex',
-            gap: 4,
-            padding: 4,
-            background: 'var(--fond-alterne, rgba(0,0,0,0.03))',
-            borderRadius: 999,
-            border: '1px solid var(--trait)',
-          }}
-        >
-          {FILTRES_CREANCE.map((f) => {
-            const actif = filtreCreance === f.value;
-            return (
-              <button
-                key={f.value}
-                type="button"
-                onClick={() => setFiltreCreance(f.value)}
-                style={{
-                  border: 'none',
-                  cursor: 'pointer',
-                  padding: '7px 16px',
-                  borderRadius: 999,
-                  fontSize: 13,
-                  fontWeight: actif ? 600 : 500,
-                  color: actif ? '#fff' : 'var(--encre-douce)',
-                  background: actif ? 'var(--accent)' : 'transparent',
-                  boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
-                  transition: 'background 0.15s ease, color 0.15s ease',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {f.label}
-              </button>
-            );
-          })}
+        <button className="btn btn-principal" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={() => setModaleOuverte(true)}>
+          <IconPlus />
+          Nouveau {mot}
+        </button>
+      </div>
+
+      <div className="md-barre-vue">
+        <div className="md-puces">
+          {FILTRES_CREANCE.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              className={'md-puce' + (filtreCreance === f.value ? ' actif' : '')}
+              onClick={() => setFiltreCreance(f.value)}
+            >
+              {f.label} <span>{compteCreance(f.value)}</span>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -355,27 +347,29 @@ function ClientsTab() {
           {clients.length === 0 ? `Aucun ${mot} enregistré. Ajoutez votre premier ${mot}.` : `Aucun ${mot} ne correspond à ces filtres.`}
         </p>
       ) : (
-        <div className="grille-cartes">
+        <div className="md-liste">
           {clientsFiltres.map((c) => {
             const aCreance = Number(c.balance_due) > 0;
             return (
-              <div key={c.id} className="carte-entite">
-                <div className="carte-entite-entete">
-                  <span className="carte-entite-icone"><IconClient /></span>
-                  {aCreance && <span className="tampon tampon-brique">Créance</span>}
+              <div key={c.id} className={'md-ligne' + (aCreance ? ' md-ligne--prioritaire' : '')}>
+                <div className="md-avatar">{(c.full_name || '?').trim()[0].toUpperCase()}</div>
+
+                <div className="md-bloc">
+                  <p className="md-titre">{c.full_name}</p>
+                  <p className="md-sous">{c.phone || c.email || 'Aucun contact enregistré'}</p>
                 </div>
-                <p className="carte-entite-nom">{c.full_name}</p>
-                <p className="carte-entite-detail">{c.phone || c.email || 'Aucun contact enregistré'}</p>
-                <p className="carte-entite-metrique" style={aCreance ? { color: 'var(--danger)' } : undefined}>
-                  {aCreance ? `${Math.round(c.balance_due).toLocaleString('fr-FR')} FCFA` : 'À jour'}
-                </p>
-                <p className="carte-entite-souslegende">{aCreance ? 'Créance en cours' : 'Aucune créance'}</p>
-                <div className="carte-entite-actions">
-                  <button
-                    className="btn"
-                    style={{ flex: 1, justifyContent: 'center', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                    onClick={() => ouvrirFiche(c)}
-                  >
+
+                <div className="md-bloc md-bloc--montant">
+                  <p className="md-montant" style={aCreance ? { color: 'var(--danger)' } : undefined}>
+                    {aCreance ? `${Math.round(c.balance_due).toLocaleString('fr-FR')} FCFA` : 'À jour'}
+                  </p>
+                  <span className={`tampon ${aCreance ? 'tampon-brique' : 'tampon-sarcelle'}`}>
+                    {aCreance ? 'Créance en cours' : 'Aucune créance'}
+                  </span>
+                </div>
+
+                <div className="md-actions">
+                  <button className="btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => ouvrirFiche(c)}>
                     <IconDossier />
                     Voir la fiche
                   </button>
@@ -541,24 +535,20 @@ function ClientsTab() {
               </>
             ) : (
               <>
-                <div className="ligne-stats" style={{ marginBottom: 20 }}>
-                  <div className="stat" style={{ padding: '12px 16px' }}>
-                    <span className="etiquette">Commandes</span>
-                    <span className="valeur" style={{ fontSize: 20 }}>
-                      {(clientSelectionne.orderHistory || []).length}
-                    </span>
+                <div className="md-kpis">
+                  <div className="md-kpi">
+                    <p className="md-kpi-label">Commandes</p>
+                    <p className="md-kpi-valeur">{(clientSelectionne.orderHistory || []).length}</p>
                   </div>
-                  <div className="stat" style={{ padding: '12px 16px' }}>
-                    <span className="etiquette">Total des achats</span>
-                    <span className="valeur" style={{ fontSize: 20 }}>
-                      {totalAchats.toLocaleString('fr-FR')} FCFA
-                    </span>
+                  <div className="md-kpi">
+                    <p className="md-kpi-label">Total des achats</p>
+                    <p className="md-kpi-valeur">{Math.round(totalAchats).toLocaleString('fr-FR')} <small>FCFA</small></p>
                   </div>
-                  <div className="stat" style={{ padding: '12px 16px' }}>
-                    <span className="etiquette">Créance</span>
-                    <span className="valeur" style={{ fontSize: 20, color: Number(clientSelectionne.balance_due) > 0 ? 'var(--danger)' : undefined }}>
-                      {Math.round(clientSelectionne.balance_due || 0).toLocaleString('fr-FR')} FCFA
-                    </span>
+                  <div className={'md-kpi' + (Number(clientSelectionne.balance_due) > 0 ? ' md-kpi--alerte' : '')}>
+                    <p className="md-kpi-label">Créance</p>
+                    <p className="md-kpi-valeur" style={Number(clientSelectionne.balance_due) > 0 ? { color: 'var(--danger)' } : undefined}>
+                      {Math.round(clientSelectionne.balance_due || 0).toLocaleString('fr-FR')} <small>FCFA</small>
+                    </p>
                   </div>
                 </div>
 
@@ -905,23 +895,33 @@ function MutuellesTab() {
     }
   }
 
+  const nbCreancesMutuelles = mutuelles.filter((m) => Number(m.debt) > 0).length;
+  const totalCreancesMutuelles = mutuelles.reduce((t, m) => t + Number(m.debt || 0), 0);
+  const compteCreanceMutuelle = (v) =>
+    v === 'tous' ? mutuelles.length : v === 'creance' ? nbCreancesMutuelles : mutuelles.length - nbCreancesMutuelles;
+
   return (
     <>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
-        <button
-          className="btn btn-principal"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
-          onClick={() => setModaleOuverte(true)}
-        >
-          <IconPlus />
-          Nouvelle mutuelle
-        </button>
+      <StylesModernes />
+
+      <div className="md-kpis">
+        <div className="md-kpi md-kpi--hero">
+          <span className="md-kpi-icone"><IconMutuelle /></span>
+          <p className="md-kpi-label">Mutuelles</p>
+          <p className="md-kpi-valeur">{mutuelles.length}</p>
+        </div>
+        <div className={'md-kpi' + (totalCreancesMutuelles > 0 ? ' md-kpi--alerte' : '')}>
+          <span className="md-kpi-icone"><IconReglement /></span>
+          <p className="md-kpi-label">À recevoir</p>
+          <p className="md-kpi-valeur">{Math.round(totalCreancesMutuelles).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-sous">{nbCreancesMutuelles} mutuelle(s) avec créance</p>
+        </div>
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
 
-      <div className="barre-filtres">
-        <div className="champ-avec-icone champ-avec-icone--pleine-largeur">
+      <div className="md-outils">
+        <div className="champ-avec-icone md-recherche">
           <span className="champ-icone"><IconRecherche /></span>
           <input
             type="text"
@@ -931,29 +931,24 @@ function MutuellesTab() {
             onChange={(e) => setRecherche(e.target.value)}
           />
         </div>
-        <div
-          className="filtre-pilules"
-          style={{ display: 'flex', gap: 4, padding: 4, background: 'var(--fond-alterne, rgba(0,0,0,0.03))', borderRadius: 999, border: '1px solid var(--trait)' }}
-        >
-          {FILTRES_CREANCE.map((f) => {
-            const actif = filtreCreance === f.value;
-            return (
-              <button
-                key={f.value}
-                type="button"
-                onClick={() => setFiltreCreance(f.value)}
-                style={{
-                  border: 'none', cursor: 'pointer', padding: '7px 16px', borderRadius: 999, fontSize: 13,
-                  fontWeight: actif ? 600 : 500, color: actif ? '#fff' : 'var(--encre-douce)',
-                  background: actif ? 'var(--accent)' : 'transparent',
-                  boxShadow: actif ? '0 4px 10px -3px var(--accent)' : 'none',
-                  transition: 'background 0.15s ease, color 0.15s ease', whiteSpace: 'nowrap',
-                }}
-              >
-                {f.label}
-              </button>
-            );
-          })}
+        <button className="btn btn-principal" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }} onClick={() => setModaleOuverte(true)}>
+          <IconPlus />
+          Nouvelle mutuelle
+        </button>
+      </div>
+
+      <div className="md-barre-vue">
+        <div className="md-puces">
+          {FILTRES_CREANCE.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              className={'md-puce' + (filtreCreance === f.value ? ' actif' : '')}
+              onClick={() => setFiltreCreance(f.value)}
+            >
+              {f.label} <span>{compteCreanceMutuelle(f.value)}</span>
+            </button>
+          ))}
         </div>
       </div>
 
@@ -964,36 +959,33 @@ function MutuellesTab() {
           {mutuelles.length === 0 ? 'Aucune mutuelle enregistrée pour le moment.' : 'Aucune mutuelle ne correspond à ces filtres.'}
         </p>
       ) : (
-        <div className="grille-cartes">
+        <div className="md-liste">
           {mutuellesFiltrees.map((m) => {
             const aCreance = Number(m.debt) > 0;
             return (
-              <div key={m.id} className="carte-entite">
-                <div className="carte-entite-entete">
-                  <span className="carte-entite-icone"><IconMutuelle /></span>
-                  {aCreance && <span className="tampon tampon-brique">Créance</span>}
+              <div key={m.id} className={'md-ligne' + (aCreance ? ' md-ligne--prioritaire' : '')}>
+                <div className="md-avatar">{(m.name || '?').trim()[0].toUpperCase()}</div>
+
+                <div className="md-bloc">
+                  <p className="md-titre">{m.name}</p>
+                  <p className="md-sous">{m.phone || m.email || 'Aucun contact enregistré'}</p>
                 </div>
-                <p className="carte-entite-nom">{m.name}</p>
-                <p className="carte-entite-detail">{m.phone || m.email || 'Aucun contact enregistré'}</p>
-                <p className="carte-entite-metrique" style={aCreance ? { color: 'var(--danger)' } : undefined}>
-                  {Math.round(Number(m.debt) || 0).toLocaleString('fr-FR')} FCFA
-                </p>
-                <p className="carte-entite-souslegende">{aCreance ? 'Doit être réglée' : 'Aucune créance'}</p>
-                <div className="carte-entite-actions">
-                  <button
-                    className="btn"
-                    style={{ flex: 1, justifyContent: 'center', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                    onClick={() => ouvrirDetail(m)}
-                  >
+
+                <div className="md-bloc md-bloc--montant">
+                  <p className="md-montant" style={aCreance ? { color: 'var(--danger)' } : undefined}>
+                    {Math.round(Number(m.debt) || 0).toLocaleString('fr-FR')} FCFA
+                  </p>
+                  <span className={`tampon ${aCreance ? 'tampon-brique' : 'tampon-sarcelle'}`}>
+                    {aCreance ? 'Doit être réglée' : 'Aucune créance'}
+                  </span>
+                </div>
+
+                <div className="md-actions">
+                  <button className="btn" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} onClick={() => ouvrirDetail(m)}>
                     <IconReglement />
                     Détail / Règlement
                   </button>
-                  <button
-                    className="btn"
-                    style={{ padding: '7px 10px', fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                    onClick={() => handleSupprimer(m)}
-                    title="Retirer cette mutuelle"
-                  >
+                  <button className="btn" onClick={() => handleSupprimer(m)} title="Retirer cette mutuelle">
                     <IconCorbeille />
                   </button>
                 </div>
