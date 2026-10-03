@@ -159,7 +159,7 @@ export function StockPage() {
   const [enregistrementPrix, setEnregistrementPrix] = useState(false);
   const [modaleEntreeOuverte, setModaleEntreeOuverte] = useState(false);
   const entreeStockVide = {
-    items: [{ productId: '', quantity: '', montant: '', lotNumber: '', expiryDate: '' }],
+    items: [{ productId: '', quantity: '', montant: '', tva: '', lotNumber: '', expiryDate: '' }],
     supplierId: '',
     movementDate: new Date().toISOString().slice(0, 10),
     paymentMethod: 'comptant',
@@ -173,7 +173,7 @@ export function StockPage() {
   const [entreeStock, setEntreeStock] = useState(entreeStockVide);
   const [enregistrementEntree, setEnregistrementEntree] = useState(false);
   function ajouterLigneEntree() {
-    setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '', montant: '', lotNumber: '', expiryDate: '' }] }));
+    setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '', montant: '', tva: '', lotNumber: '', expiryDate: '' }] }));
   }
   function retirerLigneEntree(index) {
     setEntreeStock((prev) => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
@@ -626,6 +626,23 @@ export function StockPage() {
     const totalAchatCalcule = items.length > 1
       ? items.reduce((somme, it) => somme + Number(it.montant), 0)
       : Number(entreeStock.totalCost);
+    // TVA déductible : seulement pour les produits soumis à la TVA, comprise dans le montant payé.
+    const tvaParLigne = items.map((it) => {
+      const prod = products.find((p) => p.id === it.productId);
+      return prod && prod.tva_applicable !== false ? (Number(it.tva) || 0) : 0;
+    });
+    if (tvaParLigne.some((t) => t < 0)) {
+      setErreur('Le montant de TVA ne peut pas être négatif.');
+      return;
+    }
+    if (items.length > 1 && items.some((it, i) => tvaParLigne[i] > Number(it.montant))) {
+      setErreur("La TVA d'un article ne peut pas dépasser son montant.");
+      return;
+    }
+    if (tvaParLigne.reduce((a, b) => a + b, 0) > totalAchatCalcule) {
+      setErreur("La TVA ne peut pas dépasser le montant total de l'achat.");
+      return;
+    }
     if (entreeStock.paymentMethod === 'a_credit' && (!entreeStock.supplierId || !totalAchatCalcule)) {
       setErreur('Un achat à crédit nécessite un fournisseur et le montant total de l\'achat.');
       return;
@@ -647,9 +664,10 @@ export function StockPage() {
     setEnregistrementEntree(true);
     try {
       const resultat = await api.recordStockPurchase({
-        items: items.map((it) => ({
+        items: items.map((it, i) => ({
           productId: it.productId,
           quantity: Number(it.quantity),
+          tvaAmount: tvaParLigne[i] > 0 ? tvaParLigne[i] : undefined,
           lotNumber: estPharmacie ? (it.lotNumber || undefined) : undefined,
           expiryDate: estPharmacie ? (it.expiryDate || undefined) : undefined,
         })),
@@ -1612,6 +1630,21 @@ export function StockPage() {
                           </button>
                         )}
                       </div>
+                      {produitLigne && produitLigne.tva_applicable !== false && (
+                        <div style={{ display: 'flex', gap: 8, paddingLeft: 4, alignItems: 'center' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            className="champ"
+                            style={{ flex: 1 }}
+                            placeholder="dont TVA déductible (FCFA, facultatif)"
+                            title="TVA incluse dans le montant payé à ce fournisseur pour cet article"
+                            value={item.tva}
+                            onChange={(e) => modifierLigneEntree(index, 'tva', e.target.value)}
+                          />
+                        </div>
+                      )}
                       {produitLigne?.requires_cold_chain && (
                         <p style={{ margin: '2px 0 0 4px', fontSize: 12, color: 'var(--info)' }}>
                           ❄ Chaîne du froid — à conserver au frais dès la réception.

@@ -597,7 +597,7 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
 router.post('/:id/stock-movement', async (req, res) => {
   const {
     movementType, quantity, reason, supplierId, movementDate,
-    paymentMethod, totalCost, cashMethod,
+    paymentMethod, totalCost, cashMethod, tvaAmount,
     advanceAmount, advanceCashMethod,
     warehouseId: warehouseIdInput,
     lotNumber, expiryDate,
@@ -655,6 +655,18 @@ router.post('/:id/stock-movement', async (req, res) => {
     coutFinal = totalCost ? Number(totalCost) : null;
   }
 
+  // TVA déductible de l'achat : comprise dans le montant total payé (TTC).
+  let tvaFinale = 0;
+  if (tvaAmount !== undefined && tvaAmount !== null && tvaAmount !== '') {
+    tvaFinale = Number(tvaAmount);
+    if (movementType !== 'entree' || !coutFinal) {
+      return res.status(400).json({ error: "La TVA ne se renseigne que sur une entrée de stock avec montant d'achat." });
+    }
+    if (!Number.isFinite(tvaFinale) || tvaFinale < 0 || tvaFinale > coutFinal) {
+      return res.status(400).json({ error: "Le montant de TVA est invalide (il ne peut dépasser le montant de l'achat)." });
+    }
+  }
+
   const client = await pool.connect();
   try {
     const warehouseId = await resolveWarehouseId(req, client, warehouseIdInput);
@@ -684,7 +696,7 @@ router.post('/:id/stock-movement', async (req, res) => {
     await client.query('BEGIN');
 
     const productResult = await client.query(
-      `SELECT p.id, p.name, p.is_weighted, p.quantity_alert_threshold, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
+      `SELECT p.id, p.name, p.is_weighted, p.tva_applicable, p.quantity_alert_threshold, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
        FROM products p
        LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
        WHERE p.id = $1 AND p.merchant_id = $2 FOR UPDATE OF p`,
@@ -695,6 +707,10 @@ router.post('/:id/stock-movement', async (req, res) => {
     if (!product) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Produit introuvable.' });
+    }
+    if (tvaFinale > 0 && product.tva_applicable === false) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: `${product.name} n'est pas soumis à la TVA : aucune TVA déductible à renseigner.` });
     }
 
     if (!product.is_weighted && !Number.isInteger(quantity)) {
@@ -745,8 +761,8 @@ router.post('/:id/stock-movement', async (req, res) => {
     }
 
     await client.query(
-      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, cash_method, warehouse_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, cash_method, warehouse_id, tva_amount)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
       [
         req.user.merchantId,
         product.id,
@@ -760,6 +776,7 @@ router.post('/:id/stock-movement', async (req, res) => {
         coutFinal,
         cashMethodFinal,
         warehouseId,
+        tvaFinale,
       ]
     );
 
@@ -848,6 +865,21 @@ router.post('/purchases', async (req, res) => {
   if (new Set(productIds).size !== productIds.length) {
     return res.status(400).json({ error: 'Un même produit apparaît plusieurs fois — regroupez-le en une seule ligne.' });
   }
+  // TVA déductible par article (comprise dans le montant payé, TTC). La somme est
+  // rattachée au premier mouvement, comme le montant total de l'achat.
+  let tvaTotale = 0;
+  for (const item of items) {
+    if (item.tvaAmount === undefined || item.tvaAmount === null || item.tvaAmount === '') continue;
+    const t = Number(item.tvaAmount);
+    if (!Number.isFinite(t) || t < 0) {
+      return res.status(400).json({ error: 'Montant de TVA invalide dans la liste.' });
+    }
+    tvaTotale += t;
+  }
+  tvaTotale = Math.round(tvaTotale * 100) / 100;
+  if (tvaTotale > Number(totalCost)) {
+    return res.status(400).json({ error: "La TVA ne peut pas dépasser le montant total de l'achat." });
+  }
   if (!['comptant', 'a_credit'].includes(paymentMethod)) {
     return res.status(400).json({ error: 'Mode de paiement invalide.' });
   }
@@ -928,7 +960,7 @@ router.post('/purchases', async (req, res) => {
       const item = items[index];
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.is_weighted, p.quantity_alert_threshold, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
+        `SELECT p.id, p.name, p.is_weighted, p.tva_applicable, p.quantity_alert_threshold, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
          WHERE p.id = $1 AND p.merchant_id = $2 FOR UPDATE OF p`,
@@ -939,6 +971,10 @@ router.post('/purchases', async (req, res) => {
       if (!product) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: `Produit introuvable (${item.productId}).` });
+      }
+      if (Number(item.tvaAmount) > 0 && product.tva_applicable === false) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: `${product.name} n'est pas soumis à la TVA : aucune TVA déductible à renseigner.` });
       }
       if (!product.is_weighted && !Number.isInteger(item.quantity)) {
         await client.query('ROLLBACK');
@@ -970,8 +1006,8 @@ router.post('/purchases', async (req, res) => {
       }
 
       const mouvement = await client.query(
-        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, invoice_number, cash_method, warehouse_id)
-         VALUES ($1, $2, $3, 'entree', $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id`,
+        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, invoice_number, cash_method, warehouse_id, tva_amount)
+         VALUES ($1, $2, $3, 'entree', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
         [
           req.user.merchantId,
           product.id,
@@ -985,6 +1021,7 @@ router.post('/purchases', async (req, res) => {
           index === 0 ? (invoiceNumber || null) : null,
           cashMethodFinal,
           warehouseId,
+          index === 0 ? tvaTotale : 0,
         ]
       );
       mouvementsCrees.push(mouvement.rows[0].id);

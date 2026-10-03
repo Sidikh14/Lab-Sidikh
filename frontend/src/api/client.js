@@ -371,6 +371,14 @@ export const api = {
   cancelAccountingChargePosting: (id) =>
     request(`/accounting/charges/postings/${id}`, { method: 'DELETE' }),
 
+  // Impôts et cotisations dus à l'État (TVA, retenues sur salaires, CSS, IPRES, CFCE, IS).
+  getAccountingStateDues: (params) => request(`/accounting/state-dues${qs(params)}`),
+  getAccountingStatePayments: () => request('/accounting/state-payments'),
+  createAccountingStatePayment: (data) =>
+    request('/accounting/state-payments', { method: 'POST', body: JSON.stringify(data) }),
+  cancelAccountingStatePayment: (id) =>
+    request(`/accounting/state-payments/${id}`, { method: 'DELETE' }),
+
   // Maintenance par secteur (owner).
   getMaintenance: () => request('/admin/maintenance'),
   setMaintenance: (sector, data) =>
