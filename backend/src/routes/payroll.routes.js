@@ -3,6 +3,7 @@ const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
+const { requireOwnerModule } = require('../middleware/ownerModules');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
 const { calculerBulletin } = require('../utils/payrollCalc');
@@ -24,6 +25,8 @@ const {
 
 const router = express.Router();
 router.use(authenticate);
+// Module Paie : activé par l'owner commerçant par commerçant.
+router.use(requireOwnerModule('paie'));
 
 function moisActuel() {
   const d = new Date();
@@ -180,7 +183,7 @@ router.post('/:userId/generate', requireRole('manager'), async (req, res) => {
     const targetMonth = month || moisActuel();
 
     const employe = await client.query(
-      `SELECT u.id, u.full_name, es.monthly_salary, es.parts_fiscales
+      `SELECT u.id, u.full_name, es.monthly_salary, es.parts_fiscales, es.ipres_enabled, es.css_enabled
        FROM users u
        LEFT JOIN employee_salaries es ON es.user_id = u.id
        WHERE u.id = $1 AND u.merchant_id = $2`,
@@ -191,7 +194,18 @@ router.post('/:userId/generate', requireRole('manager'), async (req, res) => {
       return res.status(400).json({ error: "Configurez d'abord le salaire de base de cet employé." });
     }
 
-    const reglages = await recupererOuCreerReglages(req.user.merchantId);
+    const reglagesMarchand = await recupererOuCreerReglages(req.user.merchantId);
+    // Les parts IPRES et CSS ne s'appliquent que si elles sont activées sur la fiche du salarié :
+    // sinon leurs taux sont mis à zéro pour ce bulletin (salarial comme patronal).
+    const reglages = { ...reglagesMarchand };
+    if (employe.rows[0].ipres_enabled !== true) {
+      reglages.ipres_taux_salarial = 0;
+      reglages.ipres_taux_patronal = 0;
+    }
+    if (employe.rows[0].css_enabled !== true) {
+      reglages.css_taux_salarial = 0;
+      reglages.css_taux_patronal = 0;
+    }
     const listeBonus = Array.isArray(bonuses)
       ? bonuses.filter((b) => b.label && Number(b.amount)).map((b) => ({ label: String(b.label).slice(0, 120), amount: Number(b.amount) }))
       : [];
@@ -439,7 +453,7 @@ function genererBulletinPDF(doc, bulletin) {
     { texte: 'Montant (FCFA)', x: xMontant, largeur: 182, aligner: 'right' },
   ]);
   absencesDetail.forEach((d) => ligne(`Absence — ${d.label}`, d.amount, { negatif: true }));
-  ligne('IPRES (retraite)', bulletin.ipres_salarial, { negatif: true });
+  if (Number(bulletin.ipres_salarial) > 0) ligne('IPRES (retraite)', bulletin.ipres_salarial, { negatif: true });
   if (Number(bulletin.css_salarial) > 0) ligne('CSS', bulletin.css_salarial, { negatif: true });
   ligne('Impôt sur le revenu (IRPP)', bulletin.irpp, { negatif: true });
   ligne('TRIMF', bulletin.trimf, { negatif: true });
@@ -474,7 +488,7 @@ function genererBulletinPDF(doc, bulletin) {
     ['CSS patronal', bulletin.css_patronal],
     ['CFCE', bulletin.cfce],
     ['Coût total employeur', bulletin.cout_total_employeur],
-  ];
+  ].filter(([label, montant]) => !['IPRES patronal', 'CSS patronal'].includes(label) || Number(montant) > 0);
   const largeurCase = largeurUtile / charges.length;
   charges.forEach(([label, montant], i) => {
     const x = xGauche + i * largeurCase;

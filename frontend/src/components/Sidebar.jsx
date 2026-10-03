@@ -1,7 +1,8 @@
-import { NavLink } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getSecteurConfig } from '../config/sectorConfig';
-import { useAccountingAccess } from '../hooks/useAccountingAccess';
+import { useModulesAccess } from '../hooks/useModulesAccess';
 
 function IconDashboard() {
   return (
@@ -136,6 +137,29 @@ function IconComptabilite() {
   );
 }
 
+function IconFiscalite() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M6 3h9l4 4v14H6V3z" />
+      <path d="M15 3v4h4" />
+      <path d="M9.5 16.5l5-5" />
+      <circle cx="10" cy="12" r="1" />
+      <circle cx="14" cy="16" r="1" />
+    </svg>
+  );
+}
+
+function IconChevronGroupe({ ouvert }) {
+  return (
+    <svg
+      width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+      style={{ transition: 'transform 0.2s', transform: ouvert ? 'rotate(180deg)' : 'none', flexShrink: 0 }}
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
 const TOUS_LES_LIENS = [
   { to: '/stock', label: 'Produits', icone: IconStock, module: 'stock' },
   { to: '/ventes', label: 'Ventes', icone: IconVentes, module: 'ventes' },
@@ -170,15 +194,36 @@ function IconFermer() {
   );
 }
 
+// Deux groupes repliables : un seul est ouvert à la fois, pour garder un menu court.
+const TITRES_GROUPES = { gestion: 'Gestion & Stock', finance: 'Finance & Administration' };
+const CHEMINS_FINANCE = ['/comptabilite', '/fiscalite', '/paie', '/entreprise', '/equipe'];
+const CLE_GROUPE_OUVERT = 'sidebarGroupeOuvert';
+
+function groupeDuChemin(pathname) {
+  if (CHEMINS_FINANCE.some((c) => pathname === c || pathname.startsWith(`${c}/`))) return 'finance';
+  if (pathname === '/') return null;
+  return 'gestion';
+}
+
+function lireGroupeMemorise() {
+  try {
+    const v = localStorage.getItem(CLE_GROUPE_OUVERT);
+    return v === 'gestion' || v === 'finance' || v === 'aucun' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 export function Sidebar({ ouvert = false, onFermer }) {
   const { user, merchant, logout } = useAuth();
+  const { pathname } = useLocation();
   const secteurConfig = getSecteurConfig(merchant?.sector);
-  // Module comptabilité : visible seulement si l'owner a donné l'accès.
-  const { enabled: comptaActive } = useAccountingAccess();
+  // Comptabilité, Fiscalité et Paie : visibles seulement si l'owner a donné l'accès.
+  const { accounting: comptaActive, fiscalite: fiscaliteActive, payroll: paieActive } = useModulesAccess();
   const autorises = modulesAutorises(user);
   // "Fournisseurs" héberge aussi l'onglet Achats depuis la fusion des pages
   // (20/09) : le lien reste visible si le membre a l'un OU l'autre module.
-  const liens = TOUS_LES_LIENS.map((lien) => {
+  const liensGestion = TOUS_LES_LIENS.map((lien) => {
     if (lien.to === '/stock') return { ...lien, label: `${secteurConfig.libelleProduit}s` };
     if (lien.to === '/clients') return { ...lien, label: `${secteurConfig.libelleClient}s` };
     return lien;
@@ -188,12 +233,63 @@ export function Sidebar({ ouvert = false, onFermer }) {
   const voitEquipe = ['manager', 'gerant'].includes(user?.role);
   const estManager = user?.role === 'manager';
 
+  if (voitEquipe) {
+    liensGestion.push({ to: '/boutiques', label: estManager ? `${secteurConfig.libelleBoutique}s` : 'Transferts', icone: IconBoutique });
+  }
+
+  const liensFinance = [];
+  if (estManager && comptaActive) liensFinance.push({ to: '/comptabilite', label: 'Comptabilité', icone: IconComptabilite });
+  if (estManager && comptaActive && fiscaliteActive) liensFinance.push({ to: '/fiscalite', label: 'Fiscalité', icone: IconFiscalite });
+  if (estManager && paieActive) liensFinance.push({ to: '/paie', label: 'Paie', icone: IconSalaires });
+  if (estManager) liensFinance.push({ to: '/entreprise', label: 'Entreprise', icone: IconEntreprise });
+  if (voitEquipe) liensFinance.push({ to: '/equipe', label: 'Équipe', icone: IconEquipe });
+
+  const groupes = [
+    { id: 'gestion', liens: liensGestion },
+    { id: 'finance', liens: liensFinance },
+  ].filter((g) => g.liens.length > 0);
+
+  // Groupe ouvert : celui de la page affichée ; sinon le dernier choix mémorisé ; sinon « Gestion & Stock ».
+  const [groupeOuvert, setGroupeOuvert] = useState(() => groupeDuChemin(pathname) || lireGroupeMemorise() || 'gestion');
+  useEffect(() => {
+    const g = groupeDuChemin(pathname);
+    if (g) setGroupeOuvert(g);
+  }, [pathname]);
+
+  function basculerGroupe(id) {
+    const suivant = groupeOuvert === id ? 'aucun' : id;
+    setGroupeOuvert(suivant);
+    try {
+      localStorage.setItem(CLE_GROUPE_OUVERT, suivant);
+    } catch {
+      // mémorisation facultative
+    }
+  }
+
   const initiales = (user?.fullName || '?')
     .split(' ')
     .map((mot) => mot[0])
     .slice(0, 2)
     .join('')
     .toUpperCase();
+
+  const lienNav = (lien) => {
+    const Icone = lien.icone;
+    return (
+      <li key={lien.to}>
+        <NavLink to={lien.to} className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
+          <Icone />
+          {lien.label}
+        </NavLink>
+      </li>
+    );
+  };
+
+  const styleTitre = {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%',
+    padding: '10px 14px 6px', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer',
+    fontSize: 11.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.7, textAlign: 'left',
+  };
 
   return (
     <nav className={'barre-laterale' + (ouvert ? ' ouverte' : '')}>
@@ -214,53 +310,21 @@ export function Sidebar({ ouvert = false, onFermer }) {
             Tableau de bord
           </NavLink>
         </li>
-        {liens.map((lien) => {
-          const Icone = lien.icone;
+        {groupes.length === 1 && groupes[0].liens.map(lienNav)}
+        {groupes.length > 1 && groupes.map((g) => {
+          const ouvertG = groupeOuvert === g.id;
           return (
-            <li key={lien.to}>
-              <NavLink
-                to={lien.to}
-                className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')}
-                onClick={onFermer}
+            <li key={g.id} style={{ listStyle: 'none' }}>
+              <button
+                type="button" style={styleTitre} aria-expanded={ouvertG} onClick={() => basculerGroupe(g.id)}
               >
-                <Icone />
-                {lien.label}
-              </NavLink>
+                <span>{TITRES_GROUPES[g.id]}</span>
+                <IconChevronGroupe ouvert={ouvertG} />
+              </button>
+              {ouvertG && <ul className="nav-liste" style={{ margin: 0, padding: 0 }}>{g.liens.map(lienNav)}</ul>}
             </li>
           );
         })}
-        {estManager && (
-          <li>
-            <NavLink to="/entreprise" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
-              <IconEntreprise />
-              Entreprise
-            </NavLink>
-          </li>
-        )}
-        {estManager && comptaActive && (
-          <li>
-            <NavLink to="/comptabilite" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
-              <IconComptabilite />
-              Comptabilité
-            </NavLink>
-          </li>
-        )}
-        {voitEquipe && (
-          <li>
-            <NavLink to="/boutiques" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
-              <IconBoutique />
-              {estManager ? `${secteurConfig.libelleBoutique}s` : 'Transferts'}
-            </NavLink>
-          </li>
-        )}
-        {voitEquipe && (
-          <li>
-            <NavLink to="/equipe" className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
-              <IconEquipe />
-              Équipe
-            </NavLink>
-          </li>
-        )}
       </ul>
       {user && (
         <div className="pied-sidebar">

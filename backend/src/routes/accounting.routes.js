@@ -1,8 +1,11 @@
 const express = require('express');
+const PDFDocument = require('pdfkit');
+const { getSoldeActuel, LABEL_METHODE } = require('../utils/cashBalance');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { requireModule } = require('../middleware/modules');
+const { requireOwnerModule } = require('../middleware/ownerModules');
 const { logActivity } = require('../utils/activityLog');
 const { initialiserComptabilite } = require('../utils/accountingSetup');
 
@@ -31,10 +34,10 @@ router.get('/access', async (req, res) => {
 });
 
 // ---------- Charges payées depuis la page Caisse ----------
-// Accessibles au caissier (et au gérant / manager) : payer une facture (eau,
-// électricité, internet, loyer…) crée la sortie de caisse ET l'écriture
-// comptable en une seule opération. Sans module activé : { enabled: false } et
-// la page Caisse n'affiche rien.
+// La nature d'une charge (loyer, électricité, internet…) se choisit dans le
+// formulaire « Nouvelle sortie de caisse » de la page Caisse. La sortie est
+// enregistrée par /cash/expenses ; la synchro comptable l'impute au bon compte.
+// Sans module activé : { enabled: false } et le champ n'apparaît pas.
 
 const ROLES_CAISSE = ['manager', 'gerant', 'caissier', 'vendeur_caissier'];
 const MODES_CAISSE = ['especes', 'wave', 'orange_money'];
@@ -46,88 +49,60 @@ function accesCaisse(req, res, next) {
   next();
 }
 
-router.get('/caisse/charges', accesCaisse, async (req, res) => {
+// Natures de charges proposées dans le formulaire de sortie de caisse
+// (nom affiché, compte SYSCOHADA de classe 6).
+const NATURES_CHARGES = [
+  ['Loyer', '622'],
+  ['Électricité / Eau', '605'],
+  ['Téléphone et Internet', '628'],
+  ['Assurance', '625'],
+  ['Honoraires / Comptabilité', '632'],
+  ['Entretien et réparations', '624'],
+  ['Livraison', '612'],
+  ['Transport', '618'],
+  ['Frais bancaires', '631'],
+  ['Publicité', '627'],
+  ['Impôts et taxes', '641'],
+  ['Autre charge', '658'],
+];
+
+router.get('/caisse/natures', accesCaisse, async (req, res) => {
   try {
     const m = await pool.query('SELECT accounting_enabled FROM merchants WHERE id = $1', [req.user.merchantId]);
-    if (m.rows[0]?.accounting_enabled !== true) return res.json({ enabled: false, charges: [], recent: [] });
-    const voitTout = ['manager', 'gerant'].includes(req.user.role);
-    const charges = await pool.query(
-      `SELECT id, label, amount, payment_method FROM accounting_charges WHERE merchant_id = $1 AND is_active = true ORDER BY label`,
-      [req.user.merchantId]
+    if (m.rows[0]?.accounting_enabled !== true) return res.json({ enabled: false, natures: [] });
+    const comptes = await pool.query(
+      `SELECT code FROM accounting_accounts WHERE merchant_id = $1 AND is_active = true AND code = ANY($2::text[])`,
+      [req.user.merchantId, NATURES_CHARGES.map((n) => n[1])]
     );
-    const recent = await pool.query(
-      `SELECT p.id, to_char(p.entry_date, 'YYYY-MM-DD') AS entry_date, p.amount, p.payment_method, c.label AS charge_label
-       FROM accounting_charge_postings p JOIN accounting_charges c ON c.id = p.charge_id
-       WHERE p.merchant_id = $1 AND p.cash_expense_id IS NOT NULL AND p.cancelled = false
-         AND ($2::uuid IS NULL OR p.paid_by = $2::uuid)
-       ORDER BY p.created_at DESC LIMIT 8`,
-      [req.user.merchantId, voitTout ? null : req.user.id]
-    );
-    res.json({ enabled: true, charges: charges.rows, recent: recent.rows });
+    const presents = new Set(comptes.rows.map((r) => r.code));
+    res.json({
+      enabled: true,
+      natures: NATURES_CHARGES.filter((n) => presents.has(n[1])).map(([label, code]) => ({ label, code })),
+    });
   } catch (err) {
-    repondreErreur(res, err, 'Erreur lors du chargement des charges.');
+    repondreErreur(res, err, 'Erreur lors du chargement des natures de charges.');
   }
 });
 
-router.post('/caisse/charges/:id/pay', accesCaisse, async (req, res) => {
-  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Charge introuvable.' });
-  const montant = arrondi(req.body.amount);
-  const mode = req.body.paymentMethod;
-  if (!(montant > 0)) return res.status(400).json({ error: 'Le montant doit être positif.' });
-  if (!MODES_CAISSE.includes(mode)) return res.status(400).json({ error: 'Mode de paiement invalide.' });
-  const merchantId = req.user.merchantId;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await verrouiller(client, merchantId);
-    const m = await client.query('SELECT accounting_enabled FROM merchants WHERE id = $1', [merchantId]);
-    if (m.rows[0]?.accounting_enabled !== true) throw erreurMetier(403, "Ce module n'est pas activé pour votre compte.");
-    const charge = await client.query(
-      `SELECT id, label, account_id FROM accounting_charges WHERE id = $1 AND merchant_id = $2 AND is_active = true`,
-      [req.params.id, merchantId]
-    );
-    if (charge.rows.length === 0) throw erreurMetier(404, 'Charge introuvable.');
-    // Boutique de la sortie de caisse : celle du caissier/gérant ; pour le manager
-    // (rattaché à aucune boutique), la boutique active choisie sur la page Caisse.
-    let boutique = req.user.warehouseId || null;
-    if (req.user.role === 'manager') {
-      boutique = null;
-      if (req.body.warehouseId) {
-        if (!UUID_RE.test(String(req.body.warehouseId))) throw erreurMetier(400, 'Boutique invalide.');
-        const w = await client.query(`SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2`, [req.body.warehouseId, merchantId]);
-        if (w.rows.length === 0) throw erreurMetier(400, 'Boutique introuvable.');
-        boutique = req.body.warehouseId;
-      }
-    }
-    // 1) la sortie de caisse (comptée dans la clôture de caisse du jour)
-    const depense = await client.query(
-      `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, warehouse_id)
-       VALUES ($1, $2, $3, $4, $5, $6::date, $7) RETURNING id`,
-      [merchantId, req.user.id, mode, montant, `Charge — ${charge.rows[0].label}`, aujourdhui(), boutique]
-    );
-    // 2) l'écriture comptable, liée à cette sortie
-    const refs = await chargerReferences(client, merchantId);
-    const numero = await posterCharge(client, refs, {
-      merchantId, userId: req.user.id, charge: charge.rows[0], entryDate: aujourdhui(), amount: montant,
-      paymentMethod: mode, period: null, label: charge.rows[0].label, cashExpenseId: depense.rows[0].id, paidBy: req.user.id,
-    });
-    await client.query('COMMIT');
-    await logActivity({
-      merchantId, userId: req.user.id, action: 'accounting_charge',
-      description: `a payé la charge « ${charge.rows[0].label} » depuis la caisse (${Math.round(montant).toLocaleString('fr-FR')} FCFA)`,
-    });
-    res.status(201).json({ entryNumber: numero });
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    repondreErreur(res, err, 'Erreur lors du paiement de la charge.');
-  } finally {
-    client.release();
+
+// Sortie de caisse d'un paiement : boutique valide + solde suffisant (jamais de caisse négative).
+async function verifierCaisse(req, client, merchantId, warehouseId, mode, montant) {
+  if (!UUID_RE.test(String(warehouseId || ''))) {
+    throw erreurMetier(400, 'Choisissez la boutique dont la caisse effectue le paiement (page Caisse).');
   }
-});
+  const w = await client.query(`SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2`, [warehouseId, merchantId]);
+  if (w.rows.length === 0) throw erreurMetier(400, 'Boutique introuvable.');
+  const solde = await getSoldeActuel(req, warehouseId, mode);
+  if (solde < montant) {
+    throw erreurMetier(400, `Solde insuffisant sur ${LABEL_METHODE[mode] || mode} (solde actuel : ${Math.round(solde).toLocaleString('fr-FR')} FCFA, paiement : ${Math.round(montant).toLocaleString('fr-FR')} FCFA).`);
+  }
+}
 
 // Tout le reste : manager uniquement ET module activé par l'owner.
 router.use(requireRole('manager'));
 router.use(requireModule('comptabilite'));
+// Impôts, cotisations et paiements à l'État : module Fiscalité (activé séparément par l'owner).
+router.use(['/state-dues', '/state-payments', '/tax-settings'], requireOwnerModule('fiscalite'));
 
 // Les consultations (journal, grand livre, balance, résultat, bilan) lancent
 // d'abord la synchronisation automatique (au plus une fois toutes les 30 s) :
@@ -360,128 +335,19 @@ router.delete('/entries/:id', async (req, res) => {
   }
 });
 
-// ---------- Charges (loyer, électricité…) : écritures automatiques ----------
+// ---------- Outils communs (comptes de trésorerie, verrous, erreurs) ----------
 
-const MODES_PAIEMENT = ['especes', 'wave', 'orange_money', 'virement', 'a_payer'];
 // Compte crédité selon le mode de paiement (créés avec le plan comptable) :
 // caisse, Wave, Orange Money, banque, ou fournisseurs si "à payer plus tard".
 const COMPTE_PAR_MODE = { especes: '571', wave: '5211', orange_money: '5212', virement: '521', a_payer: '401' };
 const JOURNAL_PAR_MODE = { especes: 'CA', wave: 'BQ', orange_money: 'BQ', virement: 'BQ', a_payer: 'AC' };
 const MOIS_RE = /^\d{4}-\d{2}$/;
 
-function moisSuivant(m) {
-  const [a, mo] = m.split('-').map(Number);
-  return new Date(Date.UTC(a, mo, 1)).toISOString().slice(0, 7);
-}
-function moisAvant(m, n) {
-  const [a, mo] = m.split('-').map(Number);
-  return new Date(Date.UTC(a, mo - 1 - n, 1)).toISOString().slice(0, 7);
-}
 function erreurMetier(statut, message) {
   return Object.assign(new Error(message), { statut });
 }
 async function verrouiller(client, merchantId) {
   await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`acc:${merchantId}`]);
-}
-async function chargerReferences(client, merchantId) {
-  const comptes = await client.query(
-    `SELECT id, code FROM accounting_accounts WHERE merchant_id = $1 AND code = ANY($2::text[])`,
-    [merchantId, Object.values(COMPTE_PAR_MODE)]
-  );
-  const journaux = await client.query(`SELECT id, code FROM accounting_journals WHERE merchant_id = $1`, [merchantId]);
-  return {
-    comptes: new Map(comptes.rows.map((r) => [r.code, r.id])),
-    journaux: new Map(journaux.rows.map((r) => [r.code, r.id])),
-  };
-}
-
-// Crée l'écriture (débit : compte de charge ; crédit : caisse/Wave/OM/banque/
-// fournisseurs) et la trace dans accounting_charge_postings. À appeler dans une
-// transaction où verrouiller() a déjà été exécuté.
-async function posterCharge(client, refs, { merchantId, userId, charge, entryDate, amount, paymentMethod, period, label, cashExpenseId, paidBy }) {
-  await verifierExerciceOuvert(client, merchantId, entryDate);
-  const codeCredit = COMPTE_PAR_MODE[paymentMethod];
-  const compteCredit = refs.comptes.get(codeCredit);
-  const journalId = refs.journaux.get(JOURNAL_PAR_MODE[paymentMethod]);
-  if (!compteCredit || !journalId) {
-    throw erreurMetier(400, `Le compte ${codeCredit} ou le journal ${JOURNAL_PAR_MODE[paymentMethod]} est introuvable dans votre plan comptable.`);
-  }
-  const num = await client.query(
-    `SELECT COALESCE(MAX(entry_number), 0) + 1 AS n FROM accounting_entries WHERE merchant_id = $1`,
-    [merchantId]
-  );
-  const entree = await client.query(
-    `INSERT INTO accounting_entries (merchant_id, journal_id, entry_number, entry_date, reference, label, source_type, source_id, created_by)
-     VALUES ($1, $2, $3, $4::date, $5, $6, 'charge', $7, $8) RETURNING id, entry_number`,
-    [merchantId, journalId, Number(num.rows[0].n), entryDate, period ? `CHG-${period}` : 'CHG', label, charge.id, userId || null]
-  );
-  const idEntree = entree.rows[0].id;
-  await client.query(
-    `INSERT INTO accounting_lines (entry_id, merchant_id, account_id, debit, credit, label) VALUES ($1, $2, $3, $4, 0, $5)`,
-    [idEntree, merchantId, charge.account_id, amount, label]
-  );
-  await client.query(
-    `INSERT INTO accounting_lines (entry_id, merchant_id, account_id, debit, credit, label) VALUES ($1, $2, $3, 0, $4, $5)`,
-    [idEntree, merchantId, compteCredit, amount, label]
-  );
-  await client.query(
-    `INSERT INTO accounting_charge_postings (merchant_id, charge_id, period, entry_id, entry_date, amount, payment_method, cash_expense_id, paid_by)
-     VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9)`,
-    [merchantId, charge.id, period || null, idEntree, entryDate, amount, paymentMethod, cashExpenseId || null, paidBy || userId || null]
-  );
-  return entree.rows[0].entry_number;
-}
-
-// Comptabilise les charges mensuelles échues qui ne l'ont pas encore été
-// (24 mois maximum en arrière). Idempotent : un mois déjà traité — même
-// annulé — n'est jamais recréé.
-async function genererChargesRecurrentes(merchantId, userId) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await verrouiller(client, merchantId);
-    const charges = await client.query(
-      `SELECT id, label, account_id, amount, day_of_month, payment_method, start_month, created_at
-       FROM accounting_charges
-       WHERE merchant_id = $1 AND is_active = true AND is_recurring = true AND amount > 0`,
-      [merchantId]
-    );
-    if (charges.rows.length === 0) {
-      await client.query('COMMIT');
-      return 0;
-    }
-    const deja = await client.query(
-      `SELECT charge_id, period FROM accounting_charge_postings WHERE merchant_id = $1 AND period IS NOT NULL`,
-      [merchantId]
-    );
-    const faits = new Set(deja.rows.map((r) => `${r.charge_id}|${r.period}`));
-    const refs = await chargerReferences(client, merchantId);
-    const jourJ = aujourdhui();
-    const moisCourant = jourJ.slice(0, 7);
-    const plancher = moisAvant(moisCourant, 23);
-    const closes = await anneesCloturees(client, merchantId);
-    let crees = 0;
-    for (const c of charges.rows) {
-      let m = c.start_month || new Date(c.created_at).toISOString().slice(0, 7);
-      if (m < plancher) m = plancher;
-      for (; m <= moisCourant; m = moisSuivant(m)) {
-        const date = `${m}-${String(c.day_of_month || 1).padStart(2, '0')}`;
-        if (date > jourJ || faits.has(`${c.id}|${m}`) || closes.has(Number(date.slice(0, 4)))) continue;
-        await posterCharge(client, refs, {
-          merchantId, userId, charge: c, entryDate: date, amount: Number(c.amount),
-          paymentMethod: c.payment_method, period: m, label: `${c.label} — ${m}`,
-        });
-        crees += 1;
-      }
-    }
-    await client.query('COMMIT');
-    return crees;
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
 }
 
 function repondreErreur(res, err, defaut) {
@@ -489,202 +355,6 @@ function repondreErreur(res, err, defaut) {
   console.error(err);
   return res.status(500).json({ error: defaut });
 }
-
-// Valide et normalise le corps d'une création/modification de charge.
-async function lireCharge(req, { partiel }) {
-  const b = req.body;
-  const out = {};
-  if (!partiel || b.label !== undefined) {
-    out.label = String(b.label || '').trim().slice(0, 150);
-    if (!out.label) throw erreurMetier(400, 'Le nom de la charge est requis.');
-  }
-  if (!partiel || b.accountId !== undefined) {
-    if (!UUID_RE.test(String(b.accountId || ''))) throw erreurMetier(400, 'Choisissez un compte de charge.');
-    const compte = await pool.query(
-      `SELECT id, code FROM accounting_accounts WHERE id = $1 AND merchant_id = $2 AND is_active = true`,
-      [b.accountId, req.user.merchantId]
-    );
-    if (compte.rows.length === 0 || !compte.rows[0].code.startsWith('6')) {
-      throw erreurMetier(400, 'Le compte doit être un compte de charges (classe 6).');
-    }
-    out.accountId = b.accountId;
-  }
-  if (b.amount !== undefined && b.amount !== null && b.amount !== '') {
-    out.amount = arrondi(b.amount);
-    if (!(out.amount > 0)) throw erreurMetier(400, 'Le montant doit être positif.');
-  }
-  if (b.isRecurring !== undefined) out.isRecurring = b.isRecurring === true;
-  if (b.dayOfMonth !== undefined && b.dayOfMonth !== null) {
-    out.dayOfMonth = parseInt(b.dayOfMonth, 10);
-    if (!(out.dayOfMonth >= 1 && out.dayOfMonth <= 28)) throw erreurMetier(400, 'Le jour du mois doit être entre 1 et 28.');
-  }
-  if (b.paymentMethod !== undefined) {
-    if (!MODES_PAIEMENT.includes(b.paymentMethod)) throw erreurMetier(400, 'Mode de paiement invalide.');
-    out.paymentMethod = b.paymentMethod;
-  }
-  if (b.startMonth) {
-    if (!MOIS_RE.test(b.startMonth)) throw erreurMetier(400, 'Mois de départ invalide.');
-    out.startMonth = b.startMonth;
-  }
-  if (b.isActive !== undefined) out.isActive = b.isActive === true;
-  return out;
-}
-
-router.get('/charges', async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT c.id, c.label, c.amount, c.is_recurring, c.day_of_month, c.payment_method, c.start_month, c.is_active,
-              a.id AS account_id, a.code AS account_code, a.label AS account_label
-       FROM accounting_charges c JOIN accounting_accounts a ON a.id = c.account_id
-       WHERE c.merchant_id = $1 ORDER BY c.is_active DESC, c.label`,
-      [req.user.merchantId]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    repondreErreur(res, err, 'Erreur lors de la récupération des charges.');
-  }
-});
-
-router.post('/charges', async (req, res) => {
-  try {
-    const c = await lireCharge(req, { partiel: false });
-    const recurrente = c.isRecurring === true;
-    if (recurrente && !(c.amount > 0)) throw erreurMetier(400, 'Une charge mensuelle a besoin d\'un montant.');
-    const result = await pool.query(
-      `INSERT INTO accounting_charges (merchant_id, label, account_id, amount, is_recurring, day_of_month, payment_method, start_month)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-      [req.user.merchantId, c.label, c.accountId, c.amount || null, recurrente, recurrente ? (c.dayOfMonth || 1) : null,
-        c.paymentMethod || 'especes', recurrente ? (c.startMonth || aujourdhui().slice(0, 7)) : null]
-    );
-    res.status(201).json({ id: result.rows[0].id });
-  } catch (err) {
-    repondreErreur(res, err, 'Erreur lors de la création de la charge.');
-  }
-});
-
-router.patch('/charges/:id', async (req, res) => {
-  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Charge introuvable.' });
-  try {
-    const c = await lireCharge(req, { partiel: true });
-    const result = await pool.query(
-      `UPDATE accounting_charges SET
-         label = COALESCE($3, label), account_id = COALESCE($4, account_id), amount = COALESCE($5, amount),
-         is_recurring = COALESCE($6, is_recurring), day_of_month = COALESCE($7, day_of_month),
-         payment_method = COALESCE($8, payment_method), start_month = COALESCE($9, start_month),
-         is_active = COALESCE($10, is_active)
-       WHERE id = $1 AND merchant_id = $2 RETURNING id`,
-      [req.params.id, req.user.merchantId, c.label ?? null, c.accountId ?? null, c.amount ?? null, c.isRecurring ?? null,
-        c.dayOfMonth ?? null, c.paymentMethod ?? null, c.startMonth ?? null, c.isActive ?? null]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Charge introuvable.' });
-    res.json({ id: result.rows[0].id });
-  } catch (err) {
-    repondreErreur(res, err, 'Erreur lors de la modification de la charge.');
-  }
-});
-
-// POST /accounting/charges/generate — comptabilise les charges mensuelles
-// échues ; appelé automatiquement à l'ouverture de l'onglet Charges.
-router.post('/charges/generate', async (req, res) => {
-  try {
-    const crees = await genererChargesRecurrentes(req.user.merchantId, req.user.id);
-    res.json({ created: crees });
-  } catch (err) {
-    repondreErreur(res, err, 'Erreur lors de la comptabilisation des charges.');
-  }
-});
-
-// POST /accounting/charges/:id/pay — dépense ponctuelle (ou paiement
-// supplémentaire) d'une charge : crée directement l'écriture.
-router.post('/charges/:id/pay', async (req, res) => {
-  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Charge introuvable.' });
-  const { date, amount, paymentMethod } = req.body;
-  const montant = arrondi(amount);
-  if (!dateOk(date)) return res.status(400).json({ error: 'Date invalide.' });
-  if (!(montant > 0)) return res.status(400).json({ error: 'Le montant doit être positif.' });
-  if (!MODES_PAIEMENT.includes(paymentMethod)) return res.status(400).json({ error: 'Mode de paiement invalide.' });
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await verrouiller(client, req.user.merchantId);
-    const charge = await client.query(
-      `SELECT id, label, account_id FROM accounting_charges WHERE id = $1 AND merchant_id = $2`,
-      [req.params.id, req.user.merchantId]
-    );
-    if (charge.rows.length === 0) throw erreurMetier(404, 'Charge introuvable.');
-    const refs = await chargerReferences(client, req.user.merchantId);
-    const numero = await posterCharge(client, refs, {
-      merchantId: req.user.merchantId, userId: req.user.id, charge: charge.rows[0],
-      entryDate: date, amount: montant, paymentMethod, period: null, label: charge.rows[0].label,
-    });
-    await client.query('COMMIT');
-    await logActivity({
-      merchantId: req.user.merchantId, userId: req.user.id, action: 'accounting_charge',
-      description: `a comptabilisé la charge « ${charge.rows[0].label} » (${Math.round(montant).toLocaleString('fr-FR')} FCFA, écriture n°${numero})`,
-    });
-    res.status(201).json({ entryNumber: numero });
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    repondreErreur(res, err, 'Erreur lors de la comptabilisation de la charge.');
-  } finally {
-    client.release();
-  }
-});
-
-router.get('/charges/postings', async (req, res) => {
-  const limite = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
-  try {
-    const result = await pool.query(
-      `SELECT p.id, p.period, to_char(p.entry_date, 'YYYY-MM-DD') AS entry_date, p.amount, p.payment_method, p.cancelled,
-              c.label AS charge_label, a.code AS account_code, e.entry_number
-       FROM accounting_charge_postings p
-       JOIN accounting_charges c ON c.id = p.charge_id
-       JOIN accounting_accounts a ON a.id = c.account_id
-       LEFT JOIN accounting_entries e ON e.id = p.entry_id
-       WHERE p.merchant_id = $1
-       ORDER BY p.entry_date DESC, p.created_at DESC LIMIT $2`,
-      [req.user.merchantId, limite]
-    );
-    res.json(result.rows);
-  } catch (err) {
-    repondreErreur(res, err, "Erreur lors de la récupération de l'historique des charges.");
-  }
-});
-
-// DELETE /accounting/charges/postings/:id — annule une comptabilisation :
-// l'écriture est supprimée et le mois reste marqué "annulé" (jamais recréé).
-router.delete('/charges/postings/:id', async (req, res) => {
-  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Comptabilisation introuvable.' });
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const posting = await client.query(
-      `SELECT p.id, p.entry_id, p.cash_expense_id, c.label, to_char(p.entry_date, 'YYYY-MM-DD') AS d FROM accounting_charge_postings p JOIN accounting_charges c ON c.id = p.charge_id
-       WHERE p.id = $1 AND p.merchant_id = $2 AND p.cancelled = false FOR UPDATE OF p`,
-      [req.params.id, req.user.merchantId]
-    );
-    if (posting.rows.length === 0) throw erreurMetier(404, 'Comptabilisation introuvable.');
-    await verifierExerciceOuvert(client, req.user.merchantId, posting.rows[0].d);
-    if (posting.rows[0].entry_id) {
-      await client.query(`DELETE FROM accounting_entries WHERE id = $1 AND merchant_id = $2`, [posting.rows[0].entry_id, req.user.merchantId]);
-    }
-    if (posting.rows[0].cash_expense_id) {
-      await client.query(`DELETE FROM cash_expenses WHERE id = $1 AND merchant_id = $2`, [posting.rows[0].cash_expense_id, req.user.merchantId]);
-    }
-    await client.query(`UPDATE accounting_charge_postings SET cancelled = true WHERE id = $1`, [req.params.id]);
-    await client.query('COMMIT');
-    await logActivity({
-      merchantId: req.user.merchantId, userId: req.user.id, action: 'accounting_charge_cancelled',
-      description: `a annulé une comptabilisation de la charge « ${posting.rows[0].label} »`,
-    });
-    res.json({ message: 'Comptabilisation annulée.' });
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    repondreErreur(res, err, "Erreur lors de l'annulation.");
-  } finally {
-    client.release();
-  }
-});
 
 // ---------- Paiements à l'État (TVA, retenues sur salaires, cotisations, IS) ----------
 // Solde la dette fiscale ou sociale : débit du compte dû (443, 447, 431, 432,
@@ -714,13 +384,138 @@ async function assurerCompte(client, merchantId, code, label) {
   return ins.rows[0].id;
 }
 
-// GET /accounting/state-dues?date= — ce qui reste dû à l'État et aux organismes
-// sociaux (solde créditeur de chaque compte).
+// ---------- Périodicité : impôts par mois, cotisations au choix du manager ----------
+// Les impôts (TVA, IR/TRIMF, CFCE) se déclarent chaque mois. Les cotisations sociales
+// (CSS, IPRES) suivent la périodicité choisie par le manager : mensuelle, trimestrielle
+// ou semestrielle. Une période s'écrit AAAA-MM, AAAA-T1..T4 ou AAAA-S1..S2.
+
+const FREQUENCES = ['monthly', 'quarterly', 'semiannual'];
+const IMPOTS_MENSUELS = ['tva', 'retenues', 'cfce'];
+const COTISATIONS_ETAT = ['css', 'ipres'];
+const PERIODE_ETAT_RE = /^\d{4}-(0[1-9]|1[0-2]|T[1-4]|S[1-2])$/;
+const NOMS_MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+
+function moisDePeriode(cle) {
+  const [annee, reste] = cle.split('-');
+  const deux = (n) => String(n).padStart(2, '0');
+  if (/^\d{2}$/.test(reste)) return [cle];
+  if (reste[0] === 'T') {
+    const t = Number(reste[1]);
+    return [0, 1, 2].map((i) => `${annee}-${deux((t - 1) * 3 + 1 + i)}`);
+  }
+  const sem = Number(reste[1]);
+  return [0, 1, 2, 3, 4, 5].map((i) => `${annee}-${deux((sem - 1) * 6 + 1 + i)}`);
+}
+
+function cleDepuisMois(mois, frequence) {
+  const [annee, m] = mois.split('-');
+  const n = Number(m);
+  if (frequence === 'monthly') return mois;
+  if (frequence === 'quarterly') return `${annee}-T${Math.ceil(n / 3)}`;
+  return `${annee}-S${n <= 6 ? 1 : 2}`;
+}
+
+function libellePeriode(cle) {
+  const [annee, reste] = cle.split('-');
+  if (/^\d{2}$/.test(reste)) return `${NOMS_MOIS[Number(reste) - 1]} ${annee}`;
+  if (reste[0] === 'T') return `${reste[1] === '1' ? '1er' : `${reste[1]}e`} trimestre ${annee}`;
+  return `${reste[1] === '1' ? '1er' : '2e'} semestre ${annee}`;
+}
+
+// Périodes récentes (24 derniers mois regroupés selon la périodicité), de la plus récente à la plus ancienne.
+function periodesRecentes(frequence, jour, nbMois = 24) {
+  let [annee, mois] = jour.slice(0, 7).split('-').map(Number);
+  const moisCourant = `${annee}-${String(mois).padStart(2, '0')}`;
+  const cles = [];
+  for (let i = 0; i < nbMois; i += 1) {
+    const m = `${annee}-${String(mois).padStart(2, '0')}`;
+    const cle = cleDepuisMois(m, frequence);
+    if (!cles.includes(cle)) cles.push(cle);
+    mois -= 1;
+    if (mois === 0) { mois = 12; annee -= 1; }
+  }
+  return cles.map((cle) => ({ key: cle, label: libellePeriode(cle), months: moisDePeriode(cle), enCours: moisDePeriode(cle).includes(moisCourant) }));
+}
+
+// TVA mois par mois avec report du crédit de TVA : quand la TVA déductible dépasse la
+// TVA facturée, l'excédent est un crédit qui vient en déduction des mois suivants.
+// collectee / deductible : { 'AAAA-MM': montant }. Renvoie { 'AAAA-MM': {...} } pour chaque
+// mois, du premier mouvement jusqu'au mois `jusqua`.
+function chaineTva(collectee, deductible, jusqua) {
+  const mois = [...new Set([...Object.keys(collectee), ...Object.keys(deductible)])].sort();
+  const sortie = {};
+  if (mois.length === 0) return sortie;
+  let [annee, m] = mois[0].split('-').map(Number);
+  let credit = 0;
+  for (;;) {
+    const cle = `${annee}-${String(m).padStart(2, '0')}`;
+    if (cle > jusqua) break;
+    const facturee = arrondi(collectee[cle] || 0);
+    const deduc = arrondi(deductible[cle] || 0);
+    const net = arrondi(facturee - deduc);
+    const creditReporte = credit;
+    let utilise = 0;
+    let du = 0;
+    if (net >= 0) {
+      utilise = Math.min(credit, net);
+      du = arrondi(net - utilise);
+      credit = arrondi(credit - utilise);
+    } else {
+      credit = arrondi(credit - net);
+    }
+    sortie[cle] = {
+      collectee: facturee, deductible: deduc, creditReporte, creditUtilise: utilise,
+      creditAReporter: net < 0 ? arrondi(-net) : 0, creditDisponible: credit, du,
+    };
+    m += 1;
+    if (m === 13) { m = 1; annee += 1; }
+  }
+  return sortie;
+}
+
+async function lireFrequenceCotisations(db, merchantId) {
+  const r = await db.query(`SELECT contributions_frequency FROM accounting_tax_settings WHERE merchant_id = $1`, [merchantId]);
+  return r.rows[0]?.contributions_frequency || 'monthly';
+}
+
+router.get('/tax-settings', async (req, res) => {
+  try {
+    res.json({ contributionsFrequency: await lireFrequenceCotisations(pool, req.user.merchantId) });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la lecture des paramètres.');
+  }
+});
+
+router.put('/tax-settings', async (req, res) => {
+  const { contributionsFrequency } = req.body;
+  if (!FREQUENCES.includes(contributionsFrequency)) {
+    return res.status(400).json({ error: 'Périodicité invalide (mensuelle, trimestrielle ou semestrielle).' });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO accounting_tax_settings (merchant_id, contributions_frequency, updated_at) VALUES ($1, $2, now())
+       ON CONFLICT (merchant_id) DO UPDATE SET contributions_frequency = EXCLUDED.contributions_frequency, updated_at = now()`,
+      [req.user.merchantId, contributionsFrequency]
+    );
+    await logActivity({
+      merchantId: req.user.merchantId, userId: req.user.id, action: 'accounting_tax_settings',
+      description: `a choisi la périodicité des cotisations : ${{ monthly: 'mensuelle', quarterly: 'trimestrielle', semiannual: 'semestrielle' }[contributionsFrequency]}`,
+    });
+    res.json({ contributionsFrequency });
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de l'enregistrement des paramètres.");
+  }
+});
+
+// GET /accounting/state-dues — ce qui est dû à l'État et aux organismes sociaux :
+// par période (impôts : mois ; cotisations : périodicité du manager) et en cumul.
 router.get('/state-dues', async (req, res) => {
   const date = req.query.date || aujourdhui();
   if (!dateOk(date)) return res.status(400).json({ error: 'Date invalide.' });
   try {
-    const rows = await agreger(req.user.merchantId, null, date);
+    const merchantId = req.user.merchantId;
+    const frequence = await lireFrequenceCotisations(pool, merchantId);
+    const rows = await agreger(merchantId, null, date);
     const solde = (code, sens) => {
       const r = rows.find((x) => x.code === code);
       return r ? arrondi(sens === 'credit' ? r.credit - r.debit : r.debit - r.credit) : 0;
@@ -733,7 +528,63 @@ router.get('/state-dues', async (req, res) => {
       }
       return { type, code: d.code, label: d.label, du: solde(d.code, 'credit') };
     });
-    res.json({ date, dettes });
+
+    // Montants à payer par mois (hors paiements déjà faits à l'État).
+    const mouvements = await pool.query(
+      `SELECT to_char(e.entry_date, 'YYYY-MM') AS m, a.code, COALESCE(SUM(l.debit), 0) AS d, COALESCE(SUM(l.credit), 0) AS c
+       FROM accounting_lines l JOIN accounting_entries e ON e.id = l.entry_id JOIN accounting_accounts a ON a.id = l.account_id
+       WHERE l.merchant_id = $1 AND a.code IN ('443', '445', '447', '442', '431', '432')
+         AND e.entry_date <= $2::date AND e.source_type <> 'paiement_etat'
+       GROUP BY 1, 2`,
+      [merchantId, date]
+    );
+    const acc = { collectee: {}, deductible: {}, retenues: {}, cfce: {}, css: {}, ipres: {} };
+    const ajouter = (famille, m, v) => { acc[famille][m] = arrondi((acc[famille][m] || 0) + v); };
+    for (const r of mouvements.rows) {
+      const d = Number(r.d);
+      const c = Number(r.c);
+      if (r.code === '443') ajouter('collectee', r.m, c - d);
+      else if (r.code === '445') ajouter('deductible', r.m, d - c);
+      else if (r.code === '447') ajouter('retenues', r.m, c - d);
+      else if (r.code === '442') ajouter('cfce', r.m, c - d);
+      else if (r.code === '431') ajouter('css', r.m, c - d);
+      else if (r.code === '432') ajouter('ipres', r.m, c - d);
+    }
+
+    // Paiements déjà faits, rattachés à la période affichée.
+    const paiements = await pool.query(
+      `SELECT kind, period, COALESCE(SUM(amount), 0) AS montant FROM accounting_state_payments
+       WHERE merchant_id = $1 AND cancelled = false AND period IS NOT NULL AND kind <> 'is' GROUP BY kind, period`,
+      [merchantId]
+    );
+    const payes = {};
+    for (const p of paiements.rows) {
+      const freq = COTISATIONS_ETAT.includes(p.kind) ? frequence : 'monthly';
+      const cle = cleDepuisMois(moisDePeriode(p.period)[0], freq);
+      payes[p.kind] = payes[p.kind] || {};
+      payes[p.kind][cle] = arrondi((payes[p.kind][cle] || 0) + Number(p.montant));
+    }
+
+    const tvaParMois = chaineTva(acc.collectee, acc.deductible, date.slice(0, 7));
+    const somme = (famille, mois) => arrondi(mois.reduce((t, m) => t + (acc[famille][m] || 0), 0));
+    const construire = (types, freq) => periodesRecentes(freq, date).map((p) => ({
+      key: p.key, label: p.label, enCours: p.enCours,
+      lignes: types.map((type) => {
+        const paye = payes[type]?.[p.key] || 0;
+        if (type === 'tva') {
+          const t = tvaParMois[p.months[0]] || { collectee: 0, deductible: 0, creditReporte: 0, creditUtilise: 0, creditAReporter: 0, creditDisponible: 0, du: 0 };
+          return { type, label: 'TVA', du: t.du, paye, reste: arrondi(t.du - paye), ...t };
+        }
+        const du = somme(type, p.months);
+        return { type, label: DETTES_ETAT[type].label, du, paye, reste: arrondi(du - paye) };
+      }),
+    }));
+
+    res.json({
+      date, frequency: frequence, dettes,
+      impots: construire(IMPOTS_MENSUELS, 'monthly'),
+      cotisations: construire(COTISATIONS_ETAT, frequence),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors du calcul des dettes envers l\'État.' });
@@ -761,7 +612,8 @@ router.get('/state-payments', async (req, res) => {
 });
 
 router.post('/state-payments', async (req, res) => {
-  const { type, paymentMethod, paymentDate, period, note, warehouseId } = req.body;
+  const { type, paymentMethod, paymentDate, period: periodeSaisie, note, warehouseId } = req.body;
+  const period = type === 'is' ? null : periodeSaisie;
   const dette = DETTES_ETAT[type];
   const montant = arrondi(req.body.amount);
   const date = paymentDate || aujourdhui();
@@ -769,7 +621,9 @@ router.post('/state-payments', async (req, res) => {
   if (!(montant > 0)) return res.status(400).json({ error: 'Le montant doit être positif.' });
   if (!MODES_ETAT.includes(paymentMethod)) return res.status(400).json({ error: 'Mode de paiement invalide.' });
   if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: 'Date de paiement invalide.' });
-  if (period && !MOIS_RE.test(period)) return res.status(400).json({ error: 'Période invalide (AAAA-MM).' });
+  if (dette && type !== 'is' && !(IMPOTS_MENSUELS.includes(type) ? MOIS_RE.test(period || '') : PERIODE_ETAT_RE.test(period || ''))) {
+    return res.status(400).json({ error: 'Choisissez la période concernée par ce paiement.' });
+  }
   const commentaire = note ? String(note).trim().slice(0, 200) : null;
   const merchantId = req.user.merchantId;
   const enCaisse = paymentMethod !== 'virement';
@@ -785,6 +639,7 @@ router.post('/state-payments', async (req, res) => {
     if (enCaisse) {
       const w = await client.query(`SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2`, [warehouseId, merchantId]);
       if (w.rows.length === 0) throw erreurMetier(400, 'Boutique introuvable.');
+      await verifierCaisse(req, client, merchantId, warehouseId, paymentMethod, montant);
       boutique = warehouseId;
     }
     const codeTreso = COMPTE_PAR_MODE[paymentMethod];
@@ -796,21 +651,41 @@ router.post('/state-payments', async (req, res) => {
     );
     if (journal.rows.length === 0) throw erreurMetier(400, `Le journal ${JOURNAL_PAR_MODE[paymentMethod]} est introuvable dans votre plan comptable.`);
 
-    const libelle = `Paiement ${dette.label}${period ? ` — ${period}` : ''}`;
+    const libelle = `Paiement ${dette.label}${period ? ` — ${libellePeriode(period)}` : ''}`;
     // TVA : la TVA déductible (445) se compense avec la TVA facturée (443). Le
     // montant versé est le net ; la compensation est calculée automatiquement.
     let compensation = 0;
     if (type === 'tva') {
-      const soldes = await client.query(
-        `SELECT a.code, COALESCE(SUM(l.debit), 0) AS d, COALESCE(SUM(l.credit), 0) AS c
+      // La TVA déductible du mois (et le crédit reporté des mois précédents) se compense avec la TVA facturée.
+      const mvt = await client.query(
+        `SELECT to_char(e.entry_date, 'YYYY-MM') AS m, a.code, COALESCE(SUM(l.debit), 0) AS d, COALESCE(SUM(l.credit), 0) AS c
          FROM accounting_lines l JOIN accounting_entries e ON e.id = l.entry_id JOIN accounting_accounts a ON a.id = l.account_id
-         WHERE l.merchant_id = $1 AND a.code IN ('443', '445') AND e.entry_date <= $2::date GROUP BY a.code`,
+         WHERE l.merchant_id = $1 AND a.code IN ('443', '445') AND e.entry_date <= $2::date
+           AND e.source_type <> 'paiement_etat' GROUP BY 1, 2`,
         [merchantId, date]
       );
-      const ligneCompte = (code) => soldes.rows.find((x) => x.code === code) || { d: 0, c: 0 };
-      const du443 = arrondi(Number(ligneCompte('443').c) - Number(ligneCompte('443').d));
-      const recuperable = Math.max(0, arrondi(Number(ligneCompte('445').d) - Number(ligneCompte('445').c)));
-      compensation = Math.min(recuperable, Math.max(0, arrondi(du443 - montant)));
+      const facturee = {};
+      const deduc = {};
+      for (const r of mvt.rows) {
+        if (r.code === '443') facturee[r.m] = arrondi((facturee[r.m] || 0) + Number(r.c) - Number(r.d));
+        else deduc[r.m] = arrondi((deduc[r.m] || 0) + Number(r.d) - Number(r.c));
+      }
+      const mois = chaineTva(facturee, deduc, period)[period] || { collectee: 0, deductible: 0, creditUtilise: 0 };
+      const deja = await client.query(
+        `SELECT COALESCE(SUM(amount), 0) AS net, COALESCE(SUM(offset_amount), 0) AS comp FROM accounting_state_payments
+         WHERE merchant_id = $1 AND kind = 'tva' AND period = $2 AND cancelled = false`,
+        [merchantId, period]
+      );
+      const restant443 = arrondi(mois.collectee - Number(deja.rows[0].net) - Number(deja.rows[0].comp));
+      const compensable = Math.max(0, arrondi(Math.max(0, mois.deductible) + mois.creditUtilise - Number(deja.rows[0].comp)));
+      // On ne peut pas créditer 445 au-delà de son solde débiteur.
+      const solde445 = await client.query(
+        `SELECT COALESCE(SUM(l.debit - l.credit), 0) AS solde FROM accounting_lines l
+         JOIN accounting_entries e ON e.id = l.entry_id JOIN accounting_accounts a ON a.id = l.account_id
+         WHERE l.merchant_id = $1 AND a.code = '445' AND e.entry_date <= $2::date`,
+        [merchantId, date]
+      );
+      compensation = Math.min(compensable, Math.max(0, arrondi(restant443 - montant)), Math.max(0, arrondi(Number(solde445.rows[0].solde))));
     }
     const compteTvaDeductible = compensation > 0
       ? await assurerCompte(client, merchantId, '445', 'État, TVA récupérable sur achats')
@@ -1115,6 +990,108 @@ router.post('/fiscal-years/:year/reopen', async (req, res) => {
   }
 });
 
+// ---------- PDF des états comptables ----------
+// POST /accounting/pdf {entreprise, titre, periode, sections:[{titre?, colonnes:[{label, align?}], lignes}]}
+// où une ligne est un tableau de cellules ou { fort: true, cells: [...] }. Renvoie un PDF
+// noir et blanc que la page affiche en aperçu (télécharger / imprimer). Sert au journal,
+// au grand livre, aux balances, au compte de résultat et au bilan.
+
+const nettoyerTexte = (v) => String(v ?? '').replace(/[\u202f\u00a0\u2009]/g, ' ').slice(0, 400);
+
+router.post('/pdf', async (req, res) => {
+  const { entreprise, titre, periode, sections } = req.body || {};
+  if (!Array.isArray(sections) || sections.length === 0 || sections.length > 2000) {
+    return res.status(400).json({ error: 'Contenu du PDF invalide.' });
+  }
+  let nbLignes = 0;
+  for (const sec of sections) {
+    if (!sec || !Array.isArray(sec.colonnes) || sec.colonnes.length === 0 || sec.colonnes.length > 12 || !Array.isArray(sec.lignes)) {
+      return res.status(400).json({ error: 'Contenu du PDF invalide.' });
+    }
+    nbLignes += sec.lignes.length;
+  }
+  if (nbLignes > 30000) return res.status(400).json({ error: 'Trop de lignes pour un seul PDF : réduisez la période.' });
+
+  const maxColonnes = Math.max(...sections.map((x) => x.colonnes.length));
+  const doc = new PDFDocument({ size: 'A4', layout: maxColonnes >= 6 ? 'landscape' : 'portrait', margin: 36, bufferPages: true });
+  doc.on('error', (e) => console.error('pdfkit (comptabilité) :', e));
+  const nomFichier = nettoyerTexte(titre || 'etat').normalize('NFD').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'etat';
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${nomFichier}.pdf"`);
+  doc.pipe(res);
+
+  const gauche = doc.page.margins.left;
+  const largeur = doc.page.width - gauche - doc.page.margins.right;
+  const bas = () => doc.page.height - doc.page.margins.bottom - 18;
+
+  doc.font('Helvetica-Bold').fontSize(13).fillColor('#000').text(nettoyerTexte(entreprise), gauche, doc.y, { width: largeur });
+  doc.font('Helvetica-Bold').fontSize(16).text(nettoyerTexte(titre), { width: largeur });
+  if (periode) doc.font('Helvetica').fontSize(10).text(nettoyerTexte(periode), { width: largeur });
+  doc.moveDown(0.6);
+
+  for (const sec of sections) {
+    const n = sec.colonnes.length;
+    // Largeurs : proportionnelles au contenu (bornées), les montants restent compacts.
+    const poids = sec.colonnes.map((c, i) => {
+      const longueur = Math.max(String(c.label || '').length, ...sec.lignes.slice(0, 300).map((l) => {
+        const cells = Array.isArray(l) ? l : l?.cells || [];
+        return nettoyerTexte(cells[i]).length;
+      }));
+      return Math.min(Math.max(longueur, 6), c.align === 'right' ? 16 : 44);
+    });
+    const total = poids.reduce((a, b) => a + b, 0);
+    const largeurs = poids.map((w) => (w / total) * largeur);
+    const x = (i) => gauche + largeurs.slice(0, i).reduce((a, b) => a + b, 0);
+
+    const dessinerEntete = () => {
+      const y = doc.y;
+      doc.font('Helvetica-Bold').fontSize(8.5);
+      const h = Math.max(...sec.colonnes.map((c, i) => doc.heightOfString(nettoyerTexte(c.label), { width: largeurs[i] - 6 }))) + 6;
+      sec.colonnes.forEach((c, i) => doc.text(nettoyerTexte(c.label), x(i) + 3, y + 3, { width: largeurs[i] - 6, align: c.align === 'right' ? 'right' : 'left' }));
+      doc.moveTo(gauche, y + h).lineTo(gauche + largeur, y + h).lineWidth(0.8).strokeColor('#000').stroke();
+      doc.y = y + h + 2;
+    };
+
+    if (doc.y + 60 > bas()) doc.addPage();
+    if (sec.titre) doc.font('Helvetica-Bold').fontSize(11).fillColor('#000').text(nettoyerTexte(sec.titre), gauche, doc.y, { width: largeur });
+    dessinerEntete();
+
+    for (const ligne of sec.lignes) {
+      const fort = !Array.isArray(ligne) && ligne?.fort === true;
+      const cells = Array.isArray(ligne) ? ligne : ligne?.cells || [];
+      doc.font(fort ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5);
+      const h = Math.max(...sec.colonnes.map((c, i) => doc.heightOfString(nettoyerTexte(cells[i]), { width: largeurs[i] - 6 }))) + 4;
+      if (doc.y + h > bas()) {
+        doc.addPage();
+        dessinerEntete();
+        doc.font(fort ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5);
+      }
+      const y = doc.y;
+      sec.colonnes.forEach((c, i) => {
+        doc.text(nettoyerTexte(cells[i]), x(i) + 3, y + 2, { width: largeurs[i] - 6, align: c.align === 'right' ? 'right' : 'left' });
+      });
+      if (fort) doc.moveTo(gauche, y + h - 1).lineTo(gauche + largeur, y + h - 1).lineWidth(0.4).strokeColor('#000').stroke();
+      doc.y = y + h;
+    }
+    doc.moveDown(0.8);
+  }
+
+  const pages = doc.bufferedPageRange();
+  for (let i = 0; i < pages.count; i += 1) {
+    doc.switchToPage(pages.start + i);
+    doc.font('Helvetica').fontSize(8).fillColor('#000');
+    // Le pied de page s'écrit dans la marge basse : on l'annule le temps de l'écrire,
+    // sinon pdfkit ajoute une page blanche après chaque page.
+    const margeBasse = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
+    const piedY = doc.page.height - margeBasse + 6;
+    doc.text(`Page ${i + 1} / ${pages.count}`, gauche, piedY, { width: largeur, align: 'right', lineBreak: false });
+    doc.text(`Édité le ${new Date().toLocaleDateString('fr-FR')}`, gauche, piedY, { width: largeur, align: 'left', lineBreak: false });
+    doc.page.margins.bottom = margeBasse;
+  }
+  doc.end();
+});
+
 // ---------- Synchronisation automatique ----------
 
 const DELAI_SYNCHRO_MS = 30000;
@@ -1315,7 +1292,7 @@ const REGLES_DEPENSES = [
 
 async function lireCaisse(client, merchantId, debut, ctx) {
   const r = await client.query(
-    `SELECT id::text AS id, movement_type, payment_method, amount, COALESCE(reason, '') AS reason,
+    `SELECT id::text AS id, movement_type, payment_method, amount, COALESCE(reason, '') AS reason, charge_account,
             to_char(expense_date, 'YYYY-MM-DD') AS d
      FROM cash_expenses
      WHERE merchant_id = $1 AND COALESCE(amount, 0) > 0
@@ -1336,6 +1313,7 @@ async function lireCaisse(client, merchantId, debut, ctx) {
     let journal;
     let date = row.d;
     let nom;
+    let sigCharge = '';
 
     if (entree) {
       if (/^de la boutique/.test(motif)) continue; // transfert entre boutiques
@@ -1355,16 +1333,19 @@ async function lireCaisse(client, merchantId, debut, ctx) {
       }
     } else {
       if (/^(salaire|remboursement retour|transfert vers)/.test(motif) || row.reason.startsWith('Charge — ') || row.reason.startsWith('Paiement État — ')) continue;
+      // Nature de charge choisie dans le formulaire de la page Caisse : elle prime sur les mots-clés.
+      const compteCharge = /^6\d{1,5}$/.test(row.charge_account || '') ? row.charge_account : null;
       const regle = REGLES_DEPENSES.find(([re]) => re.test(motif));
       const [compte, j] = tresorerie(mode === 'cheque' ? 'virement' : mode);
       journal = j;
-      if (!regle) nonClassees.push(row.reason);
-      lignes = [ligne(regle ? regle[1] : '658', montant, 0), ligne(compte, 0, montant)];
+      if (!regle && !compteCharge) nonClassees.push(row.reason);
+      lignes = [ligne(compteCharge || (regle ? regle[1] : '658'), montant, 0), ligne(compte, 0, montant)];
+      sigCharge = compteCharge ? `|${compteCharge}` : '';
       nom = `Sortie de caisse : ${row.reason}`.slice(0, 120);
     }
     out.push({
       sourceId: row.id, date, journal, reference: 'CAISSE', label: nom,
-      sig: `${montant}|${row.movement_type}|${row.payment_method}|${row.reason}|${date}|t3`,
+      sig: `${montant}|${row.movement_type}|${row.payment_method}|${row.reason}|${date}|t3${sigCharge}`,
       lignes,
     });
   }
@@ -1797,13 +1778,6 @@ const SOURCES = [
 async function synchroniserMaintenant(merchantId, userId) {
   const resume = { created: 0, removed: 0, errors: [], warnings: [] };
   const ctx = { avertissements: resume.warnings, echec: false };
-  try {
-    resume.created += await genererChargesRecurrentes(merchantId, userId);
-  } catch (err) {
-    console.error('Synchro charges :', err);
-    resume.errors.push('charges');
-  }
-
   const client = await pool.connect();
   try {
     const m = await client.query(

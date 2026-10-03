@@ -162,6 +162,24 @@ export function AdminPage() {
     }
   }
 
+  async function basculerPaie(commercant) {
+    try {
+      await api.setMerchantPayroll(commercant.id, !commercant.payroll_enabled);
+      await charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
+  async function basculerFiscalite(commercant) {
+    try {
+      await api.setMerchantFiscalite(commercant.id, !commercant.fiscalite_enabled);
+      await charger();
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
   function ouvrirModalePlafond(commercant, type) {
     setModalePlafond({ commercant, type });
     setValeurPlafond(String(type === 'comptes' ? commercant.max_team_members : commercant.max_warehouses));
@@ -345,6 +363,12 @@ export function AdminPage() {
                   </button>
                   <button type="button" className="btn" style={boutonPetit} onClick={() => basculerComptabilite(c)}>
                     {c.accounting_enabled ? 'Retirer la comptabilité' : 'Donner accès à la comptabilité'}
+                  </button>
+                  <button type="button" className="btn" style={boutonPetit} onClick={() => basculerPaie(c)}>
+                    {c.payroll_enabled ? 'Retirer la paie' : 'Donner accès à la paie'}
+                  </button>
+                  <button type="button" className="btn" style={boutonPetit} onClick={() => basculerFiscalite(c)}>
+                    {c.fiscalite_enabled ? 'Retirer la fiscalité' : 'Donner accès à la fiscalité'}
                   </button>
                   <button type="button" className="btn" style={boutonPetit} onClick={() => ouvrirModalePlafond(c, 'comptes')}>
                     <IconJauge />

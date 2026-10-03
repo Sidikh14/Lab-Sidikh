@@ -90,6 +90,26 @@ async function previewFile(path) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
+// Génère un PDF à partir de données envoyées (POST) et renvoie le Blob, pour un aperçu
+// intégré à la page (télécharger / imprimer) au lieu d'un nouvel onglet.
+async function requestBlob(path, payload) {
+  const token = getToken();
+  const response = await fetch(`${API_URL}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(payload),
+  });
+  if (response.status === 401) {
+    signalerSessionExpiree();
+    throw new Error('Votre session a expiré. Veuillez vous reconnecter.');
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error || `Erreur ${response.status}`);
+  }
+  return response.blob();
+}
+
 // Comme previewFile, mais pour envoyer un fichier (multipart/form-data) au
 // lieu d'en recevoir un — jamais de Content-Type manuel : le navigateur doit
 // fixer lui-même la boundary du multipart.
@@ -336,6 +356,13 @@ export const api = {
   setMerchantAccounting: (id, enabled) =>
     request(`/admin/merchants/${id}/accounting`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
 
+  // Accès aux modules Paie et Fiscalité, donné par l'owner (comme la comptabilité).
+  setMerchantPayroll: (id, enabled) =>
+    request(`/admin/merchants/${id}/payroll`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  setMerchantFiscalite: (id, enabled) =>
+    request(`/admin/merchants/${id}/fiscalite`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  getModulesAccess: () => request('/modules/access'),
+
   // Comptabilité (manager, si le module est activé).
   getAccountingAccess: () => request('/accounting/access'),
   getAccountingAccounts: () => request('/accounting/accounts'),
@@ -355,23 +382,8 @@ export const api = {
   syncAccounting: () => request('/accounting/sync', { method: 'POST' }),
   getAccountingGeneralLedger: (params) => request(`/accounting/general-ledger${qs(params)}`),
 
-  // Charges payées depuis la page Caisse (caissier, gérant, manager).
-  getCaisseCharges: () => request('/accounting/caisse/charges'),
-  payCaisseCharge: (id, data) =>
-    request(`/accounting/caisse/charges/${id}/pay`, { method: 'POST', body: JSON.stringify(data) }),
-
-  // Charges (loyer, électricité…) comptabilisées automatiquement.
-  getAccountingCharges: () => request('/accounting/charges'),
-  createAccountingCharge: (data) =>
-    request('/accounting/charges', { method: 'POST', body: JSON.stringify(data) }),
-  updateAccountingCharge: (id, data) =>
-    request(`/accounting/charges/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  generateAccountingCharges: () => request('/accounting/charges/generate', { method: 'POST' }),
-  payAccountingCharge: (id, data) =>
-    request(`/accounting/charges/${id}/pay`, { method: 'POST', body: JSON.stringify(data) }),
-  getAccountingChargePostings: (params) => request(`/accounting/charges/postings${qs(params)}`),
-  cancelAccountingChargePosting: (id) =>
-    request(`/accounting/charges/postings/${id}`, { method: 'DELETE' }),
+  // Natures de charges proposées dans « Nouvelle sortie de caisse » (page Caisse).
+  getCaisseNatures: () => request('/accounting/caisse/natures'),
 
   // Impôts et cotisations dus à l'État (TVA, retenues sur salaires, CSS, IPRES, CFCE, IS).
   getAccountingStateDues: (params) => request(`/accounting/state-dues${qs(params)}`),
@@ -382,6 +394,10 @@ export const api = {
     request(`/accounting/state-payments/${id}`, { method: 'DELETE' }),
 
   // Impôt sur les résultats et clôture d'exercice.
+  buildAccountingPdf: (payload) => requestBlob('/accounting/pdf', payload),
+  getAccountingTaxSettings: () => request('/accounting/tax-settings'),
+  setAccountingTaxSettings: (data) =>
+    request('/accounting/tax-settings', { method: 'PUT', body: JSON.stringify(data) }),
   getAccountingFiscalYears: () => request('/accounting/fiscal-years'),
   getAccountingClosingPreview: (params) => request(`/accounting/closing-preview${qs(params)}`),
   bookAccountingIncomeTax: (data) =>

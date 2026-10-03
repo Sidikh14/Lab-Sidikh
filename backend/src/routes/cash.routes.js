@@ -375,7 +375,7 @@ router.get('/closings', requireRole('manager', 'gerant'), async (req, res) => {
 
 // POST /cash/expenses — enregistrer une sortie de caisse manuelle
 router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
-  const { paymentMethod, amount, reason, expenseDate, warehouseId: warehouseIdInput } = req.body;
+  const { paymentMethod, amount, reason, expenseDate, warehouseId: warehouseIdInput, chargeAccount } = req.body;
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
   }
@@ -389,6 +389,23 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
   try {
     const warehouseId = await resolveWarehouseId(req, null, warehouseIdInput);
 
+    // Nature de la charge (loyer, électricité…) : compte de classe 6 du plan comptable
+    // du commerçant, utilisé ensuite par la comptabilité pour imputer la sortie.
+    let compteCharge = null;
+    if (chargeAccount !== undefined && chargeAccount !== null && chargeAccount !== '') {
+      const code = String(chargeAccount);
+      const compte = /^6\d{1,5}$/.test(code)
+        ? await pool.query(
+            `SELECT 1 FROM accounting_accounts WHERE merchant_id = $1 AND code = $2 AND is_active = true`,
+            [req.user.merchantId, code]
+          )
+        : { rows: [] };
+      if (compte.rows.length === 0) {
+        return res.status(400).json({ error: 'Nature de charge invalide.' });
+      }
+      compteCharge = code;
+    }
+
     // Même règle que pour un achat de stock au comptant : une sortie
     // manuelle ne doit jamais rendre une caisse négative.
     const soldeActuel = await getSoldeActuel(req, warehouseId, paymentMethod);
@@ -399,9 +416,9 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
     }
 
     const result = await pool.query(
-      `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id)
-       VALUES ($1, $2, $3, $4, $5, $6, 'sortie', $7) RETURNING *`,
-      [req.user.merchantId, req.user.id, paymentMethod, Number(amount), reason, expenseDate || new Date().toISOString().slice(0, 10), warehouseId]
+      `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id, charge_account)
+       VALUES ($1, $2, $3, $4, $5, $6, 'sortie', $7, $8) RETURNING *`,
+      [req.user.merchantId, req.user.id, paymentMethod, Number(amount), reason, expenseDate || new Date().toISOString().slice(0, 10), warehouseId, compteCharge]
     );
 
     await logActivity({

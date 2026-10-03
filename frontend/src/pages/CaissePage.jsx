@@ -4,7 +4,6 @@ import { useAuth } from '../context/AuthContext';
 import { useLiveEvent } from '../offline/liveEvents';
 
 import { StylesModernes } from '../components/StylesModernes';
-import { CaisseChargesPanel } from '../components/CaisseChargesPanel';
 const MOYENS_PAIEMENT = [
   { value: 'especes', label: 'Espèces' },
   { value: 'wave', label: 'Wave' },
@@ -159,7 +158,16 @@ export function CaissePage() {
     amount: '',
     reason: '',
     expenseDate: dateAujourdHui(),
+    chargeAccount: '',
   });
+  // Natures de charges (loyer, électricité…) : proposées seulement si le module
+  // comptabilité est activé pour ce commerçant.
+  const [natures, setNatures] = useState([]);
+  useEffect(() => {
+    api.getCaisseNatures()
+      .then((d) => setNatures(d?.enabled ? d.natures || [] : []))
+      .catch(() => setNatures([]));
+  }, []);
   const [sorties, setSorties] = useState([]);
   const [chargementSorties, setChargementSorties] = useState(true);
   const [enregistrementSortie, setEnregistrementSortie] = useState(false);
@@ -182,18 +190,23 @@ export function CaissePage() {
 
   async function handleAjouterSortie(e) {
     e.preventDefault();
-    if (!Number(nouvelleSortie.amount) || !nouvelleSortie.reason) {
-      setErreur('Montant et motif sont requis.');
+    const nature = natures.find((n) => n.code === nouvelleSortie.chargeAccount);
+    const detail = nouvelleSortie.reason.trim();
+    if (!Number(nouvelleSortie.amount) || (!nature && !detail)) {
+      setErreur(nature ? 'Le montant est requis.' : 'Montant et motif sont requis.');
       return;
     }
     setEnregistrementSortie(true);
     try {
       await api.createCashExpense({
         ...nouvelleSortie,
+        // Charge : le motif devient « Nature — détail » et la nature sert à l'imputation comptable.
+        reason: nature ? (detail ? `${nature.label} — ${detail}` : nature.label) : detail,
+        chargeAccount: nature ? nature.code : undefined,
         amount: Number(nouvelleSortie.amount),
         warehouseId: activeWarehouseId,
       });
-      setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui() });
+      setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui(), chargeAccount: '' });
       chargerSorties();
     } catch (err) {
       setErreur(err.message);
@@ -431,10 +444,6 @@ export function CaissePage() {
 
       {onglet === 'sorties' && (
         <>
-          {/* Paiement d'une charge (loyer, eau, électricité, internet…) : sortie de
-              caisse + écriture comptable en une seule opération. N'apparaît que si
-              le module comptabilité est activé pour ce commerçant. */}
-          <CaisseChargesPanel warehouseId={activeWarehouseId} onPaid={() => setRefreshKey((k) => k + 1)} />
           <div className="md-carte md-form">
             <h2>Nouvelle sortie de caisse</h2>
             <form onSubmit={handleAjouterSortie}>
@@ -462,11 +471,13 @@ export function CaissePage() {
                 />
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="s-motif">Motif</label>
+                <label className="etiquette" htmlFor="s-motif">
+                  {nouvelleSortie.chargeAccount ? 'Détail (facultatif)' : 'Motif'}
+                </label>
                 <input
                   id="s-motif"
                   className="champ"
-                  placeholder="Ex : transport, loyer, imprévu…"
+                  placeholder={nouvelleSortie.chargeAccount ? 'Ex : mois de septembre, facture n°…' : 'Ex : transport, loyer, imprévu…'}
                   value={nouvelleSortie.reason}
                   onChange={(e) => setNouvelleSortie({ ...nouvelleSortie, reason: e.target.value })}
                 />
@@ -481,8 +492,26 @@ export function CaissePage() {
                   onChange={(e) => setNouvelleSortie({ ...nouvelleSortie, expenseDate: e.target.value })}
                 />
               </div>
+              {natures.length > 0 && (
+                <div className="champ-groupe">
+                  <label className="etiquette" htmlFor="s-nature">Nature de la charge (si c'est une charge)</label>
+                  <select
+                    id="s-nature"
+                    className="champ"
+                    value={nouvelleSortie.chargeAccount}
+                    onChange={(e) => setNouvelleSortie({ ...nouvelleSortie, chargeAccount: e.target.value })}
+                  >
+                    <option value="">Aucune — sortie ordinaire</option>
+                    {natures.map((n) => (
+                      <option key={n.code} value={n.code}>{n.label}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <button type="submit" className="btn btn-principal" disabled={enregistrementSortie}>
-                {enregistrementSortie ? 'Enregistrement…' : 'Enregistrer la sortie'}
+                {enregistrementSortie
+                  ? 'Enregistrement…'
+                  : nouvelleSortie.chargeAccount ? 'Enregistrer le règlement' : 'Enregistrer la sortie'}
               </button>
             </form>
           </div>

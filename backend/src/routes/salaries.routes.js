@@ -2,12 +2,16 @@ const express = require('express');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
+const { requireOwnerModule } = require('../middleware/ownerModules');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
 
 const router = express.Router();
 router.use(authenticate);
 router.use(requireRole('manager'));
+// Module Paie : activé par l'owner commerçant par commerçant. Sans accès, le rappel de salaire
+// (/alert) répond simplement « rien à afficher » pour ne pas casser le tableau de bord.
+router.use(requireOwnerModule('paie', { '/alert': { show: false, unpaid: [] } }));
 
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'virement'];
 const LABEL_METHODE = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', virement: 'Virement' };
@@ -73,6 +77,7 @@ router.get('/', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT u.id, u.full_name AS name, u.role,
               es.monthly_salary, es.payment_method, es.parts_fiscales, es.recurring_bonuses,
+              COALESCE(es.ipres_enabled, false) AS ipres_enabled, COALESCE(es.css_enabled, false) AS css_enabled,
               sp.amount AS paid_amount, sp.payment_method AS paid_method, sp.paid_at,
               p.net_a_payer AS payslip_net, p.generated_at AS payslip_generated_at
        FROM users u
@@ -94,7 +99,7 @@ router.get('/', async (req, res) => {
 // fiscales, utilisé par le quotient familial dans le calcul de l'IRPP)
 router.put('/:userId', async (req, res) => {
   try {
-    const { monthlySalary, paymentMethod, partsFiscales, recurringBonuses } = req.body;
+    const { monthlySalary, paymentMethod, partsFiscales, recurringBonuses, ipresEnabled, cssEnabled } = req.body;
     if (!monthlySalary || monthlySalary <= 0) {
       return res.status(400).json({ error: 'Montant invalide' });
     }
@@ -110,10 +115,13 @@ router.put('/:userId', async (req, res) => {
       .map((b) => ({ label: String(b.label || '').trim().slice(0, 120), amount: Number(b.amount) }))
       .filter((b) => b.label && Number.isFinite(b.amount) && b.amount !== 0);
     await pool.query(
-      `INSERT INTO employee_salaries (user_id, monthly_salary, payment_method, parts_fiscales, recurring_bonuses)
-       VALUES ($1, $2, $3, $4, $5::jsonb)
-       ON CONFLICT (user_id) DO UPDATE SET monthly_salary = $2, payment_method = $3, parts_fiscales = $4, recurring_bonuses = $5::jsonb, updated_at = now()`,
-      [req.params.userId, monthlySalary, paymentMethod, parts, JSON.stringify(primes)]
+      `INSERT INTO employee_salaries (user_id, monthly_salary, payment_method, parts_fiscales, recurring_bonuses, ipres_enabled, css_enabled)
+       VALUES ($1, $2, $3, $4, $5::jsonb, COALESCE($6::boolean, false), COALESCE($7::boolean, false))
+       ON CONFLICT (user_id) DO UPDATE SET monthly_salary = $2, payment_method = $3, parts_fiscales = $4, recurring_bonuses = $5::jsonb,
+         ipres_enabled = COALESCE($6::boolean, employee_salaries.ipres_enabled),
+         css_enabled = COALESCE($7::boolean, employee_salaries.css_enabled), updated_at = now()`,
+      [req.params.userId, monthlySalary, paymentMethod, parts, JSON.stringify(primes),
+        typeof ipresEnabled === 'boolean' ? ipresEnabled : null, typeof cssEnabled === 'boolean' ? cssEnabled : null]
     );
     res.json({ success: true });
   } catch (err) {
