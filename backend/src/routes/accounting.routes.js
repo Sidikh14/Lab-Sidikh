@@ -132,7 +132,7 @@ router.use(requireModule('comptabilite'));
 // Les consultations (journal, grand livre, balance, résultat, bilan) lancent
 // d'abord la synchronisation automatique (au plus une fois toutes les 30 s) :
 // rien n'est à saisir ni à actualiser à la main.
-router.use(['/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues'], async (req, res, next) => {
+router.use(['/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues', '/closing-preview', '/fiscal-years'], async (req, res, next) => {
   if (req.method === 'GET') await assurerSynchro(req.user.merchantId, req.user.id);
   next();
 });
@@ -250,6 +250,11 @@ router.post('/entries', async (req, res) => {
   if (!Array.isArray(lines) || lines.length < 2) {
     return res.status(400).json({ error: 'Une écriture comporte au moins deux lignes.' });
   }
+  try {
+    await verifierExerciceOuvert(pool, req.user.merchantId, entryDate);
+  } catch (err) {
+    return repondreErreur(res, err, "Erreur lors de la vérification de l'exercice.");
+  }
 
   const propres = [];
   for (const l of lines) {
@@ -329,6 +334,11 @@ router.post('/entries', async (req, res) => {
 router.delete('/entries/:id', async (req, res) => {
   if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Écriture introuvable.' });
   try {
+    const cible = await pool.query(
+      `SELECT to_char(entry_date, 'YYYY-MM-DD') AS d FROM accounting_entries WHERE id = $1 AND merchant_id = $2 AND source_type = 'manuel'`,
+      [req.params.id, req.user.merchantId]
+    );
+    if (cible.rows.length > 0) await verifierExerciceOuvert(pool, req.user.merchantId, cible.rows[0].d);
     const result = await pool.query(
       `DELETE FROM accounting_entries WHERE id = $1 AND merchant_id = $2 AND source_type = 'manuel'
        RETURNING entry_number, label`,
@@ -389,6 +399,7 @@ async function chargerReferences(client, merchantId) {
 // fournisseurs) et la trace dans accounting_charge_postings. À appeler dans une
 // transaction où verrouiller() a déjà été exécuté.
 async function posterCharge(client, refs, { merchantId, userId, charge, entryDate, amount, paymentMethod, period, label, cashExpenseId, paidBy }) {
+  await verifierExerciceOuvert(client, merchantId, entryDate);
   const codeCredit = COMPTE_PAR_MODE[paymentMethod];
   const compteCredit = refs.comptes.get(codeCredit);
   const journalId = refs.journaux.get(JOURNAL_PAR_MODE[paymentMethod]);
@@ -448,13 +459,14 @@ async function genererChargesRecurrentes(merchantId, userId) {
     const jourJ = aujourdhui();
     const moisCourant = jourJ.slice(0, 7);
     const plancher = moisAvant(moisCourant, 23);
+    const closes = await anneesCloturees(client, merchantId);
     let crees = 0;
     for (const c of charges.rows) {
       let m = c.start_month || new Date(c.created_at).toISOString().slice(0, 7);
       if (m < plancher) m = plancher;
       for (; m <= moisCourant; m = moisSuivant(m)) {
         const date = `${m}-${String(c.day_of_month || 1).padStart(2, '0')}`;
-        if (date > jourJ || faits.has(`${c.id}|${m}`)) continue;
+        if (date > jourJ || faits.has(`${c.id}|${m}`) || closes.has(Number(date.slice(0, 4)))) continue;
         await posterCharge(client, refs, {
           merchantId, userId, charge: c, entryDate: date, amount: Number(c.amount),
           paymentMethod: c.payment_method, period: m, label: `${c.label} — ${m}`,
@@ -647,11 +659,12 @@ router.delete('/charges/postings/:id', async (req, res) => {
   try {
     await client.query('BEGIN');
     const posting = await client.query(
-      `SELECT p.id, p.entry_id, p.cash_expense_id, c.label FROM accounting_charge_postings p JOIN accounting_charges c ON c.id = p.charge_id
+      `SELECT p.id, p.entry_id, p.cash_expense_id, c.label, to_char(p.entry_date, 'YYYY-MM-DD') AS d FROM accounting_charge_postings p JOIN accounting_charges c ON c.id = p.charge_id
        WHERE p.id = $1 AND p.merchant_id = $2 AND p.cancelled = false FOR UPDATE OF p`,
       [req.params.id, req.user.merchantId]
     );
     if (posting.rows.length === 0) throw erreurMetier(404, 'Comptabilisation introuvable.');
+    await verifierExerciceOuvert(client, req.user.merchantId, posting.rows[0].d);
     if (posting.rows[0].entry_id) {
       await client.query(`DELETE FROM accounting_entries WHERE id = $1 AND merchant_id = $2`, [posting.rows[0].entry_id, req.user.merchantId]);
     }
@@ -767,6 +780,7 @@ router.post('/state-payments', async (req, res) => {
   try {
     await client.query('BEGIN');
     await verrouiller(client, merchantId);
+    await verifierExerciceOuvert(client, merchantId, date);
     let boutique = null;
     if (enCaisse) {
       const w = await client.query(`SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2`, [warehouseId, merchantId]);
@@ -857,11 +871,12 @@ router.delete('/state-payments/:id', async (req, res) => {
     await client.query('BEGIN');
     await verrouiller(client, req.user.merchantId);
     const p = await client.query(
-      `SELECT id, entry_id, cash_expense_id, kind FROM accounting_state_payments
+      `SELECT id, entry_id, cash_expense_id, kind, to_char(payment_date, 'YYYY-MM-DD') AS d FROM accounting_state_payments
        WHERE id = $1 AND merchant_id = $2 AND cancelled = false FOR UPDATE`,
       [req.params.id, req.user.merchantId]
     );
     if (p.rows.length === 0) throw erreurMetier(404, 'Paiement introuvable.');
+    await verifierExerciceOuvert(client, req.user.merchantId, p.rows[0].d);
     if (p.rows[0].entry_id) {
       await client.query(`DELETE FROM accounting_entries WHERE id = $1 AND merchant_id = $2`, [p.rows[0].entry_id, req.user.merchantId]);
     }
@@ -878,6 +893,223 @@ router.delete('/state-payments/:id', async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     repondreErreur(res, err, "Erreur lors de l'annulation du paiement.");
+  } finally {
+    client.release();
+  }
+});
+
+// ---------- Impôt sur les résultats et clôture d'exercice ----------
+// L'exercice est l'année civile. Clôturer un exercice le fige : plus aucune écriture
+// (manuelle, charge, paiement à l'État, synchro automatique) ne peut y être ajoutée,
+// modifiée ou supprimée. Les soldes des comptes de bilan se reportent d'eux-mêmes sur
+// l'exercice suivant ; le résultat se cumule dans le bilan.
+
+async function anneesCloturees(db, merchantId) {
+  const r = await db.query(`SELECT year FROM accounting_fiscal_years WHERE merchant_id = $1`, [merchantId]);
+  return new Set(r.rows.map((x) => Number(x.year)));
+}
+
+async function verifierExerciceOuvert(db, merchantId, dateStr) {
+  const annee = Number(String(dateStr).slice(0, 4));
+  const closes = await anneesCloturees(db, merchantId);
+  if (closes.has(annee)) {
+    throw erreurMetier(400, `L'exercice ${annee} est clôturé : aucune écriture ne peut plus y être ajoutée, modifiée ou supprimée.`);
+  }
+}
+
+const TAUX_IS_DEFAUT = 30;
+
+// Résultat comptable de l'année avant impôt sur les résultats (comptes 89 exclus).
+async function resultatAvantImpot(merchantId, annee) {
+  const rows = await agreger(merchantId, `${annee}-01-01`, `${annee}-12-31`);
+  return arrondi(
+    rows
+      .filter((r) => ['6', '7', '8'].includes(r.code[0]) && !r.code.startsWith('89'))
+      .reduce((s, r) => s + r.credit - r.debit, 0)
+  );
+}
+
+function lireParametresIs(source) {
+  const taux = source.rate === undefined || source.rate === '' ? TAUX_IS_DEFAUT : Number(source.rate);
+  const minimum = source.minimum === undefined || source.minimum === '' ? 0 : Number(source.minimum);
+  if (!Number.isFinite(taux) || taux < 0 || taux > 100) throw erreurMetier(400, "Le taux de l'impôt est invalide.");
+  if (!Number.isFinite(minimum) || minimum < 0) throw erreurMetier(400, 'Le minimum fiscal est invalide.');
+  return { taux, minimum: arrondi(minimum) };
+}
+
+function lireAnnee(valeur) {
+  const annee = Number(valeur);
+  if (!Number.isInteger(annee) || annee < 2000 || annee > 2100) throw erreurMetier(400, 'Année invalide.');
+  return annee;
+}
+
+const impotCalcule = (resultat, { taux, minimum }) =>
+  Math.max(arrondi((Math.max(0, resultat) * taux) / 100), minimum);
+
+async function impotComptabilise(db, merchantId, annee) {
+  const r = await db.query(
+    `SELECT COALESCE(SUM(l.debit), 0) AS montant
+     FROM accounting_entries e JOIN accounting_lines l ON l.entry_id = e.id
+     WHERE e.merchant_id = $1 AND e.source_type = 'impot_is' AND e.source_id = $2`,
+    [merchantId, `is-${annee}`]
+  );
+  const montant = Number(r.rows[0].montant);
+  return montant > 0 ? montant : null;
+}
+
+router.get('/fiscal-years', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT year, result_before_tax, tax_amount, net_result, closed_at FROM accounting_fiscal_years
+       WHERE merchant_id = $1 ORDER BY year DESC`,
+      [req.user.merchantId]
+    );
+    res.json(r.rows);
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la récupération des exercices.');
+  }
+});
+
+// GET /accounting/closing-preview?year=&rate=&minimum= — situation d'un exercice avant clôture.
+router.get('/closing-preview', async (req, res) => {
+  try {
+    const annee = lireAnnee(req.query.year);
+    const params = lireParametresIs(req.query);
+    const merchantId = req.user.merchantId;
+    const closes = await anneesCloturees(pool, merchantId);
+    const resultat = await resultatAvantImpot(merchantId, annee);
+    const comptabilise = await impotComptabilise(pool, merchantId, annee);
+    const rows = await agreger(merchantId, null, `${annee}-12-31`);
+    const totalDebit = arrondi(rows.reduce((t, r) => t + r.debit, 0));
+    const totalCredit = arrondi(rows.reduce((t, r) => t + r.credit, 0));
+    const propose = impotCalcule(resultat, params);
+    const termine = annee < Number(aujourdhui().slice(0, 4));
+    const controles = [
+      { id: 'termine', ok: termine, label: termine ? `L'année ${annee} est terminée.` : `L'année ${annee} n'est pas terminée : clôture impossible.` },
+      { id: 'equilibre', ok: totalDebit === totalCredit, label: totalDebit === totalCredit ? 'La balance est équilibrée.' : 'La balance est déséquilibrée.' },
+      {
+        id: 'impot', ok: resultat <= 0 || comptabilise !== null,
+        label: resultat <= 0 ? "Pas d'impôt à comptabiliser (résultat nul ou négatif)." : comptabilise !== null
+          ? "L'impôt sur les résultats est comptabilisé." : "L'impôt sur les résultats n'est pas encore comptabilisé.",
+      },
+    ];
+    res.json({
+      year: annee, closed: closes.has(annee), rate: params.taux, minimum: params.minimum,
+      resultBeforeTax: resultat, taxProposed: propose, taxBooked: comptabilise,
+      netResult: arrondi(resultat - (comptabilise || 0)),
+      checks: controles,
+      canClose: !closes.has(annee) && controles.every((c) => c.ok),
+    });
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de l'analyse de l'exercice.");
+  }
+});
+
+// POST /accounting/income-tax {year, rate, minimum} — comptabilise (ou recalcule) l'impôt :
+// débit 891 « Impôts sur les bénéfices », crédit 441 « État, impôts sur les bénéfices ».
+router.post('/income-tax', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const annee = lireAnnee(req.body.year);
+    const params = lireParametresIs(req.body);
+    const merchantId = req.user.merchantId;
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    await verifierExerciceOuvert(client, merchantId, `${annee}-12-31`);
+    const resultat = await resultatAvantImpot(merchantId, annee);
+    const montant = impotCalcule(resultat, params);
+    await client.query(`DELETE FROM accounting_entries WHERE merchant_id = $1 AND source_type = 'impot_is' AND source_id = $2`, [merchantId, `is-${annee}`]);
+    if (montant > 0) {
+      const compteCharge = await assurerCompte(client, merchantId, '891', 'Impôts sur les bénéfices');
+      const compteDette = await assurerCompte(client, merchantId, '441', 'État, impôts sur les bénéfices');
+      const journal = await client.query(`SELECT id FROM accounting_journals WHERE merchant_id = $1 AND code = 'OD'`, [merchantId]);
+      if (journal.rows.length === 0) throw erreurMetier(400, "Le journal des opérations diverses (OD) est introuvable dans votre plan comptable.");
+      const fin = `${annee}-12-31`;
+      const date = fin <= aujourdhui() ? fin : aujourdhui();
+      const num = await client.query(`SELECT COALESCE(MAX(entry_number), 0) + 1 AS n FROM accounting_entries WHERE merchant_id = $1`, [merchantId]);
+      const libelle = `Impôt sur les résultats ${annee}`;
+      const entree = await client.query(
+        `INSERT INTO accounting_entries (merchant_id, journal_id, entry_number, entry_date, reference, label, source_type, source_id, created_by)
+         VALUES ($1, $2, $3, $4::date, $5, $6, 'impot_is', $7, $8) RETURNING id`,
+        [merchantId, journal.rows[0].id, Number(num.rows[0].n), date, `IS-${annee}`, libelle, `is-${annee}`, req.user.id]
+      );
+      await client.query(`INSERT INTO accounting_lines (entry_id, merchant_id, account_id, debit, credit, label) VALUES ($1, $2, $3, $4, 0, $5)`,
+        [entree.rows[0].id, merchantId, compteCharge, montant, libelle]);
+      await client.query(`INSERT INTO accounting_lines (entry_id, merchant_id, account_id, debit, credit, label) VALUES ($1, $2, $3, 0, $4, $5)`,
+        [entree.rows[0].id, merchantId, compteDette, montant, libelle]);
+    }
+    await client.query('COMMIT');
+    await logActivity({
+      merchantId, userId: req.user.id, action: 'accounting_income_tax',
+      description: `a comptabilisé l'impôt sur les résultats ${annee} (${Math.round(montant).toLocaleString('fr-FR')} FCFA)`,
+    });
+    res.json({ year: annee, resultBeforeTax: resultat, tax: montant });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de la comptabilisation de l'impôt.");
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/fiscal-years/:year/close', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const annee = lireAnnee(req.params.year);
+    const merchantId = req.user.merchantId;
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    if ((await anneesCloturees(client, merchantId)).has(annee)) throw erreurMetier(400, `L'exercice ${annee} est déjà clôturé.`);
+    if (annee >= Number(aujourdhui().slice(0, 4))) throw erreurMetier(400, `L'exercice ${annee} n'est pas terminé.`);
+    const rows = await agreger(merchantId, null, `${annee}-12-31`);
+    if (arrondi(rows.reduce((t, r) => t + r.debit, 0)) !== arrondi(rows.reduce((t, r) => t + r.credit, 0))) {
+      throw erreurMetier(400, 'La balance est déséquilibrée : corrigez-la avant de clôturer.');
+    }
+    const avant = await resultatAvantImpot(merchantId, annee);
+    const impot = await impotComptabilise(client, merchantId, annee);
+    if (avant > 0 && impot === null && req.body.withoutIncomeTax !== true) {
+      throw erreurMetier(400, "L'impôt sur les résultats n'est pas comptabilisé : comptabilisez-le avant de clôturer.");
+    }
+    await client.query(
+      `INSERT INTO accounting_fiscal_years (merchant_id, year, result_before_tax, tax_amount, net_result, closed_by)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [merchantId, annee, avant, impot || 0, arrondi(avant - (impot || 0)), req.user.id]
+    );
+    await client.query('COMMIT');
+    await logActivity({
+      merchantId, userId: req.user.id, action: 'accounting_year_closed',
+      description: `a clôturé l'exercice comptable ${annee}`,
+    });
+    res.json({ year: annee, resultBeforeTax: avant, tax: impot || 0, netResult: arrondi(avant - (impot || 0)) });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de la clôture de l'exercice.");
+  } finally {
+    client.release();
+  }
+});
+
+// Seul le dernier exercice clôturé peut être rouvert.
+router.post('/fiscal-years/:year/reopen', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const annee = lireAnnee(req.params.year);
+    const merchantId = req.user.merchantId;
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const closes = [...(await anneesCloturees(client, merchantId))];
+    if (!closes.includes(annee)) throw erreurMetier(404, `L'exercice ${annee} n'est pas clôturé.`);
+    if (annee !== Math.max(...closes)) throw erreurMetier(400, `Rouvrez d'abord l'exercice ${Math.max(...closes)} : seul le dernier exercice clôturé peut être rouvert.`);
+    await client.query(`DELETE FROM accounting_fiscal_years WHERE merchant_id = $1 AND year = $2`, [merchantId, annee]);
+    await client.query('COMMIT');
+    await logActivity({
+      merchantId, userId: req.user.id, action: 'accounting_year_reopened',
+      description: `a rouvert l'exercice comptable ${annee}`,
+    });
+    res.json({ year: annee });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de la réouverture de l'exercice.");
   } finally {
     client.release();
   }
@@ -937,13 +1169,19 @@ async function creerEnLot(client, merchantId, userId, type, lot) {
 // générées : supprime ce qui n'existe plus ou a changé, crée ce qui manque.
 async function reconcilier(client, merchantId, userId, refs, type, voulues) {
   const existantes = await client.query(
-    `SELECT id, source_id, source_sig FROM accounting_entries WHERE merchant_id = $1 AND source_type = $2`,
+    `SELECT id, source_id, source_sig, to_char(entry_date, 'YYYY-MM-DD') AS d FROM accounting_entries WHERE merchant_id = $1 AND source_type = $2`,
     [merchantId, type]
   );
+  // Un exercice clôturé est figé : la synchro ne crée, ne modifie ni ne supprime rien dedans.
+  const closes = await anneesCloturees(client, merchantId);
   const parSource = new Map(voulues.map((v) => [v.sourceId, v]));
   const ok = new Set();
   const aSupprimer = [];
   for (const ex of existantes.rows) {
+    if (closes.has(Number(ex.d.slice(0, 4)))) {
+      ok.add(ex.source_id);
+      continue;
+    }
     const v = parSource.get(ex.source_id);
     if (v && v.sig === ex.source_sig && !ok.has(ex.source_id)) ok.add(ex.source_id);
     else aSupprimer.push(ex.id);
@@ -955,6 +1193,7 @@ async function reconcilier(client, merchantId, userId, refs, type, voulues) {
   const erreurs = [];
   for (const v of voulues) {
     if (ok.has(v.sourceId)) continue;
+    if (closes.has(Number(String(v.date).slice(0, 4)))) continue;
     const journalId = refs.journaux.get(v.journal);
     const lignes = v.lignes
       .filter((l) => l.debit > 0 || l.credit > 0)
@@ -1890,7 +2129,7 @@ router.get('/balance-sheet', async (req, res) => {
       rows.filter((r) => ['6', '7', '8'].includes(r.code[0])).reduce((s, r) => s + r.credit - r.debit, 0)
     );
     const capitauxPropres = groupe(rows, ['10', '11', '12', '13', '14', '15'], 'credit').comptes;
-    if (resultat !== 0) capitauxPropres.push({ code: '—', label: "Résultat de l'exercice (non encore clôturé)", montant: resultat });
+    if (resultat !== 0) capitauxPropres.push({ code: '—', label: "Résultat cumulé (exercices précédents et exercice en cours)", montant: resultat });
     const dettesFinancieres = groupe(rows, ['16', '17', '18', '19'], 'credit').comptes;
     const passifCirculant = comptesClasse(4, (s) => s < 0, -1);
     const tresoreriePassif = comptesClasse(5, (s) => s < 0, -1);

@@ -1320,12 +1320,162 @@ function ImpotsTab() {
   );
 }
 
+// ---------- Clôture d'exercice ----------
+// Impôt sur les résultats (30 % par défaut, modifiable) puis clôture de l'année civile :
+// un exercice clôturé est figé, plus aucune écriture ne peut y être ajoutée ni modifiée.
+
+function ClotureTab() {
+  const anneeCourante = new Date().getFullYear();
+  const [annee, setAnnee] = useState(anneeCourante - 1);
+  const [taux, setTaux] = useState('30');
+  const [minimum, setMinimum] = useState('');
+  const [params, setParams] = useState({ rate: '30', minimum: '' });
+  const [version, setVersion] = useState(0);
+  const [erreurAction, setErreurAction] = useState('');
+  const [enCours, setEnCours] = useState(false);
+  const [donnees, erreur] = useDonnees(
+    async () => {
+      const [apercu, exercices] = await Promise.all([
+        api.getAccountingClosingPreview({ year: annee, rate: params.rate, minimum: params.minimum }),
+        api.getAccountingFiscalYears(),
+      ]);
+      return { apercu, exercices };
+    },
+    [annee, params, version]
+  );
+
+  async function executer(action) {
+    setErreurAction('');
+    setEnCours(true);
+    try {
+      await action();
+      setVersion((v) => v + 1);
+    } catch (err) {
+      setErreurAction(err.message);
+    } finally {
+      setEnCours(false);
+    }
+  }
+
+  if (erreur) return <div className="erreur">{erreur}</div>;
+  if (!donnees) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
+  const { apercu, exercices } = donnees;
+  const dernierCloture = exercices.length > 0 ? Math.max(...exercices.map((x) => x.year)) : null;
+
+  return (
+    <div>
+      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0 }}>
+        L'exercice est l'année civile. L'impôt est calculé sur le résultat comptable ; vérifiez le taux et le minimum
+        fiscal applicables à votre régime avec votre comptable.
+      </p>
+      {erreurAction && <div className="erreur">{erreurAction}</div>}
+
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 16 }}>
+        <div className="champ-groupe" style={{ margin: 0 }}>
+          <label className="etiquette">Exercice</label>
+          <select className="champ" value={annee} onChange={(e) => setAnnee(Number(e.target.value))}>
+            {[0, 1, 2, 3, 4].map((i) => anneeCourante - i).map((a) => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </div>
+        <div className="champ-groupe" style={{ margin: 0 }}>
+          <label className="etiquette">Taux de l'impôt (%)</label>
+          <input type="number" min="0" max="100" step="any" className="champ" style={{ width: 110 }} value={taux} onChange={(e) => setTaux(e.target.value)} />
+        </div>
+        <div className="champ-groupe" style={{ margin: 0 }}>
+          <label className="etiquette">Minimum fiscal (FCFA)</label>
+          <input type="number" min="0" step="any" className="champ" style={{ width: 150 }} value={minimum} onChange={(e) => setMinimum(e.target.value)} />
+        </div>
+        <button type="button" className="btn" onClick={() => setParams({ rate: taux, minimum })}>Recalculer</button>
+      </div>
+
+      <table style={tableStyle}>
+        <tbody>
+          <tr><td style={cellule}>Résultat avant impôt</td><td style={droite}>{fmt(apercu.resultBeforeTax)}</td></tr>
+          <tr><td style={cellule}>Impôt sur les résultats proposé</td><td style={droite}>{fmt(apercu.taxProposed)}</td></tr>
+          <tr><td style={cellule}>Impôt déjà comptabilisé</td><td style={droite}>{apercu.taxBooked === null ? '—' : fmt(apercu.taxBooked)}</td></tr>
+          <tr><td style={{ ...cellule, fontWeight: 600 }}>Résultat net</td><td style={{ ...droite, fontWeight: 600 }}>{fmt(apercu.netResult)}</td></tr>
+        </tbody>
+      </table>
+
+      <h3 style={{ fontSize: 15, marginTop: 20 }}>Contrôles avant clôture</h3>
+      <ul style={{ paddingLeft: 18, margin: '6px 0 16px' }}>
+        {apercu.checks.map((c) => (
+          <li key={c.id} style={{ color: c.ok ? 'inherit' : 'var(--brique, #b3423a)' }}>{c.ok ? '✓' : '✗'} {c.label}</li>
+        ))}
+      </ul>
+
+      {apercu.closed ? (
+        <p className="etat-vide">L'exercice {annee} est clôturé.</p>
+      ) : (
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button
+            type="button" className="btn" disabled={enCours}
+            onClick={() => executer(() => api.bookAccountingIncomeTax({ year: annee, rate: taux, minimum }))}
+          >
+            {apercu.taxBooked === null ? "Comptabiliser l'impôt" : "Recalculer l'impôt comptabilisé"}
+          </button>
+          <button
+            type="button" className="btn btn-principal" disabled={enCours || !apercu.canClose}
+            onClick={() => {
+              if (window.confirm(`Clôturer l'exercice ${annee} ? Plus aucune écriture ne pourra y être ajoutée ni modifiée.`)) {
+                executer(() => api.closeAccountingFiscalYear(annee));
+              }
+            }}
+          >
+            Clôturer l'exercice {annee}
+          </button>
+        </div>
+      )}
+
+      <h3 style={{ fontSize: 15, marginTop: 26 }}>Exercices clôturés</h3>
+      {exercices.length === 0 ? (
+        <p className="etat-vide">Aucun exercice clôturé.</p>
+      ) : (
+        <table style={tableStyle}>
+          <thead>
+            <tr>
+              <th style={enteteTable}>Exercice</th>
+              <th style={{ ...enteteTable, textAlign: 'right' }}>Résultat avant impôt</th>
+              <th style={{ ...enteteTable, textAlign: 'right' }}>Impôt</th>
+              <th style={{ ...enteteTable, textAlign: 'right' }}>Résultat net</th>
+              <th style={enteteTable} />
+            </tr>
+          </thead>
+          <tbody>
+            {exercices.map((x) => (
+              <tr key={x.year}>
+                <td style={cellule}>{x.year}</td>
+                <td style={droite}>{fmt(x.result_before_tax)}</td>
+                <td style={droite}>{fmt(x.tax_amount)}</td>
+                <td style={droite}>{fmt(x.net_result)}</td>
+                <td style={{ ...cellule, textAlign: 'right' }}>
+                  {x.year === dernierCloture && (
+                    <button
+                      type="button" className="btn btn-brique" style={boutonPetit} disabled={enCours}
+                      onClick={() => {
+                        if (window.confirm(`Rouvrir l'exercice ${x.year} ?`)) executer(() => api.reopenAccountingFiscalYear(x.year));
+                      }}
+                    >
+                      Rouvrir
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 // ---------- Page ----------
 
 const ONGLETS = [
   { id: 'journal', label: 'Journal', composant: JournalTab },
   { id: 'charges', label: 'Charges', composant: ChargesTab },
   { id: 'impots', label: 'Impôts & cotisations', composant: ImpotsTab },
+  { id: 'cloture', label: 'Clôture', composant: ClotureTab },
   { id: 'plan', label: 'Plan comptable', composant: PlanTab },
   { id: 'grandlivre', label: 'Grand livre', composant: GrandLivreTab },
   { id: 'balance', label: 'Balance', composant: BalanceTab },

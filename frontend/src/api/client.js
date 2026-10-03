@@ -381,6 +381,16 @@ export const api = {
   cancelAccountingStatePayment: (id) =>
     request(`/accounting/state-payments/${id}`, { method: 'DELETE' }),
 
+  // Impôt sur les résultats et clôture d'exercice.
+  getAccountingFiscalYears: () => request('/accounting/fiscal-years'),
+  getAccountingClosingPreview: (params) => request(`/accounting/closing-preview${qs(params)}`),
+  bookAccountingIncomeTax: (data) =>
+    request('/accounting/income-tax', { method: 'POST', body: JSON.stringify(data) }),
+  closeAccountingFiscalYear: (year, data) =>
+    request(`/accounting/fiscal-years/${year}/close`, { method: 'POST', body: JSON.stringify(data || {}) }),
+  reopenAccountingFiscalYear: (year) =>
+    request(`/accounting/fiscal-years/${year}/reopen`, { method: 'POST' }),
+
   // Maintenance par secteur (owner).
   getMaintenance: () => request('/admin/maintenance'),
   setMaintenance: (sector, data) =>
