@@ -159,11 +159,13 @@ export function StockPage() {
   const [enregistrementPrix, setEnregistrementPrix] = useState(false);
   const [modaleEntreeOuverte, setModaleEntreeOuverte] = useState(false);
   const entreeStockVide = {
-    items: [{ productId: '', quantity: '', montant: '', tva: '', lotNumber: '', expiryDate: '' }],
+    items: [{ productId: '', quantity: '', unitCost: '', lotNumber: '', expiryDate: '' }],
     supplierId: '',
     movementDate: new Date().toISOString().slice(0, 10),
     paymentMethod: 'comptant',
-    totalCost: '',
+    avecRemise: false,
+    remiseType: 'percent',
+    remiseValeur: '',
     invoiceNumber: '',
     cashMethod: 'especes',
     avecAvance: false,
@@ -172,8 +174,40 @@ export function StockPage() {
   };
   const [entreeStock, setEntreeStock] = useState(entreeStockVide);
   const [enregistrementEntree, setEnregistrementEntree] = useState(false);
+  // Aperçu des montants calculés par le serveur (prix d'achat × quantité, réduction, TVA).
+  const [apercuAchat, setApercuAchat] = useState(null);
+  const [erreurApercu, setErreurApercu] = useState('');
+  useEffect(() => {
+    if (!modaleEntreeOuverte) return undefined;
+    const lignes = entreeStock.items.filter((it) => it.productId && Number(it.quantity) > 0);
+    if (lignes.length === 0) {
+      setApercuAchat(null);
+      setErreurApercu('');
+      return undefined;
+    }
+    const remiseActive = entreeStock.avecRemise && Number(entreeStock.remiseValeur) > 0;
+    const minuteur = setTimeout(async () => {
+      try {
+        const r = await api.previewStockPurchase({
+          items: lignes.map((it) => ({
+            productId: it.productId,
+            quantity: Number(it.quantity),
+            unitCost: Number(it.unitCost) > 0 ? Number(it.unitCost) : undefined,
+          })),
+          discountType: remiseActive ? entreeStock.remiseType : undefined,
+          discountValue: remiseActive ? Number(entreeStock.remiseValeur) : undefined,
+        });
+        setApercuAchat(r);
+        setErreurApercu('');
+      } catch (err) {
+        setApercuAchat(null);
+        setErreurApercu(err.message);
+      }
+    }, 350);
+    return () => clearTimeout(minuteur);
+  }, [modaleEntreeOuverte, entreeStock.items, entreeStock.avecRemise, entreeStock.remiseType, entreeStock.remiseValeur]);
   function ajouterLigneEntree() {
-    setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '', montant: '', tva: '', lotNumber: '', expiryDate: '' }] }));
+    setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '', unitCost: '', lotNumber: '', expiryDate: '' }] }));
   }
   function retirerLigneEntree(index) {
     setEntreeStock((prev) => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
@@ -444,7 +478,7 @@ export function StockPage() {
         requiresColdChain: estPharmacie ? nouveauProduit.requiresColdChain : undefined,
         warehouseId: estManager ? warehouseId : undefined,
         categoryId: (estPharmacie || estElectromenager) ? (nouveauProduit.categoryId || undefined) : undefined,
-        tvaApplicable: estPharmacie ? nouveauProduit.tvaApplicable : undefined,
+        tvaApplicable: nouveauProduit.tvaApplicable,
         attributes: nouveauProduit.attributes,
         lotNumber: estPharmacie ? (nouveauProduit.lotNumber || undefined) : undefined,
         expiryDate: estPharmacie ? (nouveauProduit.expiryDate || undefined) : undefined,
@@ -589,7 +623,7 @@ export function StockPage() {
         requiresPrescription: estPharmacie ? produitEnEdition.requiresPrescription : undefined,
         requiresColdChain: estPharmacie ? produitEnEdition.requiresColdChain : undefined,
         categoryId: (estPharmacie || estElectromenager) ? (produitEnEdition.categoryId || null) : undefined,
-        tvaApplicable: estPharmacie ? produitEnEdition.tvaApplicable : undefined,
+        tvaApplicable: produitEnEdition.tvaApplicable,
         attributes: produitEnEdition.attributes,
       });
       setProduitEnEdition(null);
@@ -617,38 +651,22 @@ export function StockPage() {
       setErreur('Un même produit apparaît plusieurs fois — regroupez-le en une seule ligne.');
       return;
     }
-    // Avec plusieurs articles, le montant total n'est plus saisi à la main :
-    // il se calcule à partir du montant renseigné sur chaque ligne.
-    if (items.length > 1 && items.some((it) => !Number(it.montant) || Number(it.montant) <= 0)) {
-      setErreur('Chaque article doit avoir un montant valide pour que le total se calcule.');
+    // Les montants ne se saisissent pas : le serveur les calcule depuis le prix d'achat.
+    if (apercuAchat?.missingCost?.length > 0) {
+      setErreur("Un article n'a pas de prix d'achat : renseignez-le sur la ligne (ou dans la fiche produit).");
       return;
     }
-    const totalAchatCalcule = items.length > 1
-      ? items.reduce((somme, it) => somme + Number(it.montant), 0)
-      : Number(entreeStock.totalCost);
-    // TVA déductible : seulement pour les produits soumis à la TVA, comprise dans le montant payé.
-    const tvaParLigne = items.map((it) => {
-      const prod = products.find((p) => p.id === it.productId);
-      return prod && prod.tva_applicable !== false ? (Number(it.tva) || 0) : 0;
-    });
-    if (tvaParLigne.some((t) => t < 0)) {
-      setErreur('Le montant de TVA ne peut pas être négatif.');
+    const totalAchatCalcule = apercuAchat?.total || 0;
+    if (!totalAchatCalcule) {
+      setErreur(erreurApercu || "Le montant de l'achat n'a pas pu être calculé.");
       return;
     }
-    if (items.length > 1 && items.some((it, i) => tvaParLigne[i] > Number(it.montant))) {
-      setErreur("La TVA d'un article ne peut pas dépasser son montant.");
+    if (entreeStock.paymentMethod === 'a_credit' && !entreeStock.supplierId) {
+      setErreur('Un achat à crédit nécessite un fournisseur.');
       return;
     }
-    if (tvaParLigne.reduce((a, b) => a + b, 0) > totalAchatCalcule) {
-      setErreur("La TVA ne peut pas dépasser le montant total de l'achat.");
-      return;
-    }
-    if (entreeStock.paymentMethod === 'a_credit' && (!entreeStock.supplierId || !totalAchatCalcule)) {
-      setErreur('Un achat à crédit nécessite un fournisseur et le montant total de l\'achat.');
-      return;
-    }
-    if (entreeStock.paymentMethod === 'comptant' && !totalAchatCalcule) {
-      setErreur('Le montant total de l\'achat est requis pour un achat au comptant (pour le suivi de caisse).');
+    if (entreeStock.avecRemise && !(Number(entreeStock.remiseValeur) > 0)) {
+      setErreur('Indiquez la valeur de la réduction commerciale, ou décochez-la.');
       return;
     }
     if (entreeStock.paymentMethod === 'a_credit' && entreeStock.avecAvance) {
@@ -664,17 +682,18 @@ export function StockPage() {
     setEnregistrementEntree(true);
     try {
       const resultat = await api.recordStockPurchase({
-        items: items.map((it, i) => ({
+        items: items.map((it) => ({
           productId: it.productId,
           quantity: Number(it.quantity),
-          tvaAmount: tvaParLigne[i] > 0 ? tvaParLigne[i] : undefined,
+          unitCost: Number(it.unitCost) > 0 ? Number(it.unitCost) : undefined,
           lotNumber: estPharmacie ? (it.lotNumber || undefined) : undefined,
           expiryDate: estPharmacie ? (it.expiryDate || undefined) : undefined,
         })),
         supplierId: entreeStock.supplierId || undefined,
         movementDate: entreeStock.movementDate || undefined,
         paymentMethod: entreeStock.paymentMethod,
-        totalCost: totalAchatCalcule,
+        discountType: entreeStock.avecRemise ? entreeStock.remiseType : undefined,
+        discountValue: entreeStock.avecRemise ? Number(entreeStock.remiseValeur) : undefined,
         invoiceNumber: entreeStock.invoiceNumber.trim() || undefined,
         cashMethod: entreeStock.paymentMethod === 'comptant' ? entreeStock.cashMethod : undefined,
         advanceAmount: entreeStock.paymentMethod === 'a_credit' && entreeStock.avecAvance ? Number(entreeStock.advanceAmount) : undefined,
@@ -1461,18 +1480,18 @@ export function StockPage() {
                 </div>
               )}
 
-              {estPharmacie && (
-                <div className="champ-groupe">
-                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={nouveauProduit.tvaApplicable}
-                      onChange={(e) => setNouveauProduit({ ...nouveauProduit, tvaApplicable: e.target.checked })}
-                    />
-                    Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)
-                  </label>
-                </div>
-              )}
+              <div className="champ-groupe">
+                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={nouveauProduit.tvaApplicable}
+                    onChange={(e) => setNouveauProduit({ ...nouveauProduit, tvaApplicable: e.target.checked })}
+                  />
+                  {estPharmacie
+                    ? 'Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)'
+                    : 'Soumis à la TVA (18 %) — décochez pour un produit exonéré'}
+                </label>
+              </div>
 
               {secteurConfig.champsProduitSup.map((champ) => (
                 <div className="champ-groupe" key={champ.key}>
@@ -1609,16 +1628,6 @@ export function StockPage() {
                           onChange={(e) => modifierLigneEntree(index, 'quantity', estPharmacie ? e.target.value.replace(/[.,].*$/, '') : e.target.value)}
                         />
                         {entreeStock.items.length > 1 && (
-                          <input
-                            type="number"
-                            className="champ"
-                            style={{ flex: 1 }}
-                            placeholder="Montant (FCFA)"
-                            value={item.montant}
-                            onChange={(e) => modifierLigneEntree(index, 'montant', e.target.value)}
-                          />
-                        )}
-                        {entreeStock.items.length > 1 && (
                           <button
                             type="button"
                             className="btn"
@@ -1630,7 +1639,7 @@ export function StockPage() {
                           </button>
                         )}
                       </div>
-                      {produitLigne && produitLigne.tva_applicable !== false && (
+                      {item.productId && apercuAchat?.missingCost?.includes(item.productId) && (
                         <div style={{ display: 'flex', gap: 8, paddingLeft: 4, alignItems: 'center' }}>
                           <input
                             type="number"
@@ -1638,10 +1647,9 @@ export function StockPage() {
                             step="any"
                             className="champ"
                             style={{ flex: 1 }}
-                            placeholder="dont TVA déductible (FCFA, facultatif)"
-                            title="TVA incluse dans le montant payé à ce fournisseur pour cet article"
-                            value={item.tva}
-                            onChange={(e) => modifierLigneEntree(index, 'tva', e.target.value)}
+                            placeholder="Prix d'achat unitaire HT (manquant sur la fiche)"
+                            value={item.unitCost}
+                            onChange={(e) => modifierLigneEntree(index, 'unitCost', e.target.value)}
                           />
                         </div>
                       )}
@@ -1738,32 +1746,55 @@ export function StockPage() {
                   </button>
                 </div>
               </div>
-              {(entreeStock.paymentMethod === 'a_credit' || entreeStock.paymentMethod === 'comptant') && (
-                <div className="champ-groupe">
-                  <label className="etiquette" htmlFor="e-montant">
-                    {entreeStock.items.length > 1
-                      ? "Montant total de l'achat — calculé depuis les articles (FCFA)"
-                      : "Montant total de l'achat (FCFA)"}
-                  </label>
-                  {entreeStock.items.length > 1 ? (
-                    <input
-                      id="e-montant"
+              <div className="champ-groupe">
+                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={entreeStock.avecRemise}
+                    onChange={(e) => setEntreeStock({ ...entreeStock, avecRemise: e.target.checked })}
+                  />
+                  Réduction commerciale accordée par le fournisseur
+                </label>
+                {entreeStock.avecRemise && (
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                    <select
                       className="champ"
-                      value={entreeStock.items.reduce((s, it) => s + (Number(it.montant) || 0), 0).toLocaleString('fr-FR')}
-                      disabled
-                      readOnly
-                    />
-                  ) : (
+                      style={{ flex: 1 }}
+                      value={entreeStock.remiseType}
+                      onChange={(e) => setEntreeStock({ ...entreeStock, remiseType: e.target.value })}
+                    >
+                      <option value="percent">En %</option>
+                      <option value="amount">En FCFA</option>
+                    </select>
                     <input
-                      id="e-montant"
                       type="number"
+                      min="0"
+                      step="any"
                       className="champ"
-                      value={entreeStock.totalCost}
-                      onChange={(e) => setEntreeStock({ ...entreeStock, totalCost: e.target.value })}
+                      style={{ flex: 1 }}
+                      placeholder={entreeStock.remiseType === 'percent' ? 'Ex. 5' : 'Montant HT'}
+                      value={entreeStock.remiseValeur}
+                      onChange={(e) => setEntreeStock({ ...entreeStock, remiseValeur: e.target.value })}
                     />
-                  )}
-                </div>
-              )}
+                  </div>
+                )}
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette">Montant de l'achat — calculé automatiquement</label>
+                {erreurApercu && <p style={{ fontSize: 13, color: 'var(--brique, #b3423a)', margin: '4px 0' }}>{erreurApercu}</p>}
+                {apercuAchat ? (
+                  <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+                    <div>Sous-total HT : {Math.round(apercuAchat.subtotal).toLocaleString('fr-FR')} FCFA</div>
+                    {apercuAchat.discount > 0 && (
+                      <div>Réduction commerciale : − {Math.round(apercuAchat.discount).toLocaleString('fr-FR')} FCFA</div>
+                    )}
+                    <div>TVA ({apercuAchat.taxRate} %) : {Math.round(apercuAchat.tva).toLocaleString('fr-FR')} FCFA</div>
+                    <div style={{ fontWeight: 600 }}>Total à payer : {Math.round(apercuAchat.total).toLocaleString('fr-FR')} FCFA</div>
+                  </div>
+                ) : (
+                  !erreurApercu && <p style={{ fontSize: 13, color: 'var(--encre-douce)', margin: 0 }}>Choisissez les articles et les quantités.</p>
+                )}
+              </div>
               {entreeStock.paymentMethod === 'comptant' && (
                 <div className="champ-groupe">
                   <label className="etiquette" htmlFor="e-cash-methode">Payé depuis (caisse)</label>
@@ -1804,9 +1835,9 @@ export function StockPage() {
                       value={entreeStock.advanceAmount}
                       onChange={(e) => setEntreeStock({ ...entreeStock, advanceAmount: e.target.value })}
                     />
-                    {Number(entreeStock.totalCost) > 0 && Number(entreeStock.advanceAmount) > 0 && (
+                    {(apercuAchat?.total || 0) > 0 && Number(entreeStock.advanceAmount) > 0 && (
                       <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
-                        Reste à devoir au fournisseur : {Math.max(0, Number(entreeStock.totalCost) - Number(entreeStock.advanceAmount)).toLocaleString('fr-FR')} FCFA
+                        Reste à devoir au fournisseur : {Math.max(0, apercuAchat.total - Number(entreeStock.advanceAmount)).toLocaleString('fr-FR')} FCFA
                       </p>
                     )}
                   </div>
@@ -2067,18 +2098,18 @@ export function StockPage() {
                 </div>
               )}
 
-              {estPharmacie && (
-                <div className="champ-groupe">
-                  <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={produitEnEdition.tvaApplicable}
-                      onChange={(e) => setProduitEnEdition({ ...produitEnEdition, tvaApplicable: e.target.checked })}
-                    />
-                    Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)
-                  </label>
-                </div>
-              )}
+              <div className="champ-groupe">
+                <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={produitEnEdition.tvaApplicable}
+                    onChange={(e) => setProduitEnEdition({ ...produitEnEdition, tvaApplicable: e.target.checked })}
+                  />
+                  {estPharmacie
+                    ? 'Soumis à la TVA (décochez pour un produit exonéré, ex. la plupart des médicaments)'
+                    : 'Soumis à la TVA (18 %) — décochez pour un produit exonéré'}
+                </label>
+              </div>
 
               {secteurConfig.champsProduitSup.map((champ) => (
                 <div className="champ-groupe" key={champ.key}>

@@ -345,6 +345,7 @@ router.get('/', async (req, res) => {
          COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock,
          p.quantity_alert_threshold, p.is_weighted, p.tva_applicable, c.name AS category, p.category_id,
          p.is_vital, p.requires_prescription, p.requires_cold_chain,
+         CASE WHEN $3::boolean THEN p.cost_price END AS cost_price,
          CASE
            WHEN COALESCE(ps.quantity_in_stock, 0) = 0 THEN 'rupture'
            WHEN ps.quantity_in_stock <= p.quantity_alert_threshold THEN 'faible'
@@ -355,7 +356,7 @@ router.get('/', async (req, res) => {
        LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $2
        WHERE p.merchant_id = $1 AND p.is_active = TRUE
        ORDER BY p.name`,
-      [req.user.merchantId, warehouseId]
+      [req.user.merchantId, warehouseId, ['manager', 'gerant'].includes(req.user.role)]
     );
 
     const unitsResult = await pool.query(
@@ -835,6 +836,97 @@ router.post('/:id/stock-movement', async (req, res) => {
   }
 });
 
+// ---------- Calcul automatique d'un achat ----------
+// Le montant d'un achat n'est jamais saisi : il vient du prix d'achat des produits
+// (HT, quantité × prix). Une réduction commerciale éventuelle (en % ou en FCFA) est
+// déduite du total HT, puis la TVA est calculée sur le HT net pour les seuls produits
+// soumis à la TVA. Total à payer = HT net + TVA.
+const TAUX_TVA = 18;
+const arrondi2 = (n) => Math.round(n * 100) / 100;
+
+function erreurAchat(status, message) {
+  const e = new Error(message);
+  e.status = status;
+  return e;
+}
+
+async function calculerAchat(db, merchantId, items, discountType, discountValue, tolerant = false) {
+  const result = await db.query(
+    `SELECT id, name, cost_price, tva_applicable FROM products WHERE merchant_id = $1 AND id = ANY($2::uuid[])`,
+    [merchantId, items.map((i) => i.productId)]
+  );
+  const parId = new Map(result.rows.map((r) => [String(r.id), r]));
+  const lignes = [];
+  const manquants = [];
+  let sousTotal = 0;
+  for (const item of items) {
+    const p = parId.get(String(item.productId));
+    if (!p) throw erreurAchat(404, `Produit introuvable (${item.productId}).`);
+    const surcharge = Number(item.unitCost);
+    const unitaire = surcharge > 0 ? surcharge : Number(p.cost_price);
+    if (!(unitaire > 0)) {
+      if (!tolerant) throw erreurAchat(400, `${p.name} n'a pas de prix d'achat : renseignez-le dans la fiche produit.`);
+      manquants.push(p.id);
+    }
+    const ht = unitaire > 0 ? arrondi2(item.quantity * unitaire) : 0;
+    sousTotal += ht;
+    lignes.push({ productId: p.id, name: p.name, unitaire, ht, soumis: p.tva_applicable !== false });
+  }
+  sousTotal = arrondi2(sousTotal);
+
+  let remise = 0;
+  if (discountType) {
+    const v = Number(discountValue);
+    if (!['percent', 'amount'].includes(discountType) || !Number.isFinite(v) || v <= 0) {
+      throw erreurAchat(400, 'Réduction commerciale invalide.');
+    }
+    if (discountType === 'percent') {
+      if (v >= 100) throw erreurAchat(400, 'La réduction ne peut pas atteindre 100 %.');
+      remise = arrondi2((sousTotal * v) / 100);
+    } else {
+      if (sousTotal > 0 && v >= sousTotal) throw erreurAchat(400, 'La réduction ne peut pas atteindre le montant de l\'achat.');
+      remise = arrondi2(v);
+    }
+  }
+  const ratio = sousTotal > 0 ? remise / sousTotal : 0;
+  let htNet = 0;
+  let tva = 0;
+  for (const l of lignes) {
+    l.htNet = arrondi2(l.ht * (1 - ratio));
+    l.tva = l.soumis ? arrondi2((l.htNet * TAUX_TVA) / 100) : 0;
+    htNet += l.htNet;
+    tva += l.tva;
+  }
+  htNet = arrondi2(htNet);
+  tva = arrondi2(tva);
+  return { lignes, manquants, sousTotal, remise, htNet, tva, total: arrondi2(htNet + tva) };
+}
+
+// POST /products/purchases/preview — aperçu des montants (rien n'est enregistré).
+router.post('/purchases/preview', async (req, res) => {
+  const { items, discountType, discountValue } = req.body;
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Au moins un article est requis.' });
+  }
+  for (const item of items) {
+    if (!item.productId || typeof item.quantity !== 'number' || item.quantity <= 0) {
+      return res.status(400).json({ error: 'Article invalide dans la liste.' });
+    }
+  }
+  try {
+    const a = await calculerAchat(pool, req.user.merchantId, items, discountType, discountValue, true);
+    res.json({
+      taxRate: TAUX_TVA,
+      subtotal: a.sousTotal, discount: a.remise, ht: a.htNet, tva: a.tva, total: a.total,
+      missingCost: a.manquants,
+    });
+  } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors du calcul de l'achat." });
+  }
+});
+
 // POST /products/purchases
 // Entrée de stock pour PLUSIEURS articles en une seule fois, chez UN même
 // fournisseur (même paiement — comptant ou à crédit — et un seul montant
@@ -847,7 +939,7 @@ router.post('/:id/stock-movement', async (req, res) => {
 // qu'une seule fois — cette appli ne suit pas de coût par article.
 router.post('/purchases', async (req, res) => {
   const {
-    items, supplierId, movementDate, paymentMethod, totalCost, invoiceNumber, cashMethod,
+    items, supplierId, movementDate, paymentMethod, invoiceNumber, cashMethod, discountType, discountValue,
     advanceAmount, advanceCashMethod,
     warehouseId: warehouseIdInput,
   } = req.body;
@@ -865,26 +957,8 @@ router.post('/purchases', async (req, res) => {
   if (new Set(productIds).size !== productIds.length) {
     return res.status(400).json({ error: 'Un même produit apparaît plusieurs fois — regroupez-le en une seule ligne.' });
   }
-  // TVA déductible par article (comprise dans le montant payé, TTC). La somme est
-  // rattachée au premier mouvement, comme le montant total de l'achat.
-  let tvaTotale = 0;
-  for (const item of items) {
-    if (item.tvaAmount === undefined || item.tvaAmount === null || item.tvaAmount === '') continue;
-    const t = Number(item.tvaAmount);
-    if (!Number.isFinite(t) || t < 0) {
-      return res.status(400).json({ error: 'Montant de TVA invalide dans la liste.' });
-    }
-    tvaTotale += t;
-  }
-  tvaTotale = Math.round(tvaTotale * 100) / 100;
-  if (tvaTotale > Number(totalCost)) {
-    return res.status(400).json({ error: "La TVA ne peut pas dépasser le montant total de l'achat." });
-  }
   if (!['comptant', 'a_credit'].includes(paymentMethod)) {
     return res.status(400).json({ error: 'Mode de paiement invalide.' });
-  }
-  if (!Number(totalCost) || Number(totalCost) <= 0) {
-    return res.status(400).json({ error: "Le montant total de l'achat est requis." });
   }
   if (paymentMethod === 'a_credit' && !supplierId) {
     return res.status(400).json({ error: 'Un fournisseur est requis pour un achat à crédit.' });
@@ -896,30 +970,38 @@ router.post('/purchases', async (req, res) => {
     }
     cashMethodFinal = cashMethod;
   }
-  const coutFinal = Number(totalCost);
 
   // Avance facultative sur un achat groupé à crédit — même règle que pour
   // une entrée unitaire : réduit la dette dès la création, via une ligne
-  // supplier_payments insérée dans la même transaction.
+  // supplier_payments insérée dans la même transaction. Son plafond (le total
+  // de l'achat) est vérifié plus bas, une fois le total calculé.
+  const avanceDemandee = paymentMethod === 'a_credit' && advanceAmount !== undefined && advanceAmount !== null && advanceAmount !== '';
   let avanceFinale = null;
   let avanceCashMethodFinal = null;
-  if (paymentMethod === 'a_credit' && advanceAmount !== undefined && advanceAmount !== null && advanceAmount !== '') {
+  if (avanceDemandee) {
     if (!Number(advanceAmount) || Number(advanceAmount) <= 0) {
       return res.status(400).json({ error: "Le montant de l'avance est invalide." });
-    }
-    if (Number(advanceAmount) > coutFinal) {
-      return res.status(400).json({ error: "L'avance ne peut pas dépasser le montant total de l'achat." });
     }
     if (!MOYENS_PAIEMENT.includes(advanceCashMethod)) {
       return res.status(400).json({ error: "Le moyen de paiement de l'avance (espèces, Wave...) est requis." });
     }
-    avanceFinale = Number(advanceAmount);
-    avanceCashMethodFinal = advanceCashMethod;
   }
 
   const client = await pool.connect();
   try {
     const warehouseId = await resolveWarehouseId(req, client, warehouseIdInput);
+
+    // Montants calculés automatiquement depuis le prix d'achat des produits.
+    const achat = await calculerAchat(client, req.user.merchantId, items, discountType, discountValue);
+    const coutFinal = achat.total;
+    const tvaTotale = achat.tva;
+    if (avanceDemandee) {
+      if (Number(advanceAmount) > coutFinal) {
+        return res.status(400).json({ error: "L'avance ne peut pas dépasser le montant total de l'achat." });
+      }
+      avanceFinale = Number(advanceAmount);
+      avanceCashMethodFinal = advanceCashMethod;
+    }
 
     // Même règle que pour une entrée simple : jamais de caisse négative.
     // Un seul contrôle pour tout l'achat (un seul montant, une seule caisse).
@@ -972,10 +1054,7 @@ router.post('/purchases', async (req, res) => {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: `Produit introuvable (${item.productId}).` });
       }
-      if (Number(item.tvaAmount) > 0 && product.tva_applicable === false) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: `${product.name} n'est pas soumis à la TVA : aucune TVA déductible à renseigner.` });
-      }
+
       if (!product.is_weighted && !Number.isInteger(item.quantity)) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: `${product.name} n'est pas vendu au poids : la quantité doit être un nombre entier.` });
@@ -1006,8 +1085,8 @@ router.post('/purchases', async (req, res) => {
       }
 
       const mouvement = await client.query(
-        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, invoice_number, cash_method, warehouse_id, tva_amount)
-         VALUES ($1, $2, $3, 'entree', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
+        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, invoice_number, cash_method, warehouse_id, tva_amount, discount_amount)
+         VALUES ($1, $2, $3, 'entree', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
         [
           req.user.merchantId,
           product.id,
@@ -1022,6 +1101,7 @@ router.post('/purchases', async (req, res) => {
           cashMethodFinal,
           warehouseId,
           index === 0 ? tvaTotale : 0,
+          index === 0 ? achat.remise : 0,
         ]
       );
       mouvementsCrees.push(mouvement.rows[0].id);
@@ -1143,7 +1223,7 @@ router.post('/purchases', async (req, res) => {
       }).catch((err) => console.error('Erreur alerte reliquat_disponible :', err));
     });
 
-    res.status(201).json({ warehouseId, movementIds: mouvementsCrees, advancePaid: avanceFinale || 0, reservationsFulfilled: reservationsFulfillies });
+    res.status(201).json({ warehouseId, movementIds: mouvementsCrees, totalCost: coutFinal, tvaAmount: tvaTotale, discountAmount: achat.remise, advancePaid: avanceFinale || 0, reservationsFulfilled: reservationsFulfillies });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     if (err.status) return res.status(err.status).json({ error: err.message });

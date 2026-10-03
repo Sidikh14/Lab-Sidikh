@@ -163,6 +163,8 @@ export const api = {
     request(`/products/${id}/stock-movement`, { method: 'POST', body: JSON.stringify(data) }),
   recordStockPurchase: (data) =>
     request('/products/purchases', { method: 'POST', body: JSON.stringify(data) }),
+  previewStockPurchase: (data) =>
+    request('/products/purchases/preview', { method: 'POST', body: JSON.stringify(data) }),
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
   getProductLots: (id, warehouseId) =>
     request(`/products/${id}/lots${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
