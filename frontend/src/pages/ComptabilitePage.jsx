@@ -1111,11 +1111,221 @@ function ChargesTab() {
   );
 }
 
+// ---------- Impôts & cotisations ----------
+// Ce qui reste dû à l'État et aux organismes sociaux (calculé depuis les écritures
+// automatiques : ventes, achats, paie) et les paiements effectués.
+
+const MODES_ETAT = MODES.filter((m) => m[0] !== 'a_payer');
+const NOMS_ETAT = {
+  tva: 'TVA', retenues: 'IR et TRIMF sur salaires', css: 'Cotisations CSS',
+  ipres: 'Cotisations IPRES', cfce: 'CFCE', is: 'Impôt sur les résultats',
+};
+
+function boutiqueActive() {
+  try {
+    return localStorage.getItem('boutiqueActiveId') || '';
+  } catch {
+    return '';
+  }
+}
+
+function PaiementEtatModal({ dette, onClose, onSaved }) {
+  const [date, setDate] = useState(aujourdhui());
+  const [amount, setAmount] = useState(dette.du > 0 ? String(dette.du) : '');
+  const [mode, setMode] = useState('virement');
+  const [periode, setPeriode] = useState(moisCourant());
+  const [note, setNote] = useState('');
+  const [erreur, setErreur] = useState('');
+  const [envoi, setEnvoi] = useState(false);
+
+  async function valider(e) {
+    e.preventDefault();
+    setErreur('');
+    setEnvoi(true);
+    try {
+      await api.createAccountingStatePayment({
+        type: dette.type, amount: Number(amount), paymentMethod: mode, paymentDate: date,
+        period: periode || undefined, note: note || undefined,
+        warehouseId: mode === 'virement' ? undefined : boutiqueActive() || undefined,
+      });
+      onSaved();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnvoi(false);
+    }
+  }
+
+  return (
+    <div className="modale-fond" onClick={onClose}>
+      <div className="modale" style={{ maxWidth: 440, width: '96%' }} onClick={(e) => e.stopPropagation()}>
+        <h2>Payer : {NOMS_ETAT[dette.type]}</h2>
+        <p style={{ color: 'var(--encre-douce)', fontSize: 13.5 }}>
+          {dette.type === 'tva'
+            ? "Saisissez le net versé : la TVA déductible est compensée automatiquement avec la TVA facturée."
+            : "L'écriture comptable est créée automatiquement."}
+        </p>
+        <form onSubmit={valider}>
+          <div className="champ-groupe">
+            <label className="etiquette">Date du paiement</label>
+            <input type="date" className="champ" value={date} max={aujourdhui()} onChange={(e) => setDate(e.target.value)} required />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Période concernée</label>
+            <input type="month" className="champ" value={periode} onChange={(e) => setPeriode(e.target.value)} />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Montant versé (FCFA)</label>
+            <input type="number" min="1" step="any" className="champ" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Mode de paiement</label>
+            <select className="champ" value={mode} onChange={(e) => setMode(e.target.value)}>
+              {MODES_ETAT.map((m) => <option key={m[0]} value={m[0]}>{m[1]}</option>)}
+            </select>
+            {mode !== 'virement' && (
+              <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '4px 0 0' }}>
+                Sortie de la caisse de la boutique active (choisie sur la page Caisse).
+              </p>
+            )}
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Note (facultatif)</label>
+            <input type="text" className="champ" maxLength={200} value={note} onChange={(e) => setNote(e.target.value)} />
+          </div>
+          {erreur && <div className="erreur">{erreur}</div>}
+          <div className="actions-modale">
+            <button type="button" className="btn" onClick={onClose}>Annuler</button>
+            <button type="submit" className="btn btn-principal" disabled={envoi}>{envoi ? 'Enregistrement…' : 'Enregistrer le paiement'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ImpotsTab() {
+  const [version, setVersion] = useState(0);
+  const [modale, setModale] = useState(null);
+  const [erreurAction, setErreurAction] = useState('');
+  const [donnees, erreur] = useDonnees(
+    async () => {
+      const [dues, paiements] = await Promise.all([api.getAccountingStateDues(), api.getAccountingStatePayments()]);
+      return { dettes: dues.dettes, paiements };
+    },
+    [version]
+  );
+
+  function recharger() {
+    setModale(null);
+    setVersion((v) => v + 1);
+  }
+
+  async function annuler(p) {
+    if (!window.confirm('Annuler ce paiement ? L\'écriture comptable et la sortie de caisse associées seront supprimées.')) return;
+    setErreurAction('');
+    try {
+      await api.cancelAccountingStatePayment(p.id);
+      setVersion((v) => v + 1);
+    } catch (err) {
+      setErreurAction(err.message);
+    }
+  }
+
+  if (erreur) return <div className="erreur">{erreur}</div>;
+  if (!donnees) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
+  const { dettes, paiements } = donnees;
+
+  return (
+    <div>
+      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0 }}>
+        Montants calculés automatiquement depuis les ventes, les achats et les bulletins de paie.
+        Enregistrez un paiement pour solder la dette : l'écriture (et la sortie de caisse) se crée toute seule.
+      </p>
+      {erreurAction && <div className="erreur">{erreurAction}</div>}
+
+      <div style={{ overflowX: 'auto', marginBottom: 26 }}>
+        <table style={tableStyle}>
+          <thead>
+            <tr>
+              <th style={enteteTable}>Impôt / cotisation</th>
+              <th style={{ ...enteteTable, textAlign: 'right' }}>Reste à payer</th>
+              <th style={enteteTable} />
+            </tr>
+          </thead>
+          <tbody>
+            {dettes.map((d) => (
+              <tr key={d.type}>
+                <td style={cellule}>
+                  {NOMS_ETAT[d.type]}
+                  {d.type === 'tva' && (
+                    <div style={{ color: 'var(--encre-douce)', fontSize: 12 }}>
+                      Facturée {fmt(d.collectee)} − déductible {fmt(d.deductible)}
+                    </div>
+                  )}
+                </td>
+                <td style={droite}>{d.du < 0 ? `Crédit de ${fmt(-d.du)}` : fmt(d.du)}</td>
+                <td style={{ ...cellule, textAlign: 'right' }}>
+                  <button type="button" className="btn btn-principal" style={boutonPetit} onClick={() => setModale(d)}>Payer</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <h3 style={{ fontSize: 15 }}>Paiements effectués</h3>
+      {paiements.length === 0 ? (
+        <p className="etat-vide">Aucun paiement enregistré.</p>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={enteteTable}>Date</th>
+                <th style={enteteTable}>Objet</th>
+                <th style={enteteTable}>Mode</th>
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Montant</th>
+                <th style={enteteTable}>Écriture</th>
+                <th style={enteteTable} />
+              </tr>
+            </thead>
+            <tbody>
+              {paiements.map((p) => (
+                <tr key={p.id} style={{ opacity: p.cancelled ? 0.5 : 1 }}>
+                  <td style={cellule}>{dateFr(p.payment_date)}</td>
+                  <td style={cellule}>
+                    {NOMS_ETAT[p.kind] || p.kind}{p.period ? ` (${p.period})` : ''}
+                    {Number(p.offset_amount) > 0 && (
+                      <div style={{ color: 'var(--encre-douce)', fontSize: 12 }}>TVA déductible compensée : {fmt(p.offset_amount)}</div>
+                    )}
+                  </td>
+                  <td style={cellule}>{libelleMode(p.payment_method)}</td>
+                  <td style={droite}>{fmt(p.amount)}</td>
+                  <td style={cellule}>{p.cancelled ? 'Annulé' : p.entry_number ? `N°${p.entry_number}` : ''}</td>
+                  <td style={{ ...cellule, textAlign: 'right' }}>
+                    {!p.cancelled && (
+                      <button type="button" className="btn btn-brique" style={boutonPetit} onClick={() => annuler(p)}>Annuler</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modale && <PaiementEtatModal dette={modale} onClose={() => setModale(null)} onSaved={recharger} />}
+    </div>
+  );
+}
+
 // ---------- Page ----------
 
 const ONGLETS = [
   { id: 'journal', label: 'Journal', composant: JournalTab },
   { id: 'charges', label: 'Charges', composant: ChargesTab },
+  { id: 'impots', label: 'Impôts & cotisations', composant: ImpotsTab },
   { id: 'plan', label: 'Plan comptable', composant: PlanTab },
   { id: 'grandlivre', label: 'Grand livre', composant: GrandLivreTab },
   { id: 'balance', label: 'Balance', composant: BalanceTab },

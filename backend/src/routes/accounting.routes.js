@@ -132,7 +132,7 @@ router.use(requireModule('comptabilite'));
 // Les consultations (journal, grand livre, balance, résultat, bilan) lancent
 // d'abord la synchronisation automatique (au plus une fois toutes les 30 s) :
 // rien n'est à saisir ni à actualiser à la main.
-router.use(['/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet'], async (req, res, next) => {
+router.use(['/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues'], async (req, res, next) => {
   if (req.method === 'GET') await assurerSynchro(req.user.merchantId, req.user.id);
   next();
 });
@@ -673,6 +673,216 @@ router.delete('/charges/postings/:id', async (req, res) => {
   }
 });
 
+// ---------- Paiements à l'État (TVA, retenues sur salaires, cotisations, IS) ----------
+// Solde la dette fiscale ou sociale : débit du compte dû (443, 447, 431, 432,
+// 442, 441), crédit de la trésorerie. Si le paiement sort d'une caisse (espèces,
+// Wave, Orange Money), la sortie de caisse est créée en même temps.
+
+const DETTES_ETAT = {
+  tva:      { code: '443', label: 'TVA',                       nomCompte: 'État, TVA facturée' },
+  retenues: { code: '447', label: 'IR et TRIMF sur salaires',  nomCompte: 'État, impôts retenus sur salaires' },
+  css:      { code: '431', label: 'Cotisations CSS',           nomCompte: 'Sécurité sociale' },
+  ipres:    { code: '432', label: 'Cotisations IPRES',         nomCompte: 'Caisse de retraite' },
+  cfce:     { code: '442', label: 'CFCE',                      nomCompte: 'État, impôts et taxes' },
+  is:       { code: '441', label: 'Impôt sur les résultats',   nomCompte: 'État, impôts sur les bénéfices' },
+};
+const MODES_ETAT = ['especes', 'wave', 'orange_money', 'virement'];
+const NOM_TRESORERIE = { '571': 'Caisse', '5211': 'Wave', '5212': 'Orange Money', '521': 'Banque' };
+const MOTIF_ETAT = 'Paiement État — ';
+
+async function assurerCompte(client, merchantId, code, label) {
+  const r = await client.query(`SELECT id FROM accounting_accounts WHERE merchant_id = $1 AND code = $2`, [merchantId, code]);
+  if (r.rows.length > 0) return r.rows[0].id;
+  const ins = await client.query(
+    `INSERT INTO accounting_accounts (merchant_id, code, label) VALUES ($1, $2, $3)
+     ON CONFLICT (merchant_id, code) DO UPDATE SET label = accounting_accounts.label RETURNING id`,
+    [merchantId, code, label]
+  );
+  return ins.rows[0].id;
+}
+
+// GET /accounting/state-dues?date= — ce qui reste dû à l'État et aux organismes
+// sociaux (solde créditeur de chaque compte).
+router.get('/state-dues', async (req, res) => {
+  const date = req.query.date || aujourdhui();
+  if (!dateOk(date)) return res.status(400).json({ error: 'Date invalide.' });
+  try {
+    const rows = await agreger(req.user.merchantId, null, date);
+    const solde = (code, sens) => {
+      const r = rows.find((x) => x.code === code);
+      return r ? arrondi(sens === 'credit' ? r.credit - r.debit : r.debit - r.credit) : 0;
+    };
+    const dettes = Object.entries(DETTES_ETAT).map(([type, d]) => {
+      if (type === 'tva') {
+        const collectee = solde('443', 'credit');
+        const deductible = solde('445', 'debit');
+        return { type, code: d.code, label: 'TVA nette à reverser', du: arrondi(collectee - deductible), collectee, deductible };
+      }
+      return { type, code: d.code, label: d.label, du: solde(d.code, 'credit') };
+    });
+    res.json({ date, dettes });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du calcul des dettes envers l\'État.' });
+  }
+});
+
+router.get('/state-payments', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT p.id, p.kind, p.period, p.amount, p.offset_amount, p.payment_method, p.payment_date, p.note, p.cancelled, p.created_at,
+              e.entry_number, u.full_name AS paid_by_name
+       FROM accounting_state_payments p
+       LEFT JOIN accounting_entries e ON e.id = p.entry_id
+       LEFT JOIN users u ON u.id = p.paid_by
+       WHERE p.merchant_id = $1
+       ORDER BY p.payment_date DESC, p.created_at DESC
+       LIMIT 200`,
+      [req.user.merchantId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des paiements.' });
+  }
+});
+
+router.post('/state-payments', async (req, res) => {
+  const { type, paymentMethod, paymentDate, period, note, warehouseId } = req.body;
+  const dette = DETTES_ETAT[type];
+  const montant = arrondi(req.body.amount);
+  const date = paymentDate || aujourdhui();
+  if (!dette) return res.status(400).json({ error: 'Type de paiement invalide.' });
+  if (!(montant > 0)) return res.status(400).json({ error: 'Le montant doit être positif.' });
+  if (!MODES_ETAT.includes(paymentMethod)) return res.status(400).json({ error: 'Mode de paiement invalide.' });
+  if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: 'Date de paiement invalide.' });
+  if (period && !MOIS_RE.test(period)) return res.status(400).json({ error: 'Période invalide (AAAA-MM).' });
+  const commentaire = note ? String(note).trim().slice(0, 200) : null;
+  const merchantId = req.user.merchantId;
+  const enCaisse = paymentMethod !== 'virement';
+  if (enCaisse && !UUID_RE.test(String(warehouseId || ''))) {
+    return res.status(400).json({ error: 'Choisissez la boutique dont la caisse effectue le paiement.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    let boutique = null;
+    if (enCaisse) {
+      const w = await client.query(`SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2`, [warehouseId, merchantId]);
+      if (w.rows.length === 0) throw erreurMetier(400, 'Boutique introuvable.');
+      boutique = warehouseId;
+    }
+    const codeTreso = COMPTE_PAR_MODE[paymentMethod];
+    const compteDette = await assurerCompte(client, merchantId, dette.code, dette.nomCompte);
+    const compteTreso = await assurerCompte(client, merchantId, codeTreso, NOM_TRESORERIE[codeTreso]);
+    const journal = await client.query(
+      `SELECT id FROM accounting_journals WHERE merchant_id = $1 AND code = $2`,
+      [merchantId, JOURNAL_PAR_MODE[paymentMethod]]
+    );
+    if (journal.rows.length === 0) throw erreurMetier(400, `Le journal ${JOURNAL_PAR_MODE[paymentMethod]} est introuvable dans votre plan comptable.`);
+
+    const libelle = `Paiement ${dette.label}${period ? ` — ${period}` : ''}`;
+    // TVA : la TVA déductible (445) se compense avec la TVA facturée (443). Le
+    // montant versé est le net ; la compensation est calculée automatiquement.
+    let compensation = 0;
+    if (type === 'tva') {
+      const soldes = await client.query(
+        `SELECT a.code, COALESCE(SUM(l.debit), 0) AS d, COALESCE(SUM(l.credit), 0) AS c
+         FROM accounting_lines l JOIN accounting_entries e ON e.id = l.entry_id JOIN accounting_accounts a ON a.id = l.account_id
+         WHERE l.merchant_id = $1 AND a.code IN ('443', '445') AND e.entry_date <= $2::date GROUP BY a.code`,
+        [merchantId, date]
+      );
+      const ligneCompte = (code) => soldes.rows.find((x) => x.code === code) || { d: 0, c: 0 };
+      const du443 = arrondi(Number(ligneCompte('443').c) - Number(ligneCompte('443').d));
+      const recuperable = Math.max(0, arrondi(Number(ligneCompte('445').d) - Number(ligneCompte('445').c)));
+      compensation = Math.min(recuperable, Math.max(0, arrondi(du443 - montant)));
+    }
+    const compteTvaDeductible = compensation > 0
+      ? await assurerCompte(client, merchantId, '445', 'État, TVA récupérable sur achats')
+      : null;
+    let depenseId = null;
+    if (enCaisse) {
+      const d = await client.query(
+        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, warehouse_id)
+         VALUES ($1, $2, $3, $4, $5, $6::date, $7) RETURNING id`,
+        [merchantId, req.user.id, paymentMethod, montant, `${MOTIF_ETAT}${dette.label}${period ? ` ${period}` : ''}`, date, boutique]
+      );
+      depenseId = d.rows[0].id;
+    }
+    const paiement = await client.query(
+      `INSERT INTO accounting_state_payments (merchant_id, kind, period, amount, payment_method, payment_date, note, cash_expense_id, paid_by, offset_amount)
+       VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10) RETURNING id`,
+      [merchantId, type, period || null, montant, paymentMethod, date, commentaire, depenseId, req.user.id, compensation]
+    );
+    const num = await client.query(`SELECT COALESCE(MAX(entry_number), 0) + 1 AS n FROM accounting_entries WHERE merchant_id = $1`, [merchantId]);
+    const entree = await client.query(
+      `INSERT INTO accounting_entries (merchant_id, journal_id, entry_number, entry_date, reference, label, source_type, source_id, created_by)
+       VALUES ($1, $2, $3, $4::date, $5, $6, 'paiement_etat', $7, $8) RETURNING id, entry_number`,
+      [merchantId, journal.rows[0].id, Number(num.rows[0].n), date, `ETAT-${type.toUpperCase()}`, libelle, paiement.rows[0].id, req.user.id]
+    );
+    await client.query(
+      `INSERT INTO accounting_lines (entry_id, merchant_id, account_id, debit, credit, label) VALUES ($1, $2, $3, $4, 0, $5)`,
+      [entree.rows[0].id, merchantId, compteDette, arrondi(montant + compensation), libelle]
+    );
+    await client.query(
+      `INSERT INTO accounting_lines (entry_id, merchant_id, account_id, debit, credit, label) VALUES ($1, $2, $3, 0, $4, $5)`,
+      [entree.rows[0].id, merchantId, compteTreso, montant, libelle]
+    );
+    if (compensation > 0) {
+      await client.query(
+        `INSERT INTO accounting_lines (entry_id, merchant_id, account_id, debit, credit, label) VALUES ($1, $2, $3, 0, $4, $5)`,
+        [entree.rows[0].id, merchantId, compteTvaDeductible, compensation, `${libelle} — TVA déductible compensée`]
+      );
+    }
+    await client.query(`UPDATE accounting_state_payments SET entry_id = $1 WHERE id = $2`, [entree.rows[0].id, paiement.rows[0].id]);
+    await client.query('COMMIT');
+    await logActivity({
+      merchantId, userId: req.user.id, action: 'accounting_state_payment',
+      description: `a enregistré le paiement « ${libelle} » (${Math.round(montant).toLocaleString('fr-FR')} FCFA)`,
+    });
+    res.status(201).json({ id: paiement.rows[0].id, entryNumber: entree.rows[0].entry_number, compensation });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, 'Erreur lors de l\'enregistrement du paiement.');
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/state-payments/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Paiement introuvable.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, req.user.merchantId);
+    const p = await client.query(
+      `SELECT id, entry_id, cash_expense_id, kind FROM accounting_state_payments
+       WHERE id = $1 AND merchant_id = $2 AND cancelled = false FOR UPDATE`,
+      [req.params.id, req.user.merchantId]
+    );
+    if (p.rows.length === 0) throw erreurMetier(404, 'Paiement introuvable.');
+    if (p.rows[0].entry_id) {
+      await client.query(`DELETE FROM accounting_entries WHERE id = $1 AND merchant_id = $2`, [p.rows[0].entry_id, req.user.merchantId]);
+    }
+    if (p.rows[0].cash_expense_id) {
+      await client.query(`DELETE FROM cash_expenses WHERE id = $1 AND merchant_id = $2`, [p.rows[0].cash_expense_id, req.user.merchantId]);
+    }
+    await client.query(`UPDATE accounting_state_payments SET cancelled = true WHERE id = $1`, [req.params.id]);
+    await client.query('COMMIT');
+    await logActivity({
+      merchantId: req.user.merchantId, userId: req.user.id, action: 'accounting_state_payment_cancelled',
+      description: `a annulé un paiement à l'État (${DETTES_ETAT[p.rows[0].kind]?.label || p.rows[0].kind})`,
+    });
+    res.json({ message: 'Paiement annulé.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de l'annulation du paiement.");
+  } finally {
+    client.release();
+  }
+});
+
 // ---------- Synchronisation automatique ----------
 
 const DELAI_SYNCHRO_MS = 30000;
@@ -905,7 +1115,7 @@ async function lireCaisse(client, merchantId, debut, ctx) {
         apports += 1;
       }
     } else {
-      if (/^(salaire|remboursement retour|transfert vers)/.test(motif) || row.reason.startsWith('Charge — ')) continue;
+      if (/^(salaire|remboursement retour|transfert vers)/.test(motif) || row.reason.startsWith('Charge — ') || row.reason.startsWith('Paiement État — ')) continue;
       const regle = REGLES_DEPENSES.find(([re]) => re.test(motif));
       const [compte, j] = tresorerie(mode === 'cheque' ? 'virement' : mode);
       journal = j;
@@ -1206,7 +1416,7 @@ async function lireReglementsAssureurs(client, merchantId, debut, ctx) {
 async function lireAchats(client, merchantId, debut, ctx) {
   const jour = `COALESCE(m.movement_date, (m.created_at AT TIME ZONE 'UTC')::date)`;
   const r = await client.query(
-    `SELECT MIN(m.id::text) AS id, SUM(m.total_cost) AS total, m.payment_method AS pm, m.cash_method AS cm,
+    `SELECT MIN(m.id::text) AS id, SUM(m.total_cost) AS total, COALESCE(SUM(m.tva_amount), 0) AS tva, m.payment_method AS pm, m.cash_method AS cm,
             m.invoice_number AS inv, to_char(${jour}, 'YYYY-MM-DD') AS d, MAX(s.name) AS supplier,
             m.supplier_id::text AS supplier_id
      FROM stock_movements m LEFT JOIN suppliers s ON s.id = m.supplier_id
@@ -1229,6 +1439,9 @@ async function lireAchats(client, merchantId, debut, ctx) {
   const out = [];
   for (const row of r.rows) {
     const total = arrondi(row.total);
+    // total_cost est le montant payé TTC ; la TVA déductible (445) en est extraite.
+    const tva = Math.min(arrondi(row.tva), total);
+    const ht = arrondi(total - tva);
     const p = modeNormalise(row.pm);
     const c = modeNormalise(row.cm);
     let compteCredit = null;
@@ -1241,8 +1454,8 @@ async function lireAchats(client, merchantId, debut, ctx) {
     out.push({
       sourceId: row.id, date: row.d, journal: 'AC', reference: row.inv || null,
       label: `Achat${row.supplier ? ` — ${row.supplier}` : ''}`,
-      sig: `${total}|${row.pm}|${row.cm}|${row.inv}|${row.d}|${row.supplier}|${row.supplier_id}|t2`,
-      lignes: [ligne('601', total, 0), ligne(compteCredit, 0, total), ligne('311', total, 0), ligne('6031', 0, total)],
+      sig: `${total}|${tva}|${row.pm}|${row.cm}|${row.inv}|${row.d}|${row.supplier}|${row.supplier_id}|t3`,
+      lignes: [ligne('601', ht, 0), ligne('445', tva, 0), ligne(compteCredit, 0, total), ligne('311', ht, 0), ligne('6031', 0, ht)],
     });
   }
   if (inconnus > 0) ctx.avertissements.push(`${inconnus} achat(s) au mode de paiement non reconnu : comptabilisés en dette fournisseur.`);
@@ -1364,6 +1577,9 @@ async function synchroniserMaintenant(merchantId, userId) {
     // Ajoute au plan comptable les comptes ajoutés depuis l'activation (une fois par démarrage).
     if (!PLAN_VERIFIE.has(merchantId)) {
       await initialiserComptabilite(client, merchantId);
+      await assurerCompte(client, merchantId, '445', 'État, TVA récupérable sur achats');
+      await assurerCompte(client, merchantId, '441', 'État, impôts sur les bénéfices');
+      await assurerCompte(client, merchantId, '891', 'Impôts sur les bénéfices');
       PLAN_VERIFIE.add(merchantId);
     }
 
