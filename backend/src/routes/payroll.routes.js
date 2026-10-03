@@ -350,7 +350,15 @@ router.get('/:userId/:month/pdf', async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // Mise en page PDF du bulletin — réutilise pdfHelpers.js (même identité
-// visuelle que les autres documents de l'application : noir/gris, Newsreader).
+// visuelle que les autres documents : noir et blanc, textes en gras).
+//
+// Lecture du bulletin, de haut en bas :
+//   GAINS      salaire de base + primes            = salaire brut
+//   RETENUES   absences, cotisations, impôts, avances/prêts/autres
+//   NET        salaire brut - total des retenues
+// Les absences sont présentées parmi les retenues (c'est une retenue pour le
+// salarié) ; en interne elles réduisent bien l'assiette des cotisations et de
+// l'impôt, ce que rappelle la ligne « Revenu imposable » sous le tableau.
 // ---------------------------------------------------------------------------
 function genererBulletinPDF(doc, bulletin) {
   const merchant = {
@@ -364,6 +372,9 @@ function genererBulletinPDF(doc, bulletin) {
   const largeurPage = doc.page.width;
   const xGauche = 50;
   const xDroite = largeurPage - 50;
+  const largeurUtile = xDroite - xGauche;
+  const HAUTEUR_LIGNE = 20;
+  const xMontant = xDroite - 190;
 
   let y = dessinerEntete(doc, {
     businessName: bulletin.business_name,
@@ -372,106 +383,103 @@ function genererBulletinPDF(doc, bulletin) {
     merchant,
   });
 
-  // Bandeau identité employé, sur fond légèrement grisé, avec les infos clés
-  // (nom, poste, quotient familial) réparties sur la largeur.
-  const hauteurBandeau = 44;
-  doc.rect(xGauche, y, xDroite - xGauche, hauteurBandeau).fill(COULEURS.fondAlterne);
-  doc.fillColor(COULEURS.mutedClair).font('Helvetica').fontSize(7.5)
-    .text('SALARIÉ', xGauche + 14, y + 9, { characterSpacing: 0.5 });
-  doc.fillColor(COULEURS.encre).font('Helvetica-Bold').fontSize(12)
-    .text(bulletin.full_name, xGauche + 14, y + 20);
-
-  const xColonne2 = xGauche + (xDroite - xGauche) * 0.42;
-  doc.fillColor(COULEURS.mutedClair).font('Helvetica').fontSize(7.5)
-    .text('POSTE', xColonne2, y + 9, { characterSpacing: 0.5 });
-  doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(10)
-    .text(libelleRole(bulletin.role), xColonne2, y + 20);
-
-  const xColonne3 = xGauche + (xDroite - xGauche) * 0.74;
-  doc.fillColor(COULEURS.mutedClair).font('Helvetica').fontSize(7.5)
-    .text('QUOTIENT FAMILIAL', xColonne3, y + 9, { characterSpacing: 0.5 });
-  doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(10)
-    .text(`${formatMontant(bulletin.parts_fiscales).replace(/\s/g, '')} part(s)`, xColonne3, y + 20);
-
-  y += hauteurBandeau + 20;
-
-  // --- Section GAINS ---
-  y = dessinerEnteteTableau(doc, y, [
-    { texte: 'Gains', x: xGauche, largeur: 300 },
-    { texte: 'Montant (FCFA)', x: xColonne3 - 30, largeur: 175, aligner: 'right' },
-  ]);
+  // --- Bloc identité du salarié, encadré ---
+  const hauteurBloc = 50;
+  doc.rect(xGauche, y, largeurUtile, hauteurBloc).lineWidth(1.25).strokeColor(COULEURS.encre).stroke();
+  const colonnes = [
+    { x: xGauche + 14, titre: 'SALARIÉ', valeur: bulletin.full_name, taille: 12.5 },
+    { x: xGauche + largeurUtile * 0.5, titre: 'POSTE', valeur: libelleRole(bulletin.role), taille: 11 },
+    { x: xGauche + largeurUtile * 0.78, titre: 'PARTS FISCALES', valeur: String(Number(bulletin.parts_fiscales) || 1), taille: 11 },
+  ];
+  colonnes.forEach((c) => {
+    doc.fillColor(COULEURS.mutedClair).font('Helvetica-Bold').fontSize(7.5).text(c.titre, c.x, y + 10, { characterSpacing: 0.8, lineBreak: false });
+    doc.fillColor(COULEURS.encre).font('Helvetica-Bold').fontSize(c.taille).text(c.valeur, c.x, y + 24, { width: largeurUtile * 0.42, lineBreak: false, ellipsis: true });
+  });
+  y += hauteurBloc + 22;
 
   let indexLigne = 0;
-  function ligne(label, montant, { gras = false, indent = false } = {}) {
-    const fond = indexLigne % 2 === 1 ? COULEURS.fondAlterne : null;
-    if (fond) doc.rect(xGauche - 4, y - 3, xDroite - xGauche + 8, 17).fill(fond);
-    doc.font(gras ? 'Helvetica-Bold' : 'Helvetica').fontSize(9.5).fillColor(COULEURS.encre);
-    doc.text(label, xGauche + (indent ? 12 : 0), y, { width: 290 - (indent ? 12 : 0) });
-    doc.text(formatMontant(montant), xColonne3 - 30, y, { width: 175, align: 'right' });
-    y += 17;
+  function ligne(label, montant, { gras = false, indent = false, negatif = false } = {}) {
+    if (indexLigne % 2 === 1) doc.rect(xGauche, y - 4, largeurUtile, HAUTEUR_LIGNE).fill(COULEURS.fondAlterne);
+    doc.font(gras ? 'Helvetica-Bold' : 'Helvetica').fontSize(10.5).fillColor(COULEURS.encre);
+    doc.text(label, xGauche + 8 + (indent ? 14 : 0), y, { width: xMontant - xGauche - 20, lineBreak: false, ellipsis: true });
+    doc.text(`${negatif ? '- ' : ''}${formatMontant(montant)}`, xMontant, y, { width: 182, align: 'right', lineBreak: false });
+    y += HAUTEUR_LIGNE;
     indexLigne += 1;
+  }
+
+  function totalLigne(label, montant) {
+    y += 2;
+    doc.moveTo(xGauche, y).lineTo(xDroite, y).strokeColor(COULEURS.encre).lineWidth(1.25).stroke();
+    y += 8;
+    doc.font('Helvetica-Bold').fontSize(11.5).fillColor(COULEURS.encre);
+    doc.text(label, xGauche + 8, y, { width: xMontant - xGauche - 20, lineBreak: false });
+    doc.text(formatMontant(montant), xMontant, y, { width: 182, align: 'right', lineBreak: false });
+    y += HAUTEUR_LIGNE + 6;
   }
 
   const retenuesDetail = Array.isArray(bulletin.deductions_detail) ? bulletin.deductions_detail : [];
   const absencesDetail = retenuesDetail.filter((d) => d.type === 'absence');
   const autresRetenues = retenuesDetail.filter((d) => d.type !== 'absence');
+  const salaireBrut = Number(bulletin.base_salary) + Number(bulletin.bonuses_total || 0);
 
+  // --- GAINS ---
+  y = dessinerEnteteTableau(doc, y, [
+    { texte: 'Gains', x: xGauche + 8, largeur: 300 },
+    { texte: 'Montant (FCFA)', x: xMontant, largeur: 182, aligner: 'right' },
+  ]);
   ligne('Salaire de base', bulletin.base_salary);
   (bulletin.bonuses_detail || []).forEach((b) => ligne(`Prime — ${b.label}`, b.amount, { indent: true }));
-  // Les absences non rémunérées réduisent le brut : elles figurent donc dans les gains (en négatif).
-  absencesDetail.forEach((d) => ligne(`Absence — ${d.label}`, -Number(d.amount), { indent: true }));
-  y += 4;
-  traitSeparateur(doc, y);
-  y += 10;
-  ligne('Salaire brut', bulletin.gross_salary, { gras: true });
-  y += 14;
+  totalLigne('SALAIRE BRUT', salaireBrut);
+  y += 12;
 
-  // --- Section RETENUES ---
+  // --- RETENUES ---
   indexLigne = 0;
   y = dessinerEnteteTableau(doc, y, [
-    { texte: 'Retenues salariales', x: xGauche, largeur: 300 },
-    { texte: 'Montant (FCFA)', x: xColonne3 - 30, largeur: 175, aligner: 'right' },
+    { texte: 'Retenues', x: xGauche + 8, largeur: 300 },
+    { texte: 'Montant (FCFA)', x: xMontant, largeur: 182, aligner: 'right' },
   ]);
-
-  ligne('IPRES (retraite)', bulletin.ipres_salarial);
-  if (Number(bulletin.css_salarial) > 0) ligne('CSS', bulletin.css_salarial);
-  ligne('Revenu imposable', bulletin.revenu_imposable);
-  ligne('Impôt sur le revenu (IRPP)', bulletin.irpp);
-  ligne('TRIMF', bulletin.trimf);
-  // Avances, prêts et autres retenues : déduits du net après impôts.
+  absencesDetail.forEach((d) => ligne(`Absence — ${d.label}`, d.amount, { negatif: true }));
+  ligne('IPRES (retraite)', bulletin.ipres_salarial, { negatif: true });
+  if (Number(bulletin.css_salarial) > 0) ligne('CSS', bulletin.css_salarial, { negatif: true });
+  ligne('Impôt sur le revenu (IRPP)', bulletin.irpp, { negatif: true });
+  ligne('TRIMF', bulletin.trimf, { negatif: true });
+  // Avances, prêts et autres retenues : déduits du net, après impôts.
   autresRetenues.forEach((d) => {
     const prefixe = LABEL_TYPE_RETENUE[d.type] || 'Retenue';
-    ligne(d.label && d.label !== prefixe ? `${prefixe} — ${d.label}` : prefixe, d.amount);
+    ligne(d.label && d.label !== prefixe ? `${prefixe} — ${d.label}` : prefixe, d.amount, { negatif: true });
   });
-  y += 4;
-  traitSeparateur(doc, y);
-  y += 10;
-  ligne('Total des retenues', Number(bulletin.gross_salary) - Number(bulletin.net_a_payer), { gras: true });
-  y += 10;
+  totalLigne('TOTAL DES RETENUES', salaireBrut - Number(bulletin.net_a_payer));
 
-  // --- Encart NET À PAYER, mis en évidence ---
-  const hauteurNet = 40;
-  doc.roundedRect(xGauche, y, xDroite - xGauche, hauteurNet, 6).fill(COULEURS.encre);
-  doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(12.5)
-    .text('NET À PAYER', xGauche + 16, y + 13);
-  doc.fontSize(14).text(`${formatMontant(bulletin.net_a_payer)} FCFA`, xGauche, y + 11, { width: xDroite - xGauche - 16, align: 'right' });
-  y += hauteurNet + 24;
+  // Information de calcul : base de l'IRPP (brut moins absences et cotisations).
+  doc.fillColor(COULEURS.mutedClair).font('Helvetica').fontSize(8.5)
+    .text(`Revenu imposable (base de calcul de l'IRPP) : ${formatMontant(bulletin.revenu_imposable)} FCFA`, xGauche + 8, y - 6, { width: largeurUtile - 16, lineBreak: false });
+  y += 18;
 
-  // --- Charges patronales, informatif, distinct visuellement ---
+  // --- NET À PAYER : encadré épais, fond blanc ---
+  const hauteurNet = 46;
+  doc.roundedRect(xGauche, y, largeurUtile, hauteurNet, 4).lineWidth(3).strokeColor(COULEURS.encre).stroke();
+  doc.fillColor(COULEURS.encre).font('Helvetica-Bold').fontSize(14)
+    .text('NET À PAYER', xGauche + 18, y + 15, { lineBreak: false });
+  doc.fontSize(17).text(`${formatMontant(bulletin.net_a_payer)} FCFA`, xGauche, y + 13, { width: largeurUtile - 18, align: 'right', lineBreak: false });
+  y += hauteurNet + 26;
+
+  // --- Charges patronales : informatif, séparé par un filet ---
+  doc.moveTo(xGauche, y).lineTo(xDroite, y).strokeColor(COULEURS.bordure).lineWidth(1).stroke();
+  y += 10;
   doc.fillColor(COULEURS.muted).font('Helvetica-Bold').fontSize(8)
-    .text('CHARGES PATRONALES (INFORMATIF — NON DÉDUITES DU NET)', xGauche, y, { characterSpacing: 0.5 });
-  y += 14;
+    .text('CHARGES PATRONALES · INFORMATIF, NON DÉDUITES DU NET', xGauche, y, { characterSpacing: 0.6, lineBreak: false });
+  y += 16;
   const charges = [
     ['IPRES patronal', bulletin.ipres_patronal],
     ['CSS patronal', bulletin.css_patronal],
     ['CFCE', bulletin.cfce],
     ['Coût total employeur', bulletin.cout_total_employeur],
   ];
-  const largeurCase = (xDroite - xGauche) / charges.length;
+  const largeurCase = largeurUtile / charges.length;
   charges.forEach(([label, montant], i) => {
     const x = xGauche + i * largeurCase;
-    doc.fillColor(COULEURS.mutedClair).font('Helvetica').fontSize(7.5).text(label.toUpperCase(), x, y, { width: largeurCase - 8, characterSpacing: 0.3 });
-    doc.fillColor(COULEURS.muted).font('Helvetica-Bold').fontSize(10).text(`${formatMontant(montant)} FCFA`, x, y + 11, { width: largeurCase - 8 });
+    doc.fillColor(COULEURS.mutedClair).font('Helvetica-Bold').fontSize(7.5).text(label.toUpperCase(), x, y, { width: largeurCase - 8, characterSpacing: 0.3, lineBreak: false });
+    doc.fillColor(COULEURS.encre).font('Helvetica-Bold').fontSize(10.5).text(`${formatMontant(montant)} FCFA`, x, y + 13, { width: largeurCase - 8, lineBreak: false });
   });
 
   dessinerPiedDePage(doc, merchant);

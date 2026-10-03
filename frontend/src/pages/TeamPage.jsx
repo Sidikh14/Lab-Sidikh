@@ -997,10 +997,13 @@ function SalairesTab() {
   }
 
   // Synthèse du mois affiché.
-  const masseSalariale = employes.reduce((somme, emp) => somme + Number(emp.monthly_salary || 0), 0);
   const employesPayes = employes.filter((emp) => Boolean(emp.paid_at));
   const montantPaye = employesPayes.reduce((somme, emp) => somme + Number(emp.paid_amount || 0), 0);
   const resteAPayer = employes.length - employesPayes.length;
+  const employesNonPayes = employes.filter((emp) => !emp.paid_at);
+  // Montant des bulletins déjà calculés mais pas encore payés (net à payer).
+  const montantRestant = employesNonPayes.reduce((somme, emp) => somme + Number(emp.payslip_net || 0), 0);
+  const nbSansBulletin = employesNonPayes.filter((emp) => !emp.payslip_net).length;
 
   return (
     <>
@@ -1008,20 +1011,14 @@ function SalairesTab() {
         <div className="md-kpi md-kpi--hero">
           <span className="md-kpi-icone"><IconEquipe /></span>
           <p className="md-kpi-label">Masse salariale</p>
-          <p className="md-kpi-valeur">{Math.round(masseSalariale).toLocaleString('fr-FR')} <small>FCFA</small></p>
-          <p className="md-kpi-sous">{employes.length} employé(s)</p>
-        </div>
-        <div className="md-kpi">
-          <span className="md-kpi-icone"><IconEquipe /></span>
-          <p className="md-kpi-label">Déjà payé</p>
           <p className="md-kpi-valeur">{Math.round(montantPaye).toLocaleString('fr-FR')} <small>FCFA</small></p>
-          <p className="md-kpi-sous">{employesPayes.length} employé(s)</p>
+          <p className="md-kpi-sous">total des montants payés · {employesPayes.length} / {employes.length} employé(s)</p>
         </div>
         <div className={'md-kpi' + (resteAPayer > 0 ? ' md-kpi--alerte' : '')}>
           <span className="md-kpi-icone"><IconCadenas /></span>
           <p className="md-kpi-label">Reste à payer</p>
-          <p className="md-kpi-valeur">{resteAPayer}</p>
-          <p className="md-kpi-sous">employé(s) non payé(s)</p>
+          <p className="md-kpi-valeur">{Math.round(montantRestant).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-sous">{resteAPayer} employé(s) non payé(s){nbSansBulletin > 0 ? ` · ${nbSansBulletin} bulletin(s) à préparer` : ''}</p>
         </div>
       </div>
 
@@ -1248,8 +1245,8 @@ function SalairesTab() {
                     <div className="md-recap">
                       {recapLigne('Salaire de base', bulletinCalcule.base_salary)}
                       {Number(bulletinCalcule.bonuses_total) !== 0 && recapLigne('Primes et indemnités', bulletinCalcule.bonuses_total, { signe: '+' })}
+                      {recapLigne('Salaire brut', Number(bulletinCalcule.base_salary) + Number(bulletinCalcule.bonuses_total || 0), { fort: true, separe: true })}
                       {Number(bulletinCalcule.absences_total) > 0 && recapLigne('Absences non rémunérées', bulletinCalcule.absences_total, { signe: '−' })}
-                      {recapLigne('Salaire brut', bulletinCalcule.gross_salary, { fort: true, separe: true })}
                       {recapLigne('IPRES (retraite)', bulletinCalcule.ipres_salarial, { signe: '−', doux: true })}
                       {Number(bulletinCalcule.css_salarial) > 0 && recapLigne('CSS', bulletinCalcule.css_salarial, { signe: '−', doux: true })}
                       {recapLigne('Impôt sur le revenu (IRPP)', bulletinCalcule.irpp, { signe: '−', doux: true })}
@@ -1269,8 +1266,8 @@ function SalairesTab() {
                     <div className="md-recap">
                       {recapLigne('Salaire de base', Number(salaireSaisi) || 0)}
                       {sommePrimes !== 0 && recapLigne('Primes et indemnités', sommePrimes, { signe: '+' })}
+                      {recapLigne('Salaire brut', (Number(salaireSaisi) || 0) + sommePrimes, { fort: true, separe: true })}
                       {sommeAbsences > 0 && recapLigne('Absences non rémunérées', sommeAbsences, { signe: '−' })}
-                      {recapLigne('Salaire brut estimé', brutEstime, { fort: true, separe: true })}
                       {sommeAutres > 0 && recapLigne('Avances, prêts et autres retenues', sommeAutres, { signe: '−' })}
                       <p className="md-aide" style={{ marginTop: 8 }}>
                         Estimation avant cotisations et impôt. Clique sur « Calculer » pour obtenir le net exact.

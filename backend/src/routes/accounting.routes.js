@@ -30,6 +30,101 @@ router.get('/access', async (req, res) => {
   }
 });
 
+// ---------- Charges payées depuis la page Caisse ----------
+// Accessibles au caissier (et au gérant / manager) : payer une facture (eau,
+// électricité, internet, loyer…) crée la sortie de caisse ET l'écriture
+// comptable en une seule opération. Sans module activé : { enabled: false } et
+// la page Caisse n'affiche rien.
+
+const ROLES_CAISSE = ['manager', 'gerant', 'caissier', 'vendeur_caissier'];
+const MODES_CAISSE = ['especes', 'wave', 'orange_money'];
+
+function accesCaisse(req, res, next) {
+  if (!ROLES_CAISSE.includes(req.user.role) || !req.user.merchantId) {
+    return res.status(403).json({ error: 'Accès refusé.' });
+  }
+  next();
+}
+
+router.get('/caisse/charges', accesCaisse, async (req, res) => {
+  try {
+    const m = await pool.query('SELECT accounting_enabled FROM merchants WHERE id = $1', [req.user.merchantId]);
+    if (m.rows[0]?.accounting_enabled !== true) return res.json({ enabled: false, charges: [], recent: [] });
+    const voitTout = ['manager', 'gerant'].includes(req.user.role);
+    const charges = await pool.query(
+      `SELECT id, label, amount, payment_method FROM accounting_charges WHERE merchant_id = $1 AND is_active = true ORDER BY label`,
+      [req.user.merchantId]
+    );
+    const recent = await pool.query(
+      `SELECT p.id, to_char(p.entry_date, 'YYYY-MM-DD') AS entry_date, p.amount, p.payment_method, c.label AS charge_label
+       FROM accounting_charge_postings p JOIN accounting_charges c ON c.id = p.charge_id
+       WHERE p.merchant_id = $1 AND p.cash_expense_id IS NOT NULL AND p.cancelled = false
+         AND ($2::uuid IS NULL OR p.paid_by = $2::uuid)
+       ORDER BY p.created_at DESC LIMIT 8`,
+      [req.user.merchantId, voitTout ? null : req.user.id]
+    );
+    res.json({ enabled: true, charges: charges.rows, recent: recent.rows });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors du chargement des charges.');
+  }
+});
+
+router.post('/caisse/charges/:id/pay', accesCaisse, async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Charge introuvable.' });
+  const montant = arrondi(req.body.amount);
+  const mode = req.body.paymentMethod;
+  if (!(montant > 0)) return res.status(400).json({ error: 'Le montant doit être positif.' });
+  if (!MODES_CAISSE.includes(mode)) return res.status(400).json({ error: 'Mode de paiement invalide.' });
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const m = await client.query('SELECT accounting_enabled FROM merchants WHERE id = $1', [merchantId]);
+    if (m.rows[0]?.accounting_enabled !== true) throw erreurMetier(403, "Ce module n'est pas activé pour votre compte.");
+    const charge = await client.query(
+      `SELECT id, label, account_id FROM accounting_charges WHERE id = $1 AND merchant_id = $2 AND is_active = true`,
+      [req.params.id, merchantId]
+    );
+    if (charge.rows.length === 0) throw erreurMetier(404, 'Charge introuvable.');
+    // Boutique de la sortie de caisse : celle du caissier/gérant ; pour le manager
+    // (rattaché à aucune boutique), la boutique active choisie sur la page Caisse.
+    let boutique = req.user.warehouseId || null;
+    if (req.user.role === 'manager') {
+      boutique = null;
+      if (req.body.warehouseId) {
+        if (!UUID_RE.test(String(req.body.warehouseId))) throw erreurMetier(400, 'Boutique invalide.');
+        const w = await client.query(`SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2`, [req.body.warehouseId, merchantId]);
+        if (w.rows.length === 0) throw erreurMetier(400, 'Boutique introuvable.');
+        boutique = req.body.warehouseId;
+      }
+    }
+    // 1) la sortie de caisse (comptée dans la clôture de caisse du jour)
+    const depense = await client.query(
+      `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, warehouse_id)
+       VALUES ($1, $2, $3, $4, $5, $6::date, $7) RETURNING id`,
+      [merchantId, req.user.id, mode, montant, `Charge — ${charge.rows[0].label}`, aujourdhui(), boutique]
+    );
+    // 2) l'écriture comptable, liée à cette sortie
+    const refs = await chargerReferences(client, merchantId);
+    const numero = await posterCharge(client, refs, {
+      merchantId, userId: req.user.id, charge: charge.rows[0], entryDate: aujourdhui(), amount: montant,
+      paymentMethod: mode, period: null, label: charge.rows[0].label, cashExpenseId: depense.rows[0].id, paidBy: req.user.id,
+    });
+    await client.query('COMMIT');
+    await logActivity({
+      merchantId, userId: req.user.id, action: 'accounting_charge',
+      description: `a payé la charge « ${charge.rows[0].label} » depuis la caisse (${Math.round(montant).toLocaleString('fr-FR')} FCFA)`,
+    });
+    res.status(201).json({ entryNumber: numero });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, 'Erreur lors du paiement de la charge.');
+  } finally {
+    client.release();
+  }
+});
+
 // Tout le reste : manager uniquement ET module activé par l'owner.
 router.use(requireRole('manager'));
 router.use(requireModule('comptabilite'));
@@ -37,7 +132,7 @@ router.use(requireModule('comptabilite'));
 // Les consultations (journal, grand livre, balance, résultat, bilan) lancent
 // d'abord la synchronisation automatique (au plus une fois toutes les 30 s) :
 // rien n'est à saisir ni à actualiser à la main.
-router.use(['/entries', '/ledger', '/trial-balance', '/income-statement', '/balance-sheet'], async (req, res, next) => {
+router.use(['/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet'], async (req, res, next) => {
   if (req.method === 'GET') await assurerSynchro(req.user.merchantId, req.user.id);
   next();
 });
@@ -293,7 +388,7 @@ async function chargerReferences(client, merchantId) {
 // Crée l'écriture (débit : compte de charge ; crédit : caisse/Wave/OM/banque/
 // fournisseurs) et la trace dans accounting_charge_postings. À appeler dans une
 // transaction où verrouiller() a déjà été exécuté.
-async function posterCharge(client, refs, { merchantId, userId, charge, entryDate, amount, paymentMethod, period, label }) {
+async function posterCharge(client, refs, { merchantId, userId, charge, entryDate, amount, paymentMethod, period, label, cashExpenseId, paidBy }) {
   const codeCredit = COMPTE_PAR_MODE[paymentMethod];
   const compteCredit = refs.comptes.get(codeCredit);
   const journalId = refs.journaux.get(JOURNAL_PAR_MODE[paymentMethod]);
@@ -319,9 +414,9 @@ async function posterCharge(client, refs, { merchantId, userId, charge, entryDat
     [idEntree, merchantId, compteCredit, amount, label]
   );
   await client.query(
-    `INSERT INTO accounting_charge_postings (merchant_id, charge_id, period, entry_id, entry_date, amount, payment_method)
-     VALUES ($1, $2, $3, $4, $5::date, $6, $7)`,
-    [merchantId, charge.id, period || null, idEntree, entryDate, amount, paymentMethod]
+    `INSERT INTO accounting_charge_postings (merchant_id, charge_id, period, entry_id, entry_date, amount, payment_method, cash_expense_id, paid_by)
+     VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9)`,
+    [merchantId, charge.id, period || null, idEntree, entryDate, amount, paymentMethod, cashExpenseId || null, paidBy || userId || null]
   );
   return entree.rows[0].entry_number;
 }
@@ -552,13 +647,16 @@ router.delete('/charges/postings/:id', async (req, res) => {
   try {
     await client.query('BEGIN');
     const posting = await client.query(
-      `SELECT p.id, p.entry_id, c.label FROM accounting_charge_postings p JOIN accounting_charges c ON c.id = p.charge_id
+      `SELECT p.id, p.entry_id, p.cash_expense_id, c.label FROM accounting_charge_postings p JOIN accounting_charges c ON c.id = p.charge_id
        WHERE p.id = $1 AND p.merchant_id = $2 AND p.cancelled = false FOR UPDATE OF p`,
       [req.params.id, req.user.merchantId]
     );
     if (posting.rows.length === 0) throw erreurMetier(404, 'Comptabilisation introuvable.');
     if (posting.rows[0].entry_id) {
       await client.query(`DELETE FROM accounting_entries WHERE id = $1 AND merchant_id = $2`, [posting.rows[0].entry_id, req.user.merchantId]);
+    }
+    if (posting.rows[0].cash_expense_id) {
+      await client.query(`DELETE FROM cash_expenses WHERE id = $1 AND merchant_id = $2`, [posting.rows[0].cash_expense_id, req.user.merchantId]);
     }
     await client.query(`UPDATE accounting_charge_postings SET cancelled = true WHERE id = $1`, [req.params.id]);
     await client.query('COMMIT');
@@ -669,32 +767,163 @@ async function reconcilier(client, merchantId, userId, refs, type, voulues) {
 
 // --- Sources : chacune renvoie les écritures qu'elle doit produire ---
 
-// Salaires versés (net payé) : débit 661 rémunérations, crédit trésorerie.
-async function lireSalaires(client, merchantId, debut) {
+// Bulletins de paie : comptabilisés à la fin du mois concerné (ou aujourd'hui si
+// le mois n'est pas terminé). Charge de personnel (661), charges sociales
+// patronales (664) et CFCE (641) contre : personnel à payer (422xxx), CSS (431),
+// IPRES (432), impôts retenus à la source (447) et CFCE à payer (442).
+async function lirePaie(client, merchantId, debut, ctx) {
+  const fin = `(to_date(p.month || '-01', 'YYYY-MM-DD') + interval '1 month' - interval '1 day')::date`;
   const r = await client.query(
-    `SELECT sp.id::text AS id, sp.month, sp.amount, sp.payment_method,
-            to_char(sp.paid_at::date, 'YYYY-MM-DD') AS d, u.full_name
-     FROM salary_payments sp JOIN users u ON u.id = sp.user_id
-     WHERE u.merchant_id = $1 AND sp.paid_at::date >= $2::date`,
+    `SELECT p.id::text AS id, p.user_id::text AS user_id, p.month, p.gross_salary, p.net_a_payer,
+            p.ipres_salarial, p.css_salarial, p.irpp, p.trimf, p.ipres_patronal, p.css_patronal, p.cfce, u.full_name,
+            to_char(LEAST(${fin}, CURRENT_DATE), 'YYYY-MM-DD') AS d
+     FROM payslips p JOIN users u ON u.id = p.user_id
+     WHERE p.merchant_id = $1 AND ${fin} >= $2::date
+     ORDER BY p.month, u.full_name`,
     [merchantId, debut]
   );
-  return r.rows
-    .filter((row) => COMPTE_PAR_MODE[row.payment_method] && row.payment_method !== 'a_payer')
-    .map((row) => {
-      const montant = Number(row.amount);
-      return {
-        sourceId: row.id,
-        date: row.d,
-        journal: JOURNAL_PAR_MODE[row.payment_method],
-        reference: `SAL-${row.month}`,
-        label: `Salaire ${row.full_name} — ${row.month}`,
-        sig: `${montant}|${row.payment_method}|${row.d}|${row.full_name}`,
-        lignes: [
-          { compte: '661', debit: montant, credit: 0 },
-          { compte: COMPTE_PAR_MODE[row.payment_method], debit: 0, credit: montant },
-        ],
-      };
+  const out = [];
+  let ecarts = 0;
+  for (const row of r.rows) {
+    const n = (v) => arrondi(Number(v) || 0);
+    const net = n(row.net_a_payer);
+    const css = n(row.css_salarial);
+    const ipres = n(row.ipres_salarial);
+    const retenue = arrondi(n(row.irpp) + n(row.trimf));
+    const patronal = arrondi(n(row.ipres_patronal) + n(row.css_patronal));
+    const cfce = n(row.cfce);
+    // Le brut est déduit du net et des retenues pour que l'écriture soit toujours équilibrée.
+    const brut = arrondi(net + css + ipres + retenue);
+    if (!(brut > 0)) continue;
+    if (Math.abs(brut - n(row.gross_salary)) > 1) ecarts += 1;
+    const personnel = await ctx.tiers.obtenir('personnel', row.user_id);
+    out.push({
+      sourceId: row.id, date: row.d, journal: 'OD', reference: `PAIE-${row.month}`,
+      label: `Paie ${row.full_name} — ${row.month}`,
+      sig: `${brut}|${net}|${css}|${ipres}|${retenue}|${patronal}|${cfce}|${row.d}|${row.user_id}|t3`,
+      lignes: [
+        ligne('661', brut, 0),
+        ligne('664', patronal, 0),
+        ligne('641', cfce, 0),
+        ligne(personnel, 0, net),
+        ligne('431', 0, arrondi(css + n(row.css_patronal))),
+        ligne('432', 0, arrondi(ipres + n(row.ipres_patronal))),
+        ligne('447', 0, retenue),
+        ligne('442', 0, cfce),
+      ],
     });
+  }
+  if (ecarts > 0) ctx.avertissements.push(`${ecarts} bulletin(s) de paie dont le brut ne correspond pas au net + retenues : le brut comptabilisé est celui déduit du net.`);
+  return out;
+}
+
+// Salaires versés (net payé) : débit du personnel à payer (422xxx) quand le
+// bulletin existe — il a déjà été comptabilisé —, sinon débit 661 ; crédit trésorerie.
+async function lireSalaires(client, merchantId, debut, ctx) {
+  const r = await client.query(
+    `SELECT sp.id::text AS id, sp.user_id::text AS user_id, sp.month, sp.amount, sp.payment_method,
+            to_char(sp.paid_at::date, 'YYYY-MM-DD') AS d, u.full_name, (p.id IS NOT NULL) AS bulletin
+     FROM salary_payments sp
+     JOIN users u ON u.id = sp.user_id
+     LEFT JOIN payslips p ON p.user_id = sp.user_id AND p.month = sp.month
+     WHERE u.merchant_id = $1 AND sp.paid_at::date >= $2::date
+     ORDER BY sp.paid_at`,
+    [merchantId, debut]
+  );
+  const out = [];
+  for (const row of r.rows) {
+    const montant = arrondi(row.amount);
+    if (!(montant > 0)) continue;
+    const mode = modeNormalise(row.payment_method);
+    const [compte, journal] = tresorerie(mode === 'cheque' ? 'virement' : mode);
+    const debit = row.bulletin ? await ctx.tiers.obtenir('personnel', row.user_id) : '661';
+    out.push({
+      sourceId: row.id, date: row.d, journal, reference: `SAL-${row.month}`,
+      label: `Salaire ${row.full_name} — ${row.month}`,
+      sig: `${montant}|${row.payment_method}|${row.d}|${row.full_name}|${row.bulletin}|t3`,
+      lignes: [ligne(debit, montant, 0), ligne(compte, 0, montant)],
+    });
+  }
+  return out;
+}
+
+// Mouvements de la page Caisse saisis à la main. Déjà repris ailleurs, donc ignorés :
+// salaires, remboursements de retours, charges payées via le module, transferts
+// entre boutiques. Le reste est classé par mots-clés du motif.
+const REGLES_DEPENSES = [
+  [/loyer/, '622'],
+  [/electricite|courant|senelec|seneau|sen eau|\beau\b/, '605'],
+  [/wifi|internet|telephone|forfait|sonatel/, '628'],
+  [/assurance/, '625'],
+  [/comptab|cabinet|honorair|avocat|conseil|notaire/, '632'],
+  [/menuisi|reparation|entretien|maintenance|plomb|electricien|peinture|nettoyage/, '624'],
+  [/livraison/, '612'],
+  [/transport|taxi|carburant|essence|gasoil/, '618'],
+  [/banque|bancaire|agios/, '631'],
+  [/publicite|affiche|flyer|promotion/, '627'],
+  [/impot|taxe|patente|dgid/, '641'],
+];
+
+async function lireCaisse(client, merchantId, debut, ctx) {
+  const r = await client.query(
+    `SELECT id::text AS id, movement_type, payment_method, amount, COALESCE(reason, '') AS reason,
+            to_char(expense_date, 'YYYY-MM-DD') AS d
+     FROM cash_expenses
+     WHERE merchant_id = $1 AND COALESCE(amount, 0) > 0
+       AND (expense_date >= $2::date
+            OR (movement_type = 'entree' AND (reason ILIKE 'solde de d%but%' OR reason ILIKE 'solde initial%')))
+     ORDER BY expense_date, created_at`,
+    [merchantId, debut]
+  );
+  const out = [];
+  const nonClassees = [];
+  let apports = 0;
+  for (const row of r.rows) {
+    const motif = sansAccent(row.reason).replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    const montant = arrondi(row.amount);
+    const mode = modeNormalise(row.payment_method);
+    const entree = row.movement_type === 'entree';
+    let lignes;
+    let journal;
+    let date = row.d;
+    let nom;
+
+    if (entree) {
+      if (/^de la boutique/.test(motif)) continue; // transfert entre boutiques
+      const [compte, j] = tresorerie(mode === 'cheque' ? 'especes' : mode);
+      journal = j;
+      if (/solde de debut|solde initial|solde d ouverture/.test(motif)) {
+        if (date < debut) date = debut; // solde d'ouverture ramené au début de la comptabilité
+        lignes = [ligne(compte, montant, 0), ligne('121', 0, montant)];
+        nom = 'Solde de caisse initial';
+      } else if (/cheque/.test(motif)) {
+        lignes = [ligne(compte, montant, 0), ligne('513', 0, montant)];
+        nom = 'Encaissement de chèque';
+      } else {
+        lignes = [ligne(compte, montant, 0), ligne('462', 0, montant)];
+        nom = `Entrée de caisse : ${row.reason}`.slice(0, 120);
+        apports += 1;
+      }
+    } else {
+      if (/^(salaire|remboursement retour|transfert vers)/.test(motif) || row.reason.startsWith('Charge — ')) continue;
+      const regle = REGLES_DEPENSES.find(([re]) => re.test(motif));
+      const [compte, j] = tresorerie(mode === 'cheque' ? 'virement' : mode);
+      journal = j;
+      if (!regle) nonClassees.push(row.reason);
+      lignes = [ligne(regle ? regle[1] : '658', montant, 0), ligne(compte, 0, montant)];
+      nom = `Sortie de caisse : ${row.reason}`.slice(0, 120);
+    }
+    out.push({
+      sourceId: row.id, date, journal, reference: 'CAISSE', label: nom,
+      sig: `${montant}|${row.movement_type}|${row.payment_method}|${row.reason}|${date}|t3`,
+      lignes,
+    });
+  }
+  if (nonClassees.length > 0) {
+    ctx.avertissements.push(`${nonClassees.length} sortie(s) de caisse non classées, comptabilisées en charges diverses (658) : ${[...new Set(nonClassees)].slice(0, 3).join(', ')}.`);
+  }
+  if (apports > 0) ctx.avertissements.push(`${apports} entrée(s) de caisse non reconnues, comptabilisées en compte courant d'associé (462).`);
+  return out;
 }
 
 // --- Outils communs aux sources ---
@@ -712,7 +941,7 @@ function modeNormalise(texte) {
   if (t.includes('cheque')) return 'cheque';
   if (t.includes('virement') || t.includes('banque') || t.includes('bank')) return 'virement';
   if (t.includes('credit') || t.includes('dette') || t.includes('avoir') || t.includes('a_payer')) return 'credit';
-  if (t.includes('espece') || t.includes('cash') || t.includes('caisse')) return 'especes';
+  if (t.includes('espece') || t.includes('cash') || t.includes('caisse') || t.includes('comptant')) return 'especes';
   return null;
 }
 // mode -> [compte de trésorerie, journal]
@@ -723,12 +952,123 @@ const tresorerie = (mode) => TRESORERIE[mode] || TRESORERIE.especes;
 const ligne = (compte, debit, credit) => ({ compte, debit: arrondi(debit), credit: arrondi(credit) });
 const SQL_JOUR_TZ = (col) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD')`;
 
+// --- Comptes auxiliaires de tiers (6 chiffres) ---
+// Clients à crédit : 411001 à 411899 (411900 = assurances, compte collectif).
+// Fournisseurs : 401001 à 401999. Un compte n'est créé que pour un tiers qui a
+// une opération à crédit ; son numéro ne change plus ensuite.
+const CONFIG_TIERS = {
+  client: { prefixe: '411', largeur: 3, premier: 1, dernier: 899, collectif: '411', table: 'clients', libelle: 'clients' },
+  assureur: { prefixe: '4119', largeur: 2, premier: 1, dernier: 99, collectif: '411900', table: 'insurers', libelle: 'assureurs' },
+  fournisseur: { prefixe: '401', largeur: 3, premier: 1, dernier: 999, collectif: '401', table: 'suppliers', libelle: 'fournisseurs' },
+  personnel: { prefixe: '422', largeur: 3, premier: 1, dernier: 999, collectif: '422', table: 'users', libelle: 'personnel' },
+};
+
+async function nomTiers(client, merchantId, type, id) {
+  const r = await client.query(
+    `SELECT to_jsonb(t) AS j FROM ${CONFIG_TIERS[type].table} t WHERE t.id = $1::uuid AND t.merchant_id = $2`,
+    [id, merchantId]
+  );
+  const j = r.rows[0]?.j || {};
+  const nom = j.name || j.full_name || j.business_name || j.company_name || [j.first_name, j.last_name].filter(Boolean).join(' ');
+  return String(nom || `Tiers ${String(id).slice(0, 8)}`).trim().slice(0, 150);
+}
+
+function creerResolveurTiers(client, merchantId, refs, avertissements) {
+  let existants = null; // `${type}:${id}` -> code
+  let pris = null; // codes auxiliaires déjà utilisés
+  const prochain = {};
+  const complets = new Set();
+
+  async function charger() {
+    if (existants) return;
+    const m = await client.query(
+      `SELECT t.tiers_type, t.tiers_id, a.code FROM accounting_tiers_accounts t
+       JOIN accounting_accounts a ON a.id = t.account_id WHERE t.merchant_id = $1`,
+      [merchantId]
+    );
+    existants = new Map(m.rows.map((r) => [`${r.tiers_type}:${r.tiers_id}`, r.code]));
+    const c = await client.query(
+      `SELECT code FROM accounting_accounts WHERE merchant_id = $1 AND code ~ '^(411|401|422)[0-9]{3}$'`,
+      [merchantId]
+    );
+    pris = new Set(c.rows.map((r) => r.code));
+  }
+
+  return {
+    // Renvoie le numéro de compte auxiliaire du tiers (créé si besoin), ou le
+    // compte collectif (411 / 401) si le tiers est inconnu ou la plage pleine.
+    async obtenir(type, id) {
+      const cfg = CONFIG_TIERS[type];
+      if (!id) return cfg.collectif;
+      await charger();
+      const cle = `${type}:${id}`;
+      if (existants.has(cle)) return existants.get(cle);
+      let n = prochain[type] || cfg.premier;
+      while (n <= cfg.dernier && pris.has(`${cfg.prefixe}${String(n).padStart(cfg.largeur, '0')}`)) n += 1;
+      if (n > cfg.dernier) {
+        if (!complets.has(type)) {
+          complets.add(type);
+          avertissements.push(`Plus de numéro libre pour les comptes auxiliaires ${cfg.libelle} : les suivants restent sur le compte ${cfg.collectif}.`);
+        }
+        return cfg.collectif;
+      }
+      prochain[type] = n + 1;
+      const code = `${cfg.prefixe}${String(n).padStart(cfg.largeur, '0')}`;
+      const nom = await nomTiers(client, merchantId, type, id);
+      const compte = await client.query(
+        `INSERT INTO accounting_accounts (merchant_id, code, label) VALUES ($1, $2, $3) RETURNING id`,
+        [merchantId, code, nom]
+      );
+      await client.query(
+        `INSERT INTO accounting_tiers_accounts (merchant_id, tiers_type, tiers_id, account_id) VALUES ($1, $2, $3, $4)`,
+        [merchantId, type, id, compte.rows[0].id]
+      );
+      refs.comptesParCode.set(code, compte.rows[0].id);
+      existants.set(cle, code);
+      pris.add(code);
+      return code;
+    },
+  };
+}
+
+// Pour le bilan, les comptes auxiliaires sont regroupés en une ligne par
+// compte collectif : clients débiteurs (411) / créditeurs (419), fournisseurs
+// créditeurs (401) / débiteurs (409). Le détail reste dans la balance.
+const REGROUPEMENTS = [
+  { prefixe: '4119', debiteur: ['411900', 'Clients — assurances (tiers payant)'], crediteur: ['419', 'Clients créditeurs (avances reçues)'] },
+  { prefixe: '411', debiteur: ['411', 'Clients'], crediteur: ['419', 'Clients créditeurs (avances reçues)'] },
+  { prefixe: '401', debiteur: ['409', 'Fournisseurs débiteurs (avances versées)'], crediteur: ['401', 'Fournisseurs'] },
+  { prefixe: '422', debiteur: ['421', 'Personnel, avances et acomptes'], crediteur: ['422', 'Personnel, rémunérations dues'] },
+];
+function regrouperAuxiliaires(rows) {
+  const parCode = new Map();
+  const ajouter = (code, label, debit, credit) => {
+    const x = parCode.get(code) || { code, label, debit: 0, credit: 0 };
+    x.debit += debit;
+    x.credit += credit;
+    parCode.set(code, x);
+  };
+  for (const r of rows) {
+    const g = REGROUPEMENTS.find((x) => r.code.length === 6 && r.code.startsWith(x.prefixe));
+    if (!g) {
+      ajouter(r.code, r.label, r.debit, r.credit);
+      continue;
+    }
+    const solde = arrondi(r.debit - r.credit);
+    if (solde >= 0) ajouter(g.debiteur[0], g.debiteur[1], solde, 0);
+    else ajouter(g.crediteur[0], g.crediteur[1], 0, -solde);
+  }
+  return [...parCode.values()].sort((a, b) => a.code.localeCompare(b.code));
+}
+
 // Ventes validées ou livrées : produit (701) et TVA (443) d'un côté ; caisse,
 // banque, clients (411) ou assurance (4111) de l'autre ; plus la sortie de
 // stock au prix de revient (débit 6031, crédit 311).
-async function lireVentes(client, merchantId, debut) {
+async function lireVentes(client, merchantId, debut, ctx) {
   const r = await client.query(
-    `SELECT o.id::text AS id, o.order_seq, o.payment_method::text AS pm,
+    `SELECT o.id::text AS id, o.order_seq, o.client_id::text AS client_id,
+            (SELECT cl.insurer_id::text FROM clients cl WHERE cl.id = o.client_id) AS insurer_id,
+            o.payment_method::text AS pm,
             COALESCE(o.total_amount, 0) AS total, COALESCE(o.tva_amount, 0) AS tva,
             ${SQL_JOUR_TZ('COALESCE(o.validated_at, o.delivered_at, o.created_at)')} AS d,
             COALESCE((SELECT SUM(oi.quantity * COALESCE(oi.unit_cost, 0)) FROM order_items oi WHERE oi.order_id = o.id), 0) AS cogs,
@@ -736,7 +1076,8 @@ async function lireVentes(client, merchantId, debut) {
             (SELECT c.payment_method FROM insurer_copayments c WHERE c.order_id = o.id LIMIT 1) AS copay_pm
      FROM orders o
      WHERE o.merchant_id = $1 AND o.status IN ('validee', 'livree')
-       AND COALESCE(o.validated_at, o.delivered_at, o.created_at) >= $2::date`,
+       AND COALESCE(o.validated_at, o.delivered_at, o.created_at) >= $2::date
+     ORDER BY COALESCE(o.validated_at, o.delivered_at, o.created_at), o.order_seq`,
     [merchantId, debut]
   );
   const out = [];
@@ -748,11 +1089,11 @@ async function lireVentes(client, merchantId, debut) {
     const cogs = arrondi(row.cogs);
     const lignes = [];
     if (row.pm === 'a_credit') {
-      lignes.push(ligne('411', total, 0));
+      lignes.push(ligne(await ctx.tiers.obtenir('client', row.client_id), total, 0));
     } else if (row.pm === 'tiers_payant') {
       const part = Math.min(arrondi(row.copay), total);
       if (part > 0) lignes.push(ligne(tresorerie(modeNormalise(row.copay_pm))[0], part, 0));
-      if (total - part > 0) lignes.push(ligne('4111', total - part, 0));
+      if (total - part > 0) lignes.push(ligne(await ctx.tiers.obtenir('assureur', row.insurer_id), total - part, 0));
     } else {
       lignes.push(ligne(tresorerie(modeNormalise(row.pm))[0], total, 0));
     }
@@ -765,7 +1106,7 @@ async function lireVentes(client, merchantId, debut) {
     out.push({
       sourceId: row.id, date: row.d, journal: 'VT', reference: row.order_seq ? `V${row.order_seq}` : null,
       label: `Vente${row.order_seq ? ` n°${row.order_seq}` : ''}`,
-      sig: `${total}|${tva}|${row.pm}|${cogs}|${row.copay}|${row.d}`,
+      sig: `${total}|${tva}|${row.pm}|${cogs}|${row.copay}|${row.d}|${row.client_id}|${row.insurer_id}|t3`,
       lignes,
     });
   }
@@ -774,9 +1115,9 @@ async function lireVentes(client, merchantId, debut) {
 
 // Retours clients remboursés : annule la vente (701, TVA) et remet en stock
 // au prix de revient de la vente d'origine.
-async function lireRetours(client, merchantId, debut) {
+async function lireRetours(client, merchantId, debut, ctx) {
   const r = await client.query(
-    `SELECT pr.id::text AS id, pr.refund_amount AS refund, pr.refund_method, pr.quantity,
+    `SELECT pr.id::text AS id, pr.client_id::text AS client_id, pr.refund_amount AS refund, pr.refund_method, pr.quantity,
             ${SQL_JOUR_TZ('pr.created_at')} AS d, o.order_seq,
             COALESCE(o.total_amount, 0) AS o_total, COALESCE(o.tva_amount, 0) AS o_tva,
             (SELECT AVG(oi.unit_cost) FROM order_items oi WHERE oi.order_id = pr.order_id AND oi.product_id = pr.product_id) AS cost
@@ -796,7 +1137,8 @@ async function lireRetours(client, merchantId, debut) {
     const lignes = [];
     if (ht > 0) lignes.push(ligne('701', ht, 0));
     if (tvaPart > 0) lignes.push(ligne('443', tvaPart, 0));
-    lignes.push(mode === 'credit' ? ligne('411', 0, refund) : ligne(tresorerie(mode)[0], 0, refund));
+    if (mode === 'credit') lignes.push(ligne(await ctx.tiers.obtenir('client', row.client_id), 0, refund));
+    else lignes.push(ligne(tresorerie(mode)[0], 0, refund));
     if (valeur > 0) {
       lignes.push(ligne('311', valeur, 0));
       lignes.push(ligne('6031', 0, valeur));
@@ -804,61 +1146,74 @@ async function lireRetours(client, merchantId, debut) {
     out.push({
       sourceId: row.id, date: row.d, journal: 'VT', reference: 'RET',
       label: `Retour client${row.order_seq ? ` — vente n°${row.order_seq}` : ''}`,
-      sig: `${refund}|${row.refund_method}|${valeur}|${row.d}`,
+      sig: `${refund}|${row.refund_method}|${valeur}|${row.d}|${row.client_id}|t2`,
       lignes,
     });
   }
   return out;
 }
 
-// Règlements reçus des clients à crédit : débit trésorerie, crédit 411.
-async function lireReglementsClients(client, merchantId, debut) {
+// Règlements reçus des clients à crédit : débit trésorerie, crédit du compte
+// auxiliaire du client (411xxx).
+async function lireReglementsClients(client, merchantId, debut, ctx) {
   const r = await client.query(
-    `SELECT id::text AS id, amount, payment_method, to_char(created_at, 'YYYY-MM-DD') AS d
-     FROM credit_payments WHERE merchant_id = $1 AND created_at >= $2::date AND COALESCE(amount, 0) > 0`,
+    `SELECT id::text AS id, client_id::text AS client_id, amount, payment_method, to_char(created_at, 'YYYY-MM-DD') AS d
+     FROM credit_payments WHERE merchant_id = $1 AND created_at >= $2::date AND COALESCE(amount, 0) > 0
+     ORDER BY created_at`,
     [merchantId, debut]
   );
-  return r.rows.map((row) => {
+  const out = [];
+  for (const row of r.rows) {
     const montant = arrondi(row.amount);
     const [compte, journal] = tresorerie(modeNormalise(row.payment_method));
-    return {
+    const compteClient = await ctx.tiers.obtenir('client', row.client_id);
+    out.push({
       sourceId: row.id, date: row.d, journal, reference: 'RGL', label: 'Règlement client',
-      sig: `${montant}|${row.payment_method}|${row.d}`,
-      lignes: [ligne(compte, montant, 0), ligne('411', 0, montant)],
-    };
-  });
+      sig: `${montant}|${row.payment_method}|${row.d}|${row.client_id}|t2`,
+      lignes: [ligne(compte, montant, 0), ligne(compteClient, 0, montant)],
+    });
+  }
+  return out;
 }
 
-// Règlements reçus des assureurs (tiers payant) : débit trésorerie, crédit 4111.
-async function lireReglementsAssureurs(client, merchantId, debut) {
+// Règlements reçus des assureurs (tiers payant) : débit trésorerie, crédit du
+// compte auxiliaire de l'assureur (4119xx).
+async function lireReglementsAssureurs(client, merchantId, debut, ctx) {
   const r = await client.query(
-    `SELECT id::text AS id, amount, payment_method, ${SQL_JOUR_TZ('paid_at')} AS d
-     FROM insurer_payments WHERE merchant_id = $1 AND paid_at >= $2::date AND COALESCE(amount, 0) > 0`,
+    `SELECT id::text AS id, insurer_id::text AS insurer_id, amount, payment_method, ${SQL_JOUR_TZ('paid_at')} AS d
+     FROM insurer_payments WHERE merchant_id = $1 AND paid_at >= $2::date AND COALESCE(amount, 0) > 0
+     ORDER BY paid_at`,
     [merchantId, debut]
   );
-  return r.rows.map((row) => {
+  const out = [];
+  for (const row of r.rows) {
     const montant = arrondi(row.amount);
     const [compte, journal] = tresorerie(modeNormalise(row.payment_method));
-    return {
+    const compteAssureur = await ctx.tiers.obtenir('assureur', row.insurer_id);
+    out.push({
       sourceId: row.id, date: row.d, journal, reference: 'ASS', label: 'Règlement assureur',
-      sig: `${montant}|${row.payment_method}|${row.d}`,
-      lignes: [ligne(compte, montant, 0), ligne('4111', 0, montant)],
-    };
-  });
+      sig: `${montant}|${row.payment_method}|${row.d}|${row.insurer_id}|t3`,
+      lignes: [ligne(compte, montant, 0), ligne(compteAssureur, 0, montant)],
+    });
+  }
+  return out;
 }
 
 // Achats (entrées de stock avec un coût, hors transferts), regroupés par
 // jour / fournisseur / facture / mode de paiement : achat (601) contre
-// trésorerie ou fournisseurs (401), plus l'entrée en stock (311 / 6031).
+// trésorerie ou compte auxiliaire du fournisseur (401xxx) si l'achat est à
+// crédit, plus l'entrée en stock (311 / 6031).
 async function lireAchats(client, merchantId, debut, ctx) {
   const jour = `COALESCE(m.movement_date, (m.created_at AT TIME ZONE 'UTC')::date)`;
   const r = await client.query(
     `SELECT MIN(m.id::text) AS id, SUM(m.total_cost) AS total, m.payment_method AS pm, m.cash_method AS cm,
-            m.invoice_number AS inv, to_char(${jour}, 'YYYY-MM-DD') AS d, MAX(s.name) AS supplier
+            m.invoice_number AS inv, to_char(${jour}, 'YYYY-MM-DD') AS d, MAX(s.name) AS supplier,
+            m.supplier_id::text AS supplier_id
      FROM stock_movements m LEFT JOIN suppliers s ON s.id = m.supplier_id
      WHERE m.merchant_id = $1 AND m.movement_type = 'entree' AND m.transfer_id IS NULL
        AND COALESCE(m.total_cost, 0) > 0 AND ${jour} >= $2::date
-     GROUP BY m.supplier_id, m.payment_method, m.cash_method, m.invoice_number, ${jour}`,
+     GROUP BY m.supplier_id, m.payment_method, m.cash_method, m.invoice_number, ${jour}
+     ORDER BY ${jour}, MIN(m.id::text)`,
     [merchantId, debut]
   );
   const sansCout = await client.query(
@@ -871,45 +1226,53 @@ async function lireAchats(client, merchantId, debut, ctx) {
     ctx.avertissements.push(`${sansCout.rows[0].n} entrée(s) de stock sans coût d'achat : non comptabilisées comme achats (elles apparaissent dans l'ajustement automatique du stock).`);
   }
   let inconnus = 0;
-  const out = r.rows.map((row) => {
+  const out = [];
+  for (const row of r.rows) {
     const total = arrondi(row.total);
     const p = modeNormalise(row.pm);
     const c = modeNormalise(row.cm);
-    let compteCredit = '401';
+    let compteCredit = null;
     if (p !== 'credit') {
       const mode = c && c !== 'credit' ? c : p && p !== 'credit' ? p : null;
       if (mode) compteCredit = tresorerie(mode)[0];
       else inconnus += 1;
     }
-    return {
+    if (!compteCredit) compteCredit = await ctx.tiers.obtenir('fournisseur', row.supplier_id);
+    out.push({
       sourceId: row.id, date: row.d, journal: 'AC', reference: row.inv || null,
       label: `Achat${row.supplier ? ` — ${row.supplier}` : ''}`,
-      sig: `${total}|${row.pm}|${row.cm}|${row.inv}|${row.d}|${row.supplier}`,
+      sig: `${total}|${row.pm}|${row.cm}|${row.inv}|${row.d}|${row.supplier}|${row.supplier_id}|t2`,
       lignes: [ligne('601', total, 0), ligne(compteCredit, 0, total), ligne('311', total, 0), ligne('6031', 0, total)],
-    };
-  });
-  if (inconnus > 0) ctx.avertissements.push(`${inconnus} achat(s) au mode de paiement non reconnu : comptabilisés en dette fournisseur (401).`);
+    });
+  }
+  if (inconnus > 0) ctx.avertissements.push(`${inconnus} achat(s) au mode de paiement non reconnu : comptabilisés en dette fournisseur.`);
   return out;
 }
 
-// Règlements aux fournisseurs : débit 401, crédit trésorerie.
-async function lireReglementsFournisseurs(client, merchantId, debut) {
+// Règlements aux fournisseurs : débit du compte auxiliaire du fournisseur
+// (401xxx), crédit trésorerie.
+async function lireReglementsFournisseurs(client, merchantId, debut, ctx) {
   const r = await client.query(
-    `SELECT sp.id::text AS id, sp.amount, sp.payment_method, to_char(sp.paid_at, 'YYYY-MM-DD') AS d, s.name AS supplier
+    `SELECT sp.id::text AS id, sp.supplier_id::text AS supplier_id, sp.amount, sp.payment_method,
+            to_char(sp.paid_at, 'YYYY-MM-DD') AS d, s.name AS supplier
      FROM supplier_payments sp LEFT JOIN suppliers s ON s.id = sp.supplier_id
-     WHERE sp.merchant_id = $1 AND sp.paid_at >= $2::date AND COALESCE(sp.amount, 0) > 0`,
+     WHERE sp.merchant_id = $1 AND sp.paid_at >= $2::date AND COALESCE(sp.amount, 0) > 0
+     ORDER BY sp.paid_at`,
     [merchantId, debut]
   );
-  return r.rows.map((row) => {
+  const out = [];
+  for (const row of r.rows) {
     const montant = arrondi(row.amount);
     const [compte, journal] = tresorerie(modeNormalise(row.payment_method));
-    return {
+    const compteFournisseur = await ctx.tiers.obtenir('fournisseur', row.supplier_id);
+    out.push({
       sourceId: row.id, date: row.d, journal, reference: 'RGF',
       label: `Règlement fournisseur${row.supplier ? ` — ${row.supplier}` : ''}`,
-      sig: `${montant}|${row.payment_method}|${row.d}|${row.supplier}`,
-      lignes: [ligne('401', montant, 0), ligne(compte, 0, montant)],
-    };
-  });
+      sig: `${montant}|${row.payment_method}|${row.d}|${row.supplier}|${row.supplier_id}|t2`,
+      lignes: [ligne(compteFournisseur, montant, 0), ligne(compte, 0, montant)],
+    });
+  }
+  return out;
 }
 
 // Valeur du stock : le stock réel (quantités × prix de revient) est la
@@ -973,7 +1336,9 @@ const SOURCES = [
   { type: 'reglement_assureur', lire: lireReglementsAssureurs },
   { type: 'achat', lire: lireAchats },
   { type: 'reglement_fournisseur', lire: lireReglementsFournisseurs },
+  { type: 'paie', lire: lirePaie },
   { type: 'salaire', lire: lireSalaires },
+  { type: 'caisse', lire: lireCaisse },
   { type: 'stock', lire: lireStock },
 ];
 
@@ -1012,6 +1377,7 @@ async function synchroniserMaintenant(merchantId, userId) {
           comptesParCode: new Map(comptes.rows.map((r) => [r.code, r.id])),
           journaux: new Map(journaux.rows.map((r) => [r.code, r.id])),
         };
+        ctx.tiers = creerResolveurTiers(client, merchantId, refs, ctx.avertissements);
         const voulues = await source.lire(client, merchantId, debut, ctx);
         if (voulues === null) {
           await client.query('ROLLBACK');
@@ -1159,6 +1525,73 @@ router.get('/ledger', async (req, res) => {
   }
 });
 
+// GET /accounting/general-ledger?from=&to=&classe= — grand livre général :
+// tous les comptes mouvementés (ou ayant un solde d'ouverture), chacun avec ses
+// lignes et son solde cumulé. `classe` (1 à 8) limite à une classe de comptes.
+router.get('/general-ledger', async (req, res) => {
+  if (!verifierPeriode(req, res)) return;
+  const { from, to } = req.query;
+  const classe = /^[1-8]$/.test(String(req.query.classe || '')) ? String(req.query.classe) : null;
+  const LIMITE = 20000;
+  try {
+    const comptes = new Map();
+    const compte = (code, label) => {
+      if (!comptes.has(code)) comptes.set(code, { code, label, opening: 0, lines: [], totalDebit: 0, totalCredit: 0, closing: 0 });
+      return comptes.get(code);
+    };
+    if (from) {
+      const o = await pool.query(
+        `SELECT a.code, a.label, SUM(l.debit - l.credit) AS solde
+         FROM accounting_lines l JOIN accounting_entries e ON e.id = l.entry_id JOIN accounting_accounts a ON a.id = l.account_id
+         WHERE l.merchant_id = $1 AND e.entry_date < $2::date AND ($3::text IS NULL OR a.code LIKE $3::text || '%')
+         GROUP BY a.code, a.label`,
+        [req.user.merchantId, from, classe]
+      );
+      for (const r of o.rows) {
+        const s = arrondi(r.solde);
+        if (s !== 0) compte(r.code, r.label).opening = s;
+      }
+    }
+    const lignes = await pool.query(
+      `SELECT a.code, a.label AS account_label, to_char(e.entry_date, 'YYYY-MM-DD') AS d, e.entry_number, j.code AS journal,
+              e.reference, COALESCE(l.label, e.label) AS label, l.debit, l.credit
+       FROM accounting_lines l
+       JOIN accounting_entries e ON e.id = l.entry_id
+       JOIN accounting_journals j ON j.id = e.journal_id
+       JOIN accounting_accounts a ON a.id = l.account_id
+       WHERE l.merchant_id = $1
+         AND ($2::date IS NULL OR e.entry_date >= $2::date)
+         AND ($3::date IS NULL OR e.entry_date <= $3::date)
+         AND ($4::text IS NULL OR a.code LIKE $4::text || '%')
+       ORDER BY a.code, e.entry_date, e.entry_number
+       LIMIT ${LIMITE + 1}`,
+      [req.user.merchantId, from || null, to || null, classe]
+    );
+    const tronque = lignes.rows.length > LIMITE;
+    for (const l of tronque ? lignes.rows.slice(0, LIMITE) : lignes.rows) {
+      const c = compte(l.code, l.account_label);
+      c.lines.push({ date: l.d, entryNumber: Number(l.entry_number), journal: l.journal, reference: l.reference, label: l.label, debit: Number(l.debit), credit: Number(l.credit) });
+    }
+    const accounts = [...comptes.values()].sort((a, b) => a.code.localeCompare(b.code));
+    for (const c of accounts) {
+      let cumul = c.opening;
+      for (const l of c.lines) {
+        cumul = arrondi(cumul + l.debit - l.credit);
+        l.solde = cumul;
+        c.totalDebit += l.debit;
+        c.totalCredit += l.credit;
+      }
+      c.totalDebit = arrondi(c.totalDebit);
+      c.totalCredit = arrondi(c.totalCredit);
+      c.closing = cumul;
+    }
+    res.json({ accounts, truncated: tronque });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la récupération du grand livre général.' });
+  }
+});
+
 // GET /accounting/trial-balance?from=&to= — balance générale.
 router.get('/trial-balance', async (req, res) => {
   if (!verifierPeriode(req, res)) return;
@@ -1223,7 +1656,7 @@ router.get('/balance-sheet', async (req, res) => {
   const date = req.query.date || aujourdhui();
   if (!dateOk(date)) return res.status(400).json({ error: 'Date invalide.' });
   try {
-    const rows = await agreger(req.user.merchantId, null, date);
+    const rows = regrouperAuxiliaires(await agreger(req.user.merchantId, null, date));
     const solde = (r) => arrondi(r.debit - r.credit);
     const total = (comptes) => arrondi(comptes.reduce((s, c) => s + c.montant, 0));
     const comptesClasse = (n, filtre, signe) =>

@@ -351,6 +351,12 @@ export const api = {
   getAccountingIncomeStatement: (params) => request(`/accounting/income-statement${qs(params)}`),
   getAccountingBalanceSheet: (params) => request(`/accounting/balance-sheet${qs(params)}`),
   syncAccounting: () => request('/accounting/sync', { method: 'POST' }),
+  getAccountingGeneralLedger: (params) => request(`/accounting/general-ledger${qs(params)}`),
+
+  // Charges payées depuis la page Caisse (caissier, gérant, manager).
+  getCaisseCharges: () => request('/accounting/caisse/charges'),
+  payCaisseCharge: (id, data) =>
+    request(`/accounting/caisse/charges/${id}/pay`, { method: 'POST', body: JSON.stringify(data) }),
 
   // Charges (loyer, électricité…) comptabilisées automatiquement.
   getAccountingCharges: () => request('/accounting/charges'),
@@ -418,8 +424,6 @@ export const api = {
     request('/payroll/settings', { method: 'PUT', body: JSON.stringify(data) }),
   getSalaryBonuses: (userId, month) =>
     request(`/payroll/${userId}/bonuses${month ? `?month=${month}` : ''}`),
-  getSalaryDeductions: (userId, month) =>
-    request(`/payroll/${userId}/deductions${month ? `?month=${month}` : ''}`),
   generatePayslip: (userId, data) =>
     request(`/payroll/${userId}/generate`, { method: 'POST', body: JSON.stringify(data) }),
   getPayslip: (userId, month) => request(`/payroll/${userId}/${month}`),

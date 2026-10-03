@@ -25,7 +25,7 @@ const COMPTES = [
   // Classe 4 — Tiers
   ['401', 'Fournisseurs, dettes en compte'], ['402', 'Fournisseurs, effets à payer'], ['408', 'Fournisseurs, factures non parvenues'],
   ['409', 'Fournisseurs débiteurs (avances et acomptes versés)'],
-  ['411', 'Clients'], ['4111', 'Clients — assurances (tiers payant)'], ['412', 'Clients, effets à recevoir'], ['418', 'Clients, produits non encore facturés'],
+  ['411', 'Clients'], ['411900', 'Clients — assurances (tiers payant)'], ['412', 'Clients, effets à recevoir'], ['418', 'Clients, produits non encore facturés'],
   ['419', 'Clients créditeurs (avances et acomptes reçus)'],
   ['421', 'Personnel, avances et acomptes'], ['422', 'Personnel, rémunérations dues'], ['428', 'Personnel, charges à payer'],
   ['431', 'Sécurité sociale (CSS)'], ['432', 'Caisses de retraite (IPRES)'], ['438', 'Organismes sociaux, charges à payer'],

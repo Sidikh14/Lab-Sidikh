@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLiveEvent } from '../offline/liveEvents';
 
 import { StylesModernes } from '../components/StylesModernes';
+import { CaisseChargesPanel } from '../components/CaisseChargesPanel';
 const MOYENS_PAIEMENT = [
   { value: 'especes', label: 'Espèces' },
   { value: 'wave', label: 'Wave' },
@@ -430,6 +431,10 @@ export function CaissePage() {
 
       {onglet === 'sorties' && (
         <>
+          {/* Paiement d'une charge (loyer, eau, électricité, internet…) : sortie de
+              caisse + écriture comptable en une seule opération. N'apparaît que si
+              le module comptabilité est activé pour ce commerçant. */}
+          <CaisseChargesPanel warehouseId={activeWarehouseId} onPaid={() => setRefreshKey((k) => k + 1)} />
           <div className="md-carte md-form">
             <h2>Nouvelle sortie de caisse</h2>
             <form onSubmit={handleAjouterSortie}>

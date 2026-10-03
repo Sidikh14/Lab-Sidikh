@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAccountingAccess } from '../hooks/useAccountingAccess';
+import { useAuth } from '../context/AuthContext';
+import { exporterPdf } from '../utils/exportPdf';
 
 // Module comptabilité (SYSCOHADA). Affiché uniquement si l'owner a donné
 // l'accès au commerçant : sinon la page redirige vers l'accueil et le lien
@@ -17,6 +19,17 @@ const cellule = { padding: '6px 8px', borderBottom: '1px solid rgba(128,128,128,
 const droite = { ...cellule, textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
 const enteteTable = { ...cellule, fontWeight: 600, color: 'var(--encre-douce)' };
 const boutonPetit = { padding: '6px 10px', fontSize: 12.5 };
+
+const useEntreprise = () => useAuth().merchant?.businessName || '';
+const libellePeriode = (p) => `Du ${dateFr(p.from)} au ${dateFr(p.to)}`;
+
+function BoutonPdf({ onClick, disabled }) {
+  return (
+    <button type="button" className="btn" style={boutonPetit} disabled={disabled} onClick={onClick}>
+      Exporter en PDF
+    </button>
+  );
+}
 
 const CLASSES = {
   1: 'Classe 1 — Ressources durables',
@@ -215,6 +228,21 @@ function JournalTab() {
   );
   const [ref] = useDonnees(() => Promise.all([api.getAccountingJournals(), api.getAccountingAccounts()]), [version]);
 
+  const entreprise = useEntreprise();
+  function exporterJournal() {
+    const lignes = [];
+    for (const e of [...ecritures].reverse()) {
+      lignes.push({ fort: true, cells: [dateFr(e.entry_date), `N°${e.entry_number} · ${e.journal_code}`, `${e.label}${e.reference ? ` (${e.reference})` : ''}`, '', ''] });
+      for (const l of e.lines) {
+        lignes.push(['', '', `${l.accountCode} — ${l.accountLabel}`, Number(l.debit) > 0 ? fmt(l.debit) : '', Number(l.credit) > 0 ? fmt(l.credit) : '']);
+      }
+    }
+    exporterPdf({
+      entreprise, titre: 'Journal', periode: libellePeriode(periode),
+      sections: [{ colonnes: [{ label: 'Date' }, { label: 'Pièce' }, { label: 'Libellé / compte' }, { label: 'Débit', align: 'right' }, { label: 'Crédit', align: 'right' }], lignes }],
+    });
+  }
+
   async function supprimer(e) {
     if (!window.confirm(`Supprimer l'écriture n°${e.entry_number} ?`)) return;
     setErreurAction('');
@@ -230,9 +258,12 @@ function JournalTab() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
         <Periode periode={periode} onChange={setPeriode} />
-        <button type="button" className="btn btn-principal" disabled={!ref} onClick={() => setModale(true)}>
-          Nouvelle écriture
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <BoutonPdf disabled={!ecritures || ecritures.length === 0} onClick={exporterJournal} />
+          <button type="button" className="btn btn-principal" disabled={!ref} onClick={() => setModale(true)}>
+            Nouvelle écriture
+          </button>
+        </div>
       </div>
       {(erreur || erreurAction) && <div className="erreur">{erreur || erreurAction}</div>}
       {!ecritures ? (
@@ -285,13 +316,15 @@ function PlanTab() {
   const [version, setVersion] = useState(0);
   const [recherche, setRecherche] = useState('');
   const [nouveau, setNouveau] = useState({ code: '', label: '' });
+  const [tiers, setTiers] = useState(false);
   const [erreurAction, setErreurAction] = useState('');
   const [comptes, erreur] = useDonnees(() => api.getAccountingAccounts(), [version]);
 
   const filtres = useMemo(() => {
     const q = recherche.trim().toLowerCase();
-    return (comptes || []).filter((c) => !q || c.code.startsWith(q) || c.label.toLowerCase().includes(q));
-  }, [comptes, recherche]);
+    const estTiers = (c) => c.code.length === 6 && (c.code.startsWith('411') || c.code.startsWith('401') || c.code.startsWith('422'));
+    return (comptes || []).filter((c) => (tiers || !estTiers(c)) && (!q || c.code.startsWith(q) || c.label.toLowerCase().includes(q)));
+  }, [comptes, recherche, tiers]);
 
   async function ajouter(e) {
     e.preventDefault();
@@ -324,6 +357,10 @@ function PlanTab() {
           onChange={(e) => setNouveau({ ...nouveau, label: e.target.value })} required />
         <button type="submit" className="btn btn-principal">Ajouter un compte</button>
       </form>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, fontSize: 13.5 }}>
+        <input type="checkbox" checked={tiers} onChange={(e) => setTiers(e.target.checked)} />
+        Afficher les comptes auxiliaires des clients (411…), assureurs (4119…), fournisseurs (401…) et du personnel (422…)
+      </label>
       <input className="champ" style={{ marginBottom: 14 }} placeholder="Rechercher par numéro ou intitulé…" value={recherche}
         onChange={(e) => setRecherche(e.target.value)} />
       {(erreur || erreurAction) && <div className="erreur">{erreur || erreurAction}</div>}
@@ -361,67 +398,139 @@ function PlanTab() {
 
 // ---------- Grand livre ----------
 
+const GENERAL = '__general__';
+
+const COLONNES_LIVRE = [
+  { label: 'Date' }, { label: 'N°' }, { label: 'Jnl' }, { label: 'Libellé' },
+  { label: 'Débit', align: 'right' }, { label: 'Crédit', align: 'right' }, { label: 'Solde', align: 'right' },
+];
+
+function lignesLivre(c, avecOuverture) {
+  return [
+    ...(avecOuverture ? [{ fort: true, cells: ['', '', '', "Solde à l'ouverture", '', '', fmt(c.opening)] }] : []),
+    ...c.lines.map((l) => [dateFr(l.date), l.entryNumber, l.journal, l.label, l.debit > 0 ? fmt(l.debit) : '', l.credit > 0 ? fmt(l.credit) : '', fmt(l.solde)]),
+    { fort: true, cells: ['', '', '', 'Totaux', fmt(c.totalDebit), fmt(c.totalCredit), fmt(c.closing)] },
+  ];
+}
+
+function TableCompte({ c, avecOuverture }) {
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={tableStyle}>
+        <thead>
+          <tr>
+            <th style={enteteTable}>Date</th><th style={enteteTable}>N°</th><th style={enteteTable}>Jnl</th>
+            <th style={enteteTable}>Libellé</th>
+            <th style={{ ...enteteTable, textAlign: 'right' }}>Débit</th>
+            <th style={{ ...enteteTable, textAlign: 'right' }}>Crédit</th>
+            <th style={{ ...enteteTable, textAlign: 'right' }}>Solde</th>
+          </tr>
+        </thead>
+        <tbody>
+          {avecOuverture && (
+            <tr>
+              <td style={cellule} colSpan={6}><em>Solde à l'ouverture de la période</em></td>
+              <td style={droite}>{fmt(c.opening)}</td>
+            </tr>
+          )}
+          {c.lines.map((l, i) => (
+            <tr key={i}>
+              <td style={cellule}>{dateFr(l.date)}</td>
+              <td style={cellule}>{l.entryNumber}</td>
+              <td style={cellule}>{l.journal}</td>
+              <td style={cellule}>{l.label}</td>
+              <td style={droite}>{l.debit > 0 ? fmt(l.debit) : ''}</td>
+              <td style={droite}>{l.credit > 0 ? fmt(l.credit) : ''}</td>
+              <td style={droite}>{fmt(l.solde)}</td>
+            </tr>
+          ))}
+          <tr>
+            <td style={{ ...cellule, fontWeight: 700 }} colSpan={4}>Totaux</td>
+            <td style={{ ...droite, fontWeight: 700 }}>{fmt(c.totalDebit)}</td>
+            <td style={{ ...droite, fontWeight: 700 }}>{fmt(c.totalCredit)}</td>
+            <td style={{ ...droite, fontWeight: 700 }}>{fmt(c.closing)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function GrandLivreTab() {
+  const entreprise = useEntreprise();
   const [periode, setPeriode] = useState({ from: debutAnnee(), to: aujourdhui() });
   const [code, setCode] = useState('');
+  const [classe, setClasse] = useState('');
   const [comptes] = useDonnees(() => api.getAccountingAccounts(), []);
-  const [livre, erreur] = useDonnees(
-    () => (code ? api.getAccountingLedger({ code, from: periode.from, to: periode.to }) : Promise.resolve(null)),
-    [code, periode.from, periode.to]
-  );
+  const general = code === GENERAL;
+  const [livre, erreur] = useDonnees(() => {
+    if (!code) return Promise.resolve(null);
+    if (general) return api.getAccountingGeneralLedger({ from: periode.from, to: periode.to, classe });
+    return api.getAccountingLedger({ code, from: periode.from, to: periode.to });
+  }, [code, classe, periode.from, periode.to]);
+
+  // Le résultat conservé peut être celui de l'autre mode pendant le chargement.
+  const pret = livre && (general ? Array.isArray(livre.accounts) : Array.isArray(livre.lines));
+  const comptesAffiches = !pret ? [] : general ? livre.accounts : [{ code: livre.account.code, label: livre.account.label, ...livre }];
+
+  function exporter() {
+    exporterPdf({
+      entreprise,
+      titre: general ? `Grand livre général${classe ? ` — classe ${classe}` : ''}` : 'Grand livre',
+      periode: libellePeriode(periode),
+      sections: comptesAffiches.map((c) => ({
+        titre: `${c.code} — ${c.label}`,
+        colonnes: COLONNES_LIVRE,
+        lignes: lignesLivre(c, Boolean(periode.from)),
+      })),
+    });
+  }
 
   return (
     <div>
-      <div style={{ marginBottom: 12 }}>
-        <select className="champ" value={code} onChange={(e) => setCode(e.target.value)}>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+        <select className="champ" style={{ flex: 1, minWidth: 220 }} value={code} onChange={(e) => setCode(e.target.value)}>
           <option value="">Choisir un compte…</option>
+          <option value={GENERAL}>Grand livre général (tous les comptes)</option>
           {(comptes || []).map((c) => <option key={c.id} value={c.code}>{c.code} — {c.label}</option>)}
         </select>
+        {general && (
+          <select className="champ" style={{ width: 'auto' }} value={classe} onChange={(e) => setClasse(e.target.value)}>
+            <option value="">Toutes les classes</option>
+            {Object.keys(CLASSES).map((n) => <option key={n} value={n}>{CLASSES[n]}</option>)}
+          </select>
+        )}
       </div>
-      <Periode periode={periode} onChange={setPeriode} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
+        <Periode periode={periode} onChange={setPeriode} />
+        <BoutonPdf disabled={!pret || comptesAffiches.length === 0} onClick={exporter} />
+      </div>
       {erreur && <div className="erreur">{erreur}</div>}
       {!code ? (
-        <p className="etat-vide">Choisissez un compte pour afficher son grand livre.</p>
-      ) : !livre ? (
+        <p className="etat-vide">Choisissez un compte, ou le grand livre général pour tous les comptes.</p>
+      ) : !pret ? (
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+      ) : general ? (
+        <div>
+          {livre.truncated && <div className="erreur">Résultat tronqué (trop de lignes) : réduisez la période ou choisissez une classe.</div>}
+          {comptesAffiches.length === 0 ? (
+            <p className="etat-vide">Aucun mouvement sur cette période.</p>
+          ) : (
+            comptesAffiches.map((c) => (
+              <details key={c.code} style={{ marginBottom: 10 }}>
+                <summary style={{ cursor: 'pointer', padding: '6px 0', fontSize: 14 }}>
+                  <strong>{c.code} — {c.label}</strong>
+                  <span style={{ color: 'var(--encre-douce)' }}> · débit {fmt(c.totalDebit)} · crédit {fmt(c.totalCredit)} · solde {fmt(c.closing)}</span>
+                </summary>
+                <TableCompte c={c} avecOuverture={Boolean(periode.from)} />
+              </details>
+            ))
+          )}
+          <p style={{ fontSize: 12.5, color: 'var(--encre-douce)' }}>Solde positif = débiteur, négatif = créditeur. Cliquez sur un compte pour voir son détail.</p>
+        </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={tableStyle}>
-            <thead>
-              <tr>
-                <th style={enteteTable}>Date</th><th style={enteteTable}>N°</th><th style={enteteTable}>Jnl</th>
-                <th style={enteteTable}>Libellé</th>
-                <th style={{ ...enteteTable, textAlign: 'right' }}>Débit</th>
-                <th style={{ ...enteteTable, textAlign: 'right' }}>Crédit</th>
-                <th style={{ ...enteteTable, textAlign: 'right' }}>Solde</th>
-              </tr>
-            </thead>
-            <tbody>
-              {periode.from && (
-                <tr>
-                  <td style={cellule} colSpan={6}><em>Solde à l'ouverture de la période</em></td>
-                  <td style={droite}>{fmt(livre.opening)}</td>
-                </tr>
-              )}
-              {livre.lines.map((l, i) => (
-                <tr key={i}>
-                  <td style={cellule}>{dateFr(l.date)}</td>
-                  <td style={cellule}>{l.entryNumber}</td>
-                  <td style={cellule}>{l.journal}</td>
-                  <td style={cellule}>{l.label}</td>
-                  <td style={droite}>{l.debit > 0 ? fmt(l.debit) : ''}</td>
-                  <td style={droite}>{l.credit > 0 ? fmt(l.credit) : ''}</td>
-                  <td style={droite}>{fmt(l.solde)}</td>
-                </tr>
-              ))}
-              <tr>
-                <td style={{ ...cellule, fontWeight: 700 }} colSpan={4}>Totaux</td>
-                <td style={{ ...droite, fontWeight: 700 }}>{fmt(livre.totalDebit)}</td>
-                <td style={{ ...droite, fontWeight: 700 }}>{fmt(livre.totalCredit)}</td>
-                <td style={{ ...droite, fontWeight: 700 }}>{fmt(livre.closing)}</td>
-              </tr>
-            </tbody>
-          </table>
+        <div>
+          <TableCompte c={comptesAffiches[0]} avecOuverture={Boolean(periode.from)} />
           <p style={{ fontSize: 12.5, color: 'var(--encre-douce)' }}>Solde positif = débiteur, négatif = créditeur.</p>
         </div>
       )}
@@ -432,19 +541,56 @@ function GrandLivreTab() {
 // ---------- Balance ----------
 
 function BalanceTab() {
+  const entreprise = useEntreprise();
   const [periode, setPeriode] = useState({ from: debutAnnee(), to: aujourdhui() });
+  const [filtre, setFiltre] = useState('tous');
   const [balance, erreur] = useDonnees(
     () => api.getAccountingTrialBalance({ from: periode.from, to: periode.to }),
     [periode.from, periode.to]
   );
+  const filtres = {
+    clients: (c) => c.startsWith('411') && !c.startsWith('4119'),
+    assureurs: (c) => c.startsWith('4119'),
+    fournisseurs: (c) => c.startsWith('401'),
+    personnel: (c) => c.startsWith('421') || c.startsWith('422'),
+  };
+  const lignes = balance ? balance.lines.filter((l) => !filtres[filtre] || filtres[filtre](l.code)) : [];
+  const somme = (k) => lignes.reduce((t, l) => t + l[k], 0);
+  const TITRES = {
+    tous: 'Balance générale', clients: 'Balance auxiliaire des clients', assureurs: 'Balance auxiliaire des assureurs',
+    fournisseurs: 'Balance auxiliaire des fournisseurs', personnel: 'Balance auxiliaire du personnel',
+  };
+
+  function exporter() {
+    exporterPdf({
+      entreprise, titre: TITRES[filtre], periode: libellePeriode(periode),
+      sections: [{
+        colonnes: [{ label: 'Compte' }, { label: 'Débit', align: 'right' }, { label: 'Crédit', align: 'right' }, { label: 'Solde débiteur', align: 'right' }, { label: 'Solde créditeur', align: 'right' }],
+        lignes: [
+          ...lignes.map((l) => [`${l.code} — ${l.label}`, fmt(l.debit), fmt(l.credit), l.soldeDebiteur ? fmt(l.soldeDebiteur) : '', l.soldeCrediteur ? fmt(l.soldeCrediteur) : '']),
+          { fort: true, cells: ['Totaux', fmt(somme('debit')), fmt(somme('credit')), fmt(somme('soldeDebiteur')), fmt(somme('soldeCrediteur'))] },
+        ],
+      }],
+    });
+  }
 
   return (
     <div>
-      <Periode periode={periode} onChange={setPeriode} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
+        <Periode periode={periode} onChange={setPeriode} />
+        <BoutonPdf disabled={lignes.length === 0} onClick={exporter} />
+      </div>
+      <select className="champ" style={{ width: 'auto', marginBottom: 14 }} value={filtre} onChange={(e) => setFiltre(e.target.value)}>
+        <option value="tous">Balance générale (tous les comptes)</option>
+        <option value="clients">Balance auxiliaire des clients (411…)</option>
+        <option value="assureurs">Balance auxiliaire des assureurs (4119…)</option>
+        <option value="fournisseurs">Balance auxiliaire des fournisseurs (401…)</option>
+        <option value="personnel">Balance auxiliaire du personnel (422…)</option>
+      </select>
       {erreur && <div className="erreur">{erreur}</div>}
       {!balance ? (
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
-      ) : balance.lines.length === 0 ? (
+      ) : lignes.length === 0 ? (
         <p className="etat-vide">Aucun mouvement sur cette période.</p>
       ) : (
         <div style={{ overflowX: 'auto' }}>
@@ -459,7 +605,7 @@ function BalanceTab() {
               </tr>
             </thead>
             <tbody>
-              {balance.lines.map((l) => (
+              {lignes.map((l) => (
                 <tr key={l.code}>
                   <td style={cellule}>{l.code} — {l.label}</td>
                   <td style={droite}>{fmt(l.debit)}</td>
@@ -470,10 +616,10 @@ function BalanceTab() {
               ))}
               <tr>
                 <td style={{ ...cellule, fontWeight: 700 }}>Totaux</td>
-                <td style={{ ...droite, fontWeight: 700 }}>{fmt(balance.totals.debit)}</td>
-                <td style={{ ...droite, fontWeight: 700 }}>{fmt(balance.totals.credit)}</td>
-                <td style={{ ...droite, fontWeight: 700 }}>{fmt(balance.totals.soldeDebiteur)}</td>
-                <td style={{ ...droite, fontWeight: 700 }}>{fmt(balance.totals.soldeCrediteur)}</td>
+                <td style={{ ...droite, fontWeight: 700 }}>{fmt(somme('debit'))}</td>
+                <td style={{ ...droite, fontWeight: 700 }}>{fmt(somme('credit'))}</td>
+                <td style={{ ...droite, fontWeight: 700 }}>{fmt(somme('soldeDebiteur'))}</td>
+                <td style={{ ...droite, fontWeight: 700 }}>{fmt(somme('soldeCrediteur'))}</td>
               </tr>
             </tbody>
           </table>
@@ -486,15 +632,49 @@ function BalanceTab() {
 // ---------- Compte de résultat ----------
 
 function ResultatTab() {
+  const entreprise = useEntreprise();
   const [periode, setPeriode] = useState({ from: debutAnnee(), to: aujourdhui() });
   const [r, erreur] = useDonnees(
     () => api.getAccountingIncomeStatement({ from: periode.from, to: periode.to }),
     [periode.from, periode.to]
   );
 
+  function exporter() {
+    const bloc = (titre, b) => [
+      { fort: true, cells: [titre, fmt(b.total)] },
+      ...b.comptes.map((c) => [`     ${c.code} — ${c.label}`, fmt(c.montant)]),
+    ];
+    exporterPdf({
+      entreprise, titre: 'Compte de résultat', periode: libellePeriode(periode),
+      sections: [{
+        colonnes: [{ label: 'Rubrique' }, { label: 'Montant', align: 'right' }],
+        lignes: [
+          ["Chiffre d'affaires (classe 70)", fmt(r.chiffreAffaires)],
+          ['Marge commerciale (701 − 601 − 6031)', fmt(r.margeCommerciale)],
+          ...bloc("Produits d'exploitation", r.produitsExploitation),
+          ...bloc("Charges d'exploitation", r.chargesExploitation),
+          { fort: true, cells: ["RÉSULTAT D'EXPLOITATION", fmt(r.resultatExploitation)] },
+          ...bloc('Produits financiers', r.produitsFinanciers),
+          ...bloc('Charges financières', r.chargesFinancieres),
+          { fort: true, cells: ['RÉSULTAT FINANCIER', fmt(r.resultatFinancier)] },
+          { fort: true, cells: ['RÉSULTAT DES ACTIVITÉS ORDINAIRES', fmt(r.resultatActivitesOrdinaires)] },
+          ...bloc('Produits hors activités ordinaires (HAO)', r.produitsHao),
+          ...bloc('Charges hors activités ordinaires (HAO)', r.chargesHao),
+          { fort: true, cells: ['RÉSULTAT HAO', fmt(r.resultatHao)] },
+          ...bloc('Participation des travailleurs', r.participation),
+          ...bloc('Impôts sur le résultat', r.impots),
+          { fort: true, cells: ['RÉSULTAT NET', fmt(r.resultatNet)] },
+        ],
+      }],
+    });
+  }
+
   return (
     <div>
-      <Periode periode={periode} onChange={setPeriode} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
+        <Periode periode={periode} onChange={setPeriode} />
+        <BoutonPdf disabled={!r} onClick={exporter} />
+      </div>
       {erreur && <div className="erreur">{erreur}</div>}
       {!r ? (
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
@@ -531,12 +711,43 @@ function ResultatTab() {
 // ---------- Bilan ----------
 
 function BilanTab() {
+  const entreprise = useEntreprise();
   const [date, setDate] = useState(aujourdhui());
   const [b, erreur] = useDonnees(() => api.getAccountingBalanceSheet({ date }), [date]);
 
+  function exporter() {
+    const lignesBloc = (titre, bloc) => [
+      { fort: true, cells: [titre, fmt(bloc.total)] },
+      ...bloc.comptes.map((c) => [`     ${c.code} — ${c.label}`, fmt(c.montant)]),
+    ];
+    const colonnes = [{ label: 'Rubrique' }, { label: 'Montant', align: 'right' }];
+    exporterPdf({
+      entreprise, titre: 'Bilan', periode: `Au ${dateFr(date)}`,
+      sections: [
+        { titre: 'Actif', colonnes, lignes: [
+          ...lignesBloc("Immobilisations (nettes d'amortissements)", b.actif.immobilisations),
+          ...lignesBloc('Stocks', b.actif.stocks),
+          ...lignesBloc('Créances et emplois assimilés', b.actif.creances),
+          ...lignesBloc('Trésorerie-actif', b.actif.tresorerie),
+          { fort: true, cells: ['TOTAL ACTIF', fmt(b.totalActif)] },
+        ] },
+        { titre: 'Passif', colonnes, lignes: [
+          ...lignesBloc('Capitaux propres et ressources assimilées', b.passif.capitauxPropres),
+          ...lignesBloc('Dettes financières', b.passif.dettesFinancieres),
+          ...lignesBloc('Passif circulant (dettes de tiers)', b.passif.passifCirculant),
+          ...lignesBloc('Trésorerie-passif', b.passif.tresorerie),
+          { fort: true, cells: ['TOTAL PASSIF', fmt(b.totalPassif)] },
+        ] },
+      ],
+    });
+  }
+
   return (
     <div>
-      <Periode periode={{ from: '', to: date }} unSeulJour onChange={(p) => setDate(p.to)} />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
+        <Periode periode={{ from: '', to: date }} unSeulJour onChange={(p) => setDate(p.to)} />
+        <BoutonPdf disabled={!b} onClick={exporter} />
+      </div>
       {erreur && <div className="erreur">{erreur}</div>}
       {!b ? (
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
@@ -574,7 +785,8 @@ function BilanTab() {
             </div>
           )}
           <p style={{ fontSize: 12.5, color: 'var(--encre-douce)' }}>
-            Bilan cumulé à la date choisie. La clôture d'exercice (report à nouveau) n'est pas encore gérée.
+            Bilan cumulé à la date choisie. Les comptes clients et fournisseurs sont regroupés (détail dans la balance auxiliaire).
+            La clôture d'exercice (report à nouveau) n'est pas encore gérée.
           </p>
         </>
       )}
