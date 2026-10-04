@@ -4,12 +4,23 @@ import { useAuth } from '../context/AuthContext';
 import { useLiveEvent } from '../offline/liveEvents';
 
 import { StylesModernes } from '../components/StylesModernes';
+import { CaisseFacturesPanel } from '../components/CaisseFacturesPanel';
 const MOYENS_PAIEMENT = [
   { value: 'especes', label: 'Espèces' },
   { value: 'wave', label: 'Wave' },
   { value: 'orange_money', label: 'Orange Money' },
   { value: 'cheque', label: 'Chèque' },
 ];
+
+// Une charge (loyer, électricité…) peut aussi être payée par virement ou rester à payer :
+// ces deux modes ne font pas sortir d'argent de la caisse (voir « Factures à payer »).
+const MOYENS_CHARGE = [
+  ...MOYENS_PAIEMENT,
+  { value: 'virement', label: 'Virement bancaire (hors caisse)' },
+  { value: 'a_payer', label: 'À payer plus tard (dette fournisseur)' },
+];
+const HORS_CAISSE = ['virement', 'a_payer'];
+const HORS_CHARGE_INVALIDE = (m) => HORS_CAISSE.includes(m);
 
 // Pour le relevé uniquement : en plus d'un moyen de paiement précis, on
 // peut choisir "Tous" pour voir toutes les transactions de la période
@@ -198,6 +209,20 @@ export function CaissePage() {
     }
     setEnregistrementSortie(true);
     try {
+      if (nature && HORS_CAISSE.includes(nouvelleSortie.paymentMethod)) {
+        // Charge payée par virement ou à payer plus tard : aucune sortie de caisse.
+        await api.createCaisseFacture({
+          chargeAccount: nature.code,
+          detail,
+          amount: Number(nouvelleSortie.amount),
+          billDate: nouvelleSortie.expenseDate,
+          paymentMethod: nouvelleSortie.paymentMethod,
+          warehouseId: activeWarehouseId,
+        });
+        setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui(), chargeAccount: '' });
+        setRefreshKey((k) => k + 1);
+        return;
+      }
       await api.createCashExpense({
         ...nouvelleSortie,
         // Charge : le motif devient « Nature — détail » et la nature sert à l'imputation comptable.
@@ -455,7 +480,7 @@ export function CaissePage() {
                   value={nouvelleSortie.paymentMethod}
                   onChange={(e) => setNouvelleSortie({ ...nouvelleSortie, paymentMethod: e.target.value })}
                 >
-                  {MOYENS_PAIEMENT.map((m) => (
+                  {(nouvelleSortie.chargeAccount ? MOYENS_CHARGE : MOYENS_PAIEMENT).map((m) => (
                     <option key={m.value} value={m.value}>{m.label}</option>
                   ))}
                 </select>
@@ -499,7 +524,12 @@ export function CaissePage() {
                     id="s-nature"
                     className="champ"
                     value={nouvelleSortie.chargeAccount}
-                    onChange={(e) => setNouvelleSortie({ ...nouvelleSortie, chargeAccount: e.target.value })}
+                    onChange={(e) => setNouvelleSortie({
+                      ...nouvelleSortie,
+                      chargeAccount: e.target.value,
+                      // Sans nature de charge, virement et « à payer » n'ont pas de sens ici.
+                      paymentMethod: !e.target.value && HORS_CHARGE_INVALIDE(nouvelleSortie.paymentMethod) ? 'especes' : nouvelleSortie.paymentMethod,
+                    })}
                   >
                     <option value="">Aucune — sortie ordinaire</option>
                     {natures.map((n) => (
@@ -511,10 +541,14 @@ export function CaissePage() {
               <button type="submit" className="btn btn-principal" disabled={enregistrementSortie}>
                 {enregistrementSortie
                   ? 'Enregistrement…'
-                  : nouvelleSortie.chargeAccount ? 'Enregistrer le règlement' : 'Enregistrer la sortie'}
+                  : nouvelleSortie.chargeAccount
+                    ? (nouvelleSortie.paymentMethod === 'a_payer' ? 'Enregistrer la facture à payer' : 'Enregistrer le règlement')
+                    : 'Enregistrer la sortie'}
               </button>
             </form>
           </div>
+
+          <CaisseFacturesPanel warehouseId={activeWarehouseId} refreshKey={refreshKey} onPaid={() => setRefreshKey((k) => k + 1)} />
 
           <div className="md-outils" style={{ marginBottom: 16 }}>
             <div className="champ-groupe" style={{ marginBottom: 0 }}>

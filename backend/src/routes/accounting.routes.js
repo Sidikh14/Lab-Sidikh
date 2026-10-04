@@ -85,6 +85,124 @@ router.get('/caisse/natures', accesCaisse, async (req, res) => {
 });
 
 
+// ---------- Factures de charges : à payer plus tard ou payées par virement ----------
+// Depuis « Nouvelle sortie de caisse », une charge peut être enregistrée sans sortie
+// d'argent de la caisse : « À payer plus tard » (dette fournisseur, réglée ensuite
+// depuis la caisse) ou « Virement » (payée directement par la banque).
+
+async function debutComptabilite(db, merchantId) {
+  const m = await db.query(
+    `SELECT accounting_enabled, COALESCE(accounting_start_date, date_trunc('year', CURRENT_DATE)::date)::text AS debut
+     FROM merchants WHERE id = $1`,
+    [merchantId]
+  );
+  if (m.rows[0]?.accounting_enabled !== true) throw erreurMetier(400, "Le module comptabilité n'est pas activé.");
+  return m.rows[0].debut;
+}
+
+router.get('/caisse/factures', accesCaisse, async (req, res) => {
+  try {
+    const m = await pool.query('SELECT accounting_enabled FROM merchants WHERE id = $1', [req.user.merchantId]);
+    if (m.rows[0]?.accounting_enabled !== true) return res.json({ enabled: false, open: [], recent: [] });
+    const open = await pool.query(
+      `SELECT id::text AS id, label, amount, to_char(bill_date, 'YYYY-MM-DD') AS bill_date
+       FROM accounting_charge_bills WHERE merchant_id = $1 AND paid_at IS NULL ORDER BY bill_date, created_at`,
+      [req.user.merchantId]
+    );
+    const recent = await pool.query(
+      `SELECT id::text AS id, label, amount, paid_method, to_char(paid_at, 'YYYY-MM-DD') AS paid_at
+       FROM accounting_charge_bills WHERE merchant_id = $1 AND paid_at IS NOT NULL ORDER BY paid_at DESC, created_at DESC LIMIT 8`,
+      [req.user.merchantId]
+    );
+    res.json({ enabled: true, open: open.rows, recent: recent.rows });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors du chargement des factures à payer.');
+  }
+});
+
+router.post('/caisse/factures', accesCaisse, async (req, res) => {
+  const { chargeAccount, detail, paymentMethod } = req.body;
+  const montant = arrondi(req.body.amount);
+  const date = req.body.billDate || aujourdhui();
+  const nature = NATURES_CHARGES.find((n) => n[1] === String(chargeAccount));
+  if (!nature) return res.status(400).json({ error: 'Choisissez la nature de la charge.' });
+  if (!(montant > 0)) return res.status(400).json({ error: 'Le montant doit être positif.' });
+  if (!['virement', 'a_payer'].includes(paymentMethod)) return res.status(400).json({ error: 'Mode invalide.' });
+  if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: 'Date invalide.' });
+  const libelle = `${nature[0]}${detail && String(detail).trim() ? ` — ${String(detail).trim().slice(0, 150)}` : ''}`;
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const debut = await debutComptabilite(client, merchantId);
+    if (date < debut) throw erreurMetier(400, `Cette date est antérieure au début de la comptabilité (${debut}).`);
+    await verifierExerciceOuvert(client, merchantId, date);
+    await assurerCompte(client, merchantId, nature[1], nature[0]);
+    await client.query(
+      `INSERT INTO accounting_charge_bills (merchant_id, nature_account, label, amount, bill_date, warehouse_id, paid_at, paid_method, created_by)
+       VALUES ($1, $2, $3, $4, $5::date, $6, $7::date, $8, $9)`,
+      [merchantId, nature[1], libelle, montant, date, UUID_RE.test(String(req.body.warehouseId || '')) ? req.body.warehouseId : null,
+        paymentMethod === 'virement' ? date : null, paymentMethod === 'virement' ? 'virement' : null, req.user.id]
+    );
+    await client.query('COMMIT');
+    ETAT_SYNCHRO.delete(merchantId);
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de l'enregistrement de la charge.");
+  } finally {
+    client.release();
+  }
+});
+
+// Règlement d'une facture à payer : depuis la caisse (espèces, Wave, Orange Money) ou par virement.
+router.post('/caisse/factures/:id/payer', accesCaisse, async (req, res) => {
+  const { paymentMethod, warehouseId } = req.body;
+  const date = req.body.paymentDate || aujourdhui();
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Facture invalide.' });
+  if (![...MODES_CAISSE, 'virement'].includes(paymentMethod)) return res.status(400).json({ error: 'Mode de paiement invalide.' });
+  if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: 'Date invalide.' });
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    await debutComptabilite(client, merchantId);
+    const f = await client.query(
+      `SELECT id, label, amount, to_char(bill_date, 'YYYY-MM-DD') AS d FROM accounting_charge_bills
+       WHERE id = $1 AND merchant_id = $2 AND paid_at IS NULL FOR UPDATE`,
+      [req.params.id, merchantId]
+    );
+    if (f.rows.length === 0) throw erreurMetier(404, 'Facture introuvable ou déjà réglée.');
+    const facture = f.rows[0];
+    if (date < facture.d) throw erreurMetier(400, 'Le règlement ne peut pas précéder la facture.');
+    await verifierExerciceOuvert(client, merchantId, date);
+    let depenseId = null;
+    if (paymentMethod !== 'virement') {
+      await verifierCaisse(req, client, merchantId, warehouseId, paymentMethod, Number(facture.amount));
+      const d = await client.query(
+        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id)
+         VALUES ($1, $2, $3, $4, $5, $6::date, 'sortie', $7) RETURNING id`,
+        [merchantId, req.user.id, paymentMethod, Number(facture.amount), `${MOTIF_REGLEMENT}${facture.label}`, date, warehouseId]
+      );
+      depenseId = d.rows[0].id;
+    }
+    await client.query(
+      `UPDATE accounting_charge_bills SET paid_at = $2::date, paid_method = $3, paid_cash_expense_id = $4 WHERE id = $1`,
+      [facture.id, date, paymentMethod, depenseId]
+    );
+    await client.query('COMMIT');
+    ETAT_SYNCHRO.delete(merchantId);
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, 'Erreur lors du règlement de la facture.');
+  } finally {
+    client.release();
+  }
+});
+
 // Sortie de caisse d'un paiement : boutique valide + solde suffisant (jamais de caisse négative).
 async function verifierCaisse(req, client, merchantId, warehouseId, mode, montant) {
   if (!UUID_RE.test(String(warehouseId || ''))) {
@@ -110,6 +228,260 @@ router.use(['/state-dues', '/state-payments', '/tax-settings'], requireOwnerModu
 router.use(['/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues', '/closing-preview', '/fiscal-years'], async (req, res, next) => {
   if (req.method === 'GET') await assurerSynchro(req.user.merchantId, req.user.id);
   next();
+});
+
+// ---------- Factures de charges : annulation (manager) ----------
+
+router.delete('/charge-bills/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Facture invalide.' });
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const f = await client.query(
+      `SELECT id, to_char(bill_date, 'YYYY-MM-DD') AS d FROM accounting_charge_bills
+       WHERE id = $1 AND merchant_id = $2 AND paid_at IS NULL FOR UPDATE`,
+      [req.params.id, merchantId]
+    );
+    if (f.rows.length === 0) throw erreurMetier(404, 'Facture introuvable ou déjà réglée.');
+    await verifierExerciceOuvert(client, merchantId, f.rows[0].d);
+    await client.query(`DELETE FROM accounting_charge_bills WHERE id = $1`, [req.params.id]);
+    await client.query('COMMIT');
+    ETAT_SYNCHRO.delete(merchantId);
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de l'annulation de la facture.");
+  } finally {
+    client.release();
+  }
+});
+
+// ---------- Immobilisations ----------
+// Registre des biens durables. Les écritures (acquisition, dotations mensuelles,
+// cession) sont générées par la synchronisation à partir de ce registre.
+
+router.get('/assets/categories', (req, res) => {
+  res.json(Object.entries(CATEGORIES_IMMO).map(([key, c]) => ({
+    key, label: c.label, duree: c.duree, amortissable: Boolean(c.amort),
+  })));
+});
+
+const MODES_IMMO = ['especes', 'wave', 'orange_money', 'virement', 'a_payer', 'existant'];
+
+router.get('/assets', async (req, res) => {
+  try {
+    const rows = await lireRegistreImmo(pool, req.user.merchantId);
+    const jour = aujourdhui();
+    res.json(rows.map((a) => {
+      const plan = calendrierAmortissement(a, jour);
+      const amorti = plan.length > 0 ? plan[plan.length - 1].cumul : 0;
+      const base = arrondi(Number(a.cost) - Number(a.residual_value || 0));
+      const duree = Number(a.useful_life_years) || 0;
+      const cedee = Boolean(a.disposal_date);
+      return {
+        id: a.id, label: a.label, category: a.category, categoryLabel: CATEGORIES_IMMO[a.category]?.label || a.category,
+        assetAccount: a.asset_account, acquisitionDate: a.acq, cost: Number(a.cost), residualValue: Number(a.residual_value || 0),
+        usefulLifeYears: duree || null, paymentMethod: a.payment_method, debtOpen: a.payment_method === 'a_payer' && !a.paid,
+        paidAt: a.paid || null, disposalDate: a.disp || null, disposalPrice: a.disposal_price === null ? null : Number(a.disposal_price),
+        note: a.note || '',
+        accumulated: amorti,
+        netValue: cedee ? 0 : arrondi(Number(a.cost) - amorti),
+        yearlyCharge: a.depreciation_account && duree > 0 ? arrondi(base / duree) : 0,
+        status: cedee ? 'cedee' : (a.depreciation_account && amorti >= base ? 'amortie' : 'en_service'),
+      };
+    }));
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors du chargement des immobilisations.');
+  }
+});
+
+router.post('/assets', async (req, res) => {
+  const { category, paymentMethod, warehouseId, note } = req.body;
+  const label = String(req.body.label || '').trim().slice(0, 150);
+  const cat = CATEGORIES_IMMO[category];
+  const cout = arrondi(req.body.cost);
+  const residuelle = arrondi(req.body.residualValue || 0);
+  const date = req.body.acquisitionDate;
+  const duree = cat?.amort ? Number(req.body.usefulLifeYears || cat.duree) : null;
+  if (!label) return res.status(400).json({ error: "Donnez un nom à l'immobilisation." });
+  if (!cat) return res.status(400).json({ error: 'Catégorie invalide.' });
+  if (!(cout > 0)) return res.status(400).json({ error: 'Le coût doit être positif.' });
+  if (residuelle < 0 || residuelle >= cout) return res.status(400).json({ error: 'La valeur résiduelle doit être inférieure au coût.' });
+  if (cat.amort && !(duree >= 0.5 && duree <= 60)) return res.status(400).json({ error: "La durée d'amortissement doit être entre 6 mois et 60 ans." });
+  if (!MODES_IMMO.includes(paymentMethod)) return res.status(400).json({ error: 'Mode de paiement invalide.' });
+  if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: "Date d'acquisition invalide." });
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const debut = await debutComptabilite(client, merchantId);
+    if (date < debut && paymentMethod !== 'existant') {
+      throw erreurMetier(400, `Ce bien a été acquis avant le début de la comptabilité (${debut}) : choisissez « Déjà possédé avant la comptabilité ».`);
+    }
+    await verifierExerciceOuvert(client, merchantId, date < debut ? debut : date);
+    const enCaisse = MODES_CAISSE.includes(paymentMethod);
+    if (enCaisse) await verifierCaisse(req, client, merchantId, warehouseId, paymentMethod, cout);
+    await assurerCompte(client, merchantId, cat.compte, cat.nom);
+    if (cat.amort) await assurerCompte(client, merchantId, cat.amort, cat.nomAmort);
+    for (const [code, nom] of COMPTES_IMMO_COMMUNS) await assurerCompte(client, merchantId, code, nom);
+    let depenseId = null;
+    if (enCaisse) {
+      const d = await client.query(
+        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id)
+         VALUES ($1, $2, $3, $4, $5, $6::date, 'sortie', $7) RETURNING id`,
+        [merchantId, req.user.id, paymentMethod, cout, `${MOTIF_ACQUISITION}${label}`, date, warehouseId]
+      );
+      depenseId = d.rows[0].id;
+    }
+    await client.query(
+      `INSERT INTO accounting_assets (merchant_id, label, category, asset_account, depreciation_account, acquisition_date, cost, residual_value,
+                                      useful_life_years, payment_method, cash_expense_id, warehouse_id, note, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10, $11, $12, $13, $14)`,
+      [merchantId, label, category, cat.compte, cat.amort || null, date, cout, residuelle, duree, paymentMethod, depenseId,
+        enCaisse ? warehouseId : null, note ? String(note).trim().slice(0, 300) : null, req.user.id]
+    );
+    await client.query('COMMIT');
+    ETAT_SYNCHRO.delete(merchantId);
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de l'enregistrement de l'immobilisation.");
+  } finally {
+    client.release();
+  }
+});
+
+// Règlement d'une immobilisation achetée « à payer ».
+router.post('/assets/:id/pay', async (req, res) => {
+  const { paymentMethod, warehouseId } = req.body;
+  const date = req.body.paymentDate || aujourdhui();
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Immobilisation invalide.' });
+  if (![...MODES_CAISSE, 'virement'].includes(paymentMethod)) return res.status(400).json({ error: 'Mode de paiement invalide.' });
+  if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: 'Date invalide.' });
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const r = await client.query(
+      `SELECT id, label, cost, to_char(acquisition_date, 'YYYY-MM-DD') AS acq FROM accounting_assets
+       WHERE id = $1 AND merchant_id = $2 AND payment_method = 'a_payer' AND paid_at IS NULL FOR UPDATE`,
+      [req.params.id, merchantId]
+    );
+    if (r.rows.length === 0) throw erreurMetier(404, 'Immobilisation introuvable ou déjà réglée.');
+    const a = r.rows[0];
+    if (date < a.acq) throw erreurMetier(400, "Le règlement ne peut pas précéder l'acquisition.");
+    await verifierExerciceOuvert(client, merchantId, date);
+    let depenseId = null;
+    if (paymentMethod !== 'virement') {
+      await verifierCaisse(req, client, merchantId, warehouseId, paymentMethod, Number(a.cost));
+      const d = await client.query(
+        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id)
+         VALUES ($1, $2, $3, $4, $5, $6::date, 'sortie', $7) RETURNING id`,
+        [merchantId, req.user.id, paymentMethod, Number(a.cost), `${MOTIF_REGLEMENT}${a.label}`, date, warehouseId]
+      );
+      depenseId = d.rows[0].id;
+    }
+    await client.query(
+      `UPDATE accounting_assets SET paid_at = $2::date, paid_method = $3, paid_cash_expense_id = $4 WHERE id = $1`,
+      [a.id, date, paymentMethod, depenseId]
+    );
+    await client.query('COMMIT');
+    ETAT_SYNCHRO.delete(merchantId);
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors du règlement de l'immobilisation.");
+  } finally {
+    client.release();
+  }
+});
+
+// Cession ou mise au rebut (prix = 0). Les dotations s'arrêtent le mois de la sortie.
+router.post('/assets/:id/dispose', async (req, res) => {
+  const { paymentMethod, warehouseId } = req.body;
+  const date = req.body.date || aujourdhui();
+  const prix = arrondi(req.body.price || 0);
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Immobilisation invalide.' });
+  if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: 'Date invalide.' });
+  if (prix < 0) return res.status(400).json({ error: 'Le prix ne peut pas être négatif.' });
+  if (prix > 0 && ![...MODES_CAISSE, 'virement'].includes(paymentMethod)) {
+    return res.status(400).json({ error: "Choisissez comment le prix de cession a été encaissé." });
+  }
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const r = await client.query(
+      `SELECT id, label, to_char(acquisition_date, 'YYYY-MM-DD') AS acq FROM accounting_assets
+       WHERE id = $1 AND merchant_id = $2 AND disposal_date IS NULL FOR UPDATE`,
+      [req.params.id, merchantId]
+    );
+    if (r.rows.length === 0) throw erreurMetier(404, 'Immobilisation introuvable ou déjà sortie.');
+    const a = r.rows[0];
+    if (date < a.acq) throw erreurMetier(400, "La sortie ne peut pas précéder l'acquisition.");
+    await verifierExerciceOuvert(client, merchantId, date);
+    let depenseId = null;
+    if (prix > 0 && paymentMethod !== 'virement') {
+      if (!UUID_RE.test(String(warehouseId || ''))) throw erreurMetier(400, "Choisissez la boutique qui encaisse (page Caisse).");
+      const w = await client.query(`SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2`, [warehouseId, merchantId]);
+      if (w.rows.length === 0) throw erreurMetier(400, 'Boutique introuvable.');
+      const d = await client.query(
+        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id)
+         VALUES ($1, $2, $3, $4, $5, $6::date, 'entree', $7) RETURNING id`,
+        [merchantId, req.user.id, paymentMethod, prix, `${MOTIF_CESSION}${a.label}`, date, warehouseId]
+      );
+      depenseId = d.rows[0].id;
+    }
+    await client.query(
+      `UPDATE accounting_assets SET disposal_date = $2::date, disposal_price = $3, disposal_method = $4, disposal_cash_id = $5 WHERE id = $1`,
+      [a.id, date, prix, prix > 0 ? paymentMethod : null, depenseId]
+    );
+    await client.query('COMMIT');
+    ETAT_SYNCHRO.delete(merchantId);
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, 'Erreur lors de la sortie de l\'immobilisation.');
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/assets/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Immobilisation invalide.' });
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const r = await client.query(
+      `SELECT id, to_char(acquisition_date, 'YYYY-MM-DD') AS acq, cash_expense_id, paid_cash_expense_id, disposal_cash_id
+       FROM accounting_assets WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
+      [req.params.id, merchantId]
+    );
+    if (r.rows.length === 0) throw erreurMetier(404, 'Immobilisation introuvable.');
+    const a = r.rows[0];
+    const closes = await anneesCloturees(client, merchantId);
+    if ([...closes].some((an) => an >= Number(a.acq.slice(0, 4)))) {
+      throw erreurMetier(400, 'Un exercice clôturé couvre cette immobilisation : elle ne peut plus être supprimée.');
+    }
+    const caisse = [a.cash_expense_id, a.paid_cash_expense_id, a.disposal_cash_id].filter(Boolean);
+    if (caisse.length > 0) await client.query(`DELETE FROM cash_expenses WHERE merchant_id = $1 AND id::text = ANY($2::text[])`, [merchantId, caisse.map(String)]);
+    await client.query(`DELETE FROM accounting_assets WHERE id = $1`, [a.id]);
+    await client.query('COMMIT');
+    ETAT_SYNCHRO.delete(merchantId);
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de la suppression de l'immobilisation.");
+  } finally {
+    client.release();
+  }
 });
 
 // ---------- Plan comptable ----------
@@ -372,6 +744,9 @@ const DETTES_ETAT = {
 const MODES_ETAT = ['especes', 'wave', 'orange_money', 'virement'];
 const NOM_TRESORERIE = { '571': 'Caisse', '5211': 'Wave', '5212': 'Orange Money', '521': 'Banque' };
 const MOTIF_ETAT = 'Paiement État — ';
+const MOTIF_REGLEMENT = 'Règlement facture — ';
+const MOTIF_ACQUISITION = 'Acquisition — ';
+const MOTIF_CESSION = 'Cession — ';
 
 async function assurerCompte(client, merchantId, code, label) {
   const r = await client.query(`SELECT id FROM accounting_accounts WHERE merchant_id = $1 AND code = $2`, [merchantId, code]);
@@ -1316,7 +1691,7 @@ async function lireCaisse(client, merchantId, debut, ctx) {
     let sigCharge = '';
 
     if (entree) {
-      if (/^de la boutique/.test(motif)) continue; // transfert entre boutiques
+      if (/^de la boutique/.test(motif) || row.reason.startsWith(MOTIF_CESSION)) continue; // transfert entre boutiques, cession d'immobilisation
       const [compte, j] = tresorerie(mode === 'cheque' ? 'especes' : mode);
       journal = j;
       if (/solde de debut|solde initial|solde d ouverture/.test(motif)) {
@@ -1332,7 +1707,8 @@ async function lireCaisse(client, merchantId, debut, ctx) {
         apports += 1;
       }
     } else {
-      if (/^(salaire|remboursement retour|transfert vers)/.test(motif) || row.reason.startsWith('Charge — ') || row.reason.startsWith('Paiement État — ')) continue;
+      if (/^(salaire|remboursement retour|transfert vers)/.test(motif) || row.reason.startsWith('Charge — ') || row.reason.startsWith(MOTIF_ETAT)
+        || row.reason.startsWith(MOTIF_REGLEMENT) || row.reason.startsWith(MOTIF_ACQUISITION)) continue;
       // Nature de charge choisie dans le formulaire de la page Caisse : elle prime sur les mots-clés.
       const compteCharge = /^6\d{1,5}$/.test(row.charge_account || '') ? row.charge_account : null;
       const regle = REGLES_DEPENSES.find(([re]) => re.test(motif));
@@ -1762,6 +2138,200 @@ async function lireStock(client, merchantId, debut, ctx) {
 }
 
 // L'ordre compte : le stock vient en dernier, une fois tous les flux comptabilisés.
+// ---------- Immobilisations et factures de charges : écritures automatiques ----------
+
+// Catégories d'immobilisations : compte de bien, compte d'amortissements, durée par défaut (ans).
+// Plan indicatif SYSCOHADA : à faire valider par l'expert-comptable du commerçant.
+const CATEGORIES_IMMO = {
+  logiciel: { label: 'Logiciels, site internet, licences', compte: '213', nom: 'Logiciels et sites internet', amort: '2813', nomAmort: 'Amortissements des logiciels', duree: 3 },
+  agencement: { label: 'Agencements et aménagements', compte: '235', nom: 'Aménagements de bureaux', amort: '2835', nomAmort: 'Amortissements des aménagements', duree: 10 },
+  batiment: { label: 'Bâtiments', compte: '231', nom: 'Bâtiments sur sol propre', amort: '2831', nomAmort: 'Amortissements des bâtiments', duree: 20 },
+  terrain: { label: 'Terrain (non amortissable)', compte: '223', nom: 'Terrains bâtis', amort: null, nomAmort: null, duree: null },
+  materiel: { label: 'Matériel et outillage', compte: '241', nom: 'Matériel et outillage industriel et commercial', amort: '2841', nomAmort: 'Amortissements du matériel et outillage', duree: 5 },
+  bureau: { label: 'Mobilier et matériel de bureau', compte: '244', nom: 'Matériel et mobilier', amort: '2844', nomAmort: 'Amortissements du matériel et mobilier', duree: 10 },
+  informatique: { label: 'Matériel informatique', compte: '244', nom: 'Matériel et mobilier', amort: '2844', nomAmort: 'Amortissements du matériel et mobilier', duree: 3 },
+  transport: { label: 'Matériel de transport', compte: '245', nom: 'Matériel de transport', amort: '2845', nomAmort: 'Amortissements du matériel de transport', duree: 5 },
+  autre: { label: 'Autre immobilisation', compte: '248', nom: 'Autres matériels et mobiliers', amort: '2848', nomAmort: 'Amortissements des autres matériels', duree: 5 },
+};
+const COMPTES_IMMO_COMMUNS = [
+  ['681', "Dotations aux amortissements d'exploitation"],
+  ['811', "Valeurs comptables des cessions d'immobilisations"],
+  ['821', "Produits des cessions d'immobilisations"],
+  ['481', "Fournisseurs d'investissements"],
+];
+
+async function lireRegistreImmo(db, merchantId) {
+  const r = await db.query(
+    `SELECT id::text AS id, label, category, asset_account, depreciation_account,
+            to_char(acquisition_date, 'YYYY-MM-DD') AS acq, cost, residual_value, useful_life_years, payment_method,
+            to_char(paid_at, 'YYYY-MM-DD') AS paid, paid_method, to_char(disposal_date, 'YYYY-MM-DD') AS disp,
+            disposal_price, disposal_method, note
+     FROM accounting_assets WHERE merchant_id = $1 ORDER BY acquisition_date, created_at`,
+    [merchantId]
+  );
+  return r.rows;
+}
+
+const indexMois = (d) => Number(d.slice(0, 4)) * 12 + (Number(d.slice(5, 7)) - 1);
+const moisDepuisIndex = (i) => `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, '0')}`;
+function finDeMois(mois) {
+  const jours = new Date(Date.UTC(Number(mois.slice(0, 4)), Number(mois.slice(5, 7)), 0)).getUTCDate();
+  return `${mois}-${String(jours).padStart(2, '0')}`;
+}
+
+// Amortissement linéaire mensuel, dès le mois d'acquisition. Renvoie les dotations
+// dues à la date `jour` (mois terminés ; le mois de sortie est arrêté à la date de sortie),
+// avec le cumul après chaque dotation. Le dernier mois solde exactement la base amortissable.
+function calendrierAmortissement(a, jour) {
+  const duree = Number(a.useful_life_years) || 0;
+  if (!a.depreciation_account || !(duree > 0)) return [];
+  const base = arrondi(Number(a.cost) - Number(a.residual_value || 0));
+  if (!(base > 0)) return [];
+  const n = Math.max(1, Math.round(duree * 12));
+  const depart = indexMois(a.acq);
+  const moisSortie = a.disp ? a.disp.slice(0, 7) : null;
+  const out = [];
+  let precedent = 0;
+  for (let k = 1; k <= n; k += 1) {
+    const mois = moisDepuisIndex(depart + k - 1);
+    if (moisSortie && mois > moisSortie) break;
+    const cumul = k === n ? base : arrondi((base * k) / n);
+    const montant = arrondi(cumul - precedent);
+    precedent = cumul;
+    const date = moisSortie && mois === moisSortie ? a.disp : finDeMois(mois);
+    if (date > jour) break;
+    if (montant > 0) out.push({ mois, date, montant, cumul });
+  }
+  return out;
+}
+
+const dateOuverture = (a, debut) => (a.acq < debut ? debut : a.acq);
+
+async function lireFacturesCharges(client, merchantId, debut) {
+  const r = await client.query(
+    `SELECT id::text AS id, nature_account, label, amount, to_char(bill_date, 'YYYY-MM-DD') AS d
+     FROM accounting_charge_bills WHERE merchant_id = $1 AND bill_date >= $2::date ORDER BY bill_date`,
+    [merchantId, debut]
+  );
+  return r.rows.map((row) => {
+    const montant = arrondi(row.amount);
+    return {
+      sourceId: row.id, date: row.d, journal: 'AC', reference: 'FAC',
+      label: `Charge à payer : ${row.label}`.slice(0, 120),
+      sig: `${montant}|${row.nature_account}|${row.d}|${row.label}|t1`,
+      lignes: [ligne(row.nature_account, montant, 0), ligne('401', 0, montant)],
+    };
+  });
+}
+
+async function lireReglementsCharges(client, merchantId, debut) {
+  const r = await client.query(
+    `SELECT id::text AS id, label, amount, paid_method, to_char(paid_at, 'YYYY-MM-DD') AS d
+     FROM accounting_charge_bills
+     WHERE merchant_id = $1 AND paid_at IS NOT NULL AND paid_at >= $2::date AND bill_date >= $2::date ORDER BY paid_at`,
+    [merchantId, debut]
+  );
+  return r.rows.map((row) => {
+    const montant = arrondi(row.amount);
+    const [compte, journal] = tresorerie(row.paid_method);
+    return {
+      sourceId: row.id, date: row.d, journal, reference: 'REGL',
+      label: `Règlement de facture : ${row.label}`.slice(0, 120),
+      sig: `${montant}|${row.paid_method}|${row.d}|${row.label}|t1`,
+      lignes: [ligne('401', montant, 0), ligne(compte, 0, montant)],
+    };
+  });
+}
+
+// Acquisition (ou reprise d'un bien déjà possédé) et règlement des acquisitions « à payer ».
+async function lireImmobilisations(client, merchantId, debut) {
+  const out = [];
+  for (const a of await lireRegistreImmo(client, merchantId)) {
+    const cout = arrondi(a.cost);
+    if (a.payment_method === 'existant') {
+      const date = dateOuverture(a, debut);
+      const ant = calendrierAmortissement(a, aujourdhui()).filter((p) => p.mois < date.slice(0, 7));
+      const amorti = ant.length > 0 ? ant[ant.length - 1].cumul : 0;
+      const lignes = [ligne(a.asset_account, cout, 0)];
+      if (amorti > 0) lignes.push(ligne(a.depreciation_account, 0, amorti));
+      lignes.push(ligne('121', 0, arrondi(cout - amorti)));
+      out.push({
+        sourceId: `${a.id}|acq`, date, journal: 'OD', reference: 'IMMO',
+        label: `Reprise d'immobilisation : ${a.label}`.slice(0, 120),
+        sig: `${cout}|${amorti}|${date}|${a.asset_account}|t1`, lignes,
+      });
+      continue;
+    }
+    if (a.acq < debut) continue;
+    const aPayer = a.payment_method === 'a_payer';
+    const [compte, journal] = aPayer ? ['481', 'AC'] : tresorerie(a.payment_method);
+    out.push({
+      sourceId: `${a.id}|acq`, date: a.acq, journal, reference: 'IMMO',
+      label: `Acquisition : ${a.label}`.slice(0, 120),
+      sig: `${cout}|${a.payment_method}|${a.acq}|${a.asset_account}|t1`,
+      lignes: [ligne(a.asset_account, cout, 0), ligne(compte, 0, cout)],
+    });
+    if (aPayer && a.paid) {
+      const [ct, jr] = tresorerie(a.paid_method);
+      out.push({
+        sourceId: `${a.id}|pay`, date: a.paid, journal: jr, reference: 'REGL',
+        label: `Règlement d'immobilisation : ${a.label}`.slice(0, 120),
+        sig: `${cout}|${a.paid_method}|${a.paid}|t1`,
+        lignes: [ligne('481', cout, 0), ligne(ct, 0, cout)],
+      });
+    }
+  }
+  return out;
+}
+
+// Dotations mensuelles aux amortissements (débit 681 / crédit compte 28x).
+async function lireAmortissements(client, merchantId, debut) {
+  const out = [];
+  for (const a of await lireRegistreImmo(client, merchantId)) {
+    const premierMois = dateOuverture(a, debut).slice(0, 7);
+    for (const p of calendrierAmortissement(a, aujourdhui())) {
+      if (p.mois < premierMois) continue;
+      out.push({
+        sourceId: `${a.id}|${p.mois}`, date: p.date, journal: 'OD', reference: 'AMORT',
+        label: `Dotation amortissement : ${a.label} (${p.mois})`.slice(0, 120),
+        sig: `${p.montant}|${a.depreciation_account}|${p.date}|t1`,
+        lignes: [ligne('681', p.montant, 0), ligne(a.depreciation_account, 0, p.montant)],
+      });
+    }
+  }
+  return out;
+}
+
+// Cession ou mise au rebut : sortie du bien (et de ses amortissements), moins-value en 811,
+// prix de vente éventuel en 821.
+async function lireCessions(client, merchantId) {
+  const out = [];
+  for (const a of await lireRegistreImmo(client, merchantId)) {
+    if (!a.disp) continue;
+    const cout = arrondi(a.cost);
+    const plan = calendrierAmortissement(a, aujourdhui());
+    const amorti = plan.length > 0 ? plan[plan.length - 1].cumul : 0;
+    const vnc = arrondi(cout - amorti);
+    const prix = arrondi(a.disposal_price || 0);
+    const lignes = [];
+    if (amorti > 0) lignes.push(ligne(a.depreciation_account, amorti, 0));
+    if (vnc > 0) lignes.push(ligne('811', vnc, 0));
+    lignes.push(ligne(a.asset_account, 0, cout));
+    let journal = 'OD';
+    if (prix > 0) {
+      const [compte, j] = tresorerie(a.disposal_method);
+      journal = j;
+      lignes.push(ligne(compte, prix, 0), ligne('821', 0, prix));
+    }
+    out.push({
+      sourceId: `${a.id}|cession`, date: a.disp, journal, reference: 'CESS',
+      label: `${prix > 0 ? 'Cession' : 'Mise au rebut'} : ${a.label}`.slice(0, 120),
+      sig: `${cout}|${amorti}|${prix}|${a.disposal_method}|${a.disp}|t1`, lignes,
+    });
+  }
+  return out;
+}
+
 const SOURCES = [
   { type: 'vente', lire: lireVentes },
   { type: 'retour', lire: lireRetours },
@@ -1772,6 +2342,11 @@ const SOURCES = [
   { type: 'paie', lire: lirePaie },
   { type: 'salaire', lire: lireSalaires },
   { type: 'caisse', lire: lireCaisse },
+  { type: 'facture_charge', lire: lireFacturesCharges },
+  { type: 'reglement_charge', lire: lireReglementsCharges },
+  { type: 'immobilisation', lire: lireImmobilisations },
+  { type: 'amortissement', lire: lireAmortissements },
+  { type: 'cession', lire: lireCessions },
   { type: 'stock', lire: lireStock },
 ];
 
@@ -1793,6 +2368,11 @@ async function synchroniserMaintenant(merchantId, userId) {
       await assurerCompte(client, merchantId, '445', 'État, TVA récupérable sur achats');
       await assurerCompte(client, merchantId, '441', 'État, impôts sur les bénéfices');
       await assurerCompte(client, merchantId, '891', 'Impôts sur les bénéfices');
+      for (const [code, nom] of COMPTES_IMMO_COMMUNS) await assurerCompte(client, merchantId, code, nom);
+      for (const c of Object.values(CATEGORIES_IMMO)) {
+        await assurerCompte(client, merchantId, c.compte, c.nom);
+        if (c.amort) await assurerCompte(client, merchantId, c.amort, c.nomAmort);
+      }
       PLAN_VERIFIE.add(merchantId);
     }
 

@@ -385,6 +385,25 @@ export const api = {
   // Natures de charges proposées dans « Nouvelle sortie de caisse » (page Caisse).
   getCaisseNatures: () => request('/accounting/caisse/natures'),
 
+  // Factures de charges à payer plus tard ou payées par virement (page Caisse).
+  getCaisseFactures: () => request('/accounting/caisse/factures'),
+  createCaisseFacture: (data) =>
+    request('/accounting/caisse/factures', { method: 'POST', body: JSON.stringify(data) }),
+  payCaisseFacture: (id, data) =>
+    request(`/accounting/caisse/factures/${id}/payer`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteChargeBill: (id) => request(`/accounting/charge-bills/${id}`, { method: 'DELETE' }),
+
+  // Immobilisations et amortissements.
+  getAccountingAssetCategories: () => request('/accounting/assets/categories'),
+  getAccountingAssets: () => request('/accounting/assets'),
+  createAccountingAsset: (data) =>
+    request('/accounting/assets', { method: 'POST', body: JSON.stringify(data) }),
+  payAccountingAsset: (id, data) =>
+    request(`/accounting/assets/${id}/pay`, { method: 'POST', body: JSON.stringify(data) }),
+  disposeAccountingAsset: (id, data) =>
+    request(`/accounting/assets/${id}/dispose`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteAccountingAsset: (id) => request(`/accounting/assets/${id}`, { method: 'DELETE' }),
+
   // Impôts et cotisations dus à l'État (TVA, retenues sur salaires, CSS, IPRES, CFCE, IS).
   getAccountingStateDues: (params) => request(`/accounting/state-dues${qs(params)}`),
   getAccountingStatePayments: () => request('/accounting/state-payments'),
