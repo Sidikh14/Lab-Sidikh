@@ -9,16 +9,16 @@ import { useAuth } from '../context/AuthContext';
 // l'accès au commerçant : sinon la page redirige vers l'accueil et le lien
 // n'apparaît pas dans le menu.
 
-const fmt = (n) => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
-const dateFr = (iso) => (iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '');
-const aujourdhui = () => new Date().toISOString().slice(0, 10);
+export const fmt = (n) => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+export const dateFr = (iso) => (iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '');
+export const aujourdhui = () => new Date().toISOString().slice(0, 10);
 const debutAnnee = () => `${new Date().getFullYear()}-01-01`;
 
-const tableStyle = { width: '100%', borderCollapse: 'collapse', fontSize: 13.5 };
-const cellule = { padding: '6px 8px', borderBottom: '1px solid rgba(128,128,128,0.18)', textAlign: 'left' };
-const droite = { ...cellule, textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
-const enteteTable = { ...cellule, fontWeight: 600, color: 'var(--encre-douce)' };
-const boutonPetit = { padding: '6px 10px', fontSize: 12.5 };
+export const tableStyle = { width: '100%', borderCollapse: 'collapse', fontSize: 13.5 };
+export const cellule = { padding: '6px 8px', borderBottom: '1px solid rgba(128,128,128,0.18)', textAlign: 'left' };
+export const droite = { ...cellule, textAlign: 'right', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' };
+export const enteteTable = { ...cellule, fontWeight: 600, color: 'var(--encre-douce)' };
+export const boutonPetit = { padding: '6px 10px', fontSize: 12.5 };
 
 const useEntreprise = () => useAuth().merchant?.businessName || '';
 const libellePeriode = (p) => `Du ${dateFr(p.from)} au ${dateFr(p.to)}`;
@@ -43,7 +43,7 @@ const CLASSES = {
 };
 
 // Charge des données et les recharge quand `deps` change.
-function useDonnees(chargeur, deps) {
+export function useDonnees(chargeur, deps) {
   const [donnees, setDonnees] = useState(null);
   const [erreur, setErreur] = useState('');
   useEffect(() => {
@@ -1120,6 +1120,346 @@ function ImmobilisationsTab() {
   );
 }
 
+// ---------- Capital et financement ----------
+// Capital versé, apports et retraits de l'exploitant, emprunts reçus et remboursés.
+// Les écritures sont générées automatiquement.
+
+const TYPES_FINANCEMENT = [
+  ['capital', 'Capital (apport en capital)'],
+  ['apport', "Apport de l'exploitant (compte courant)"],
+  ['retrait', "Retrait de l'exploitant"],
+  ['emprunt', 'Emprunt reçu'],
+  ['remboursement', "Remboursement d'emprunt"],
+];
+const ENTREES_FINANCEMENT = ['capital', 'apport', 'emprunt'];
+
+function FinancementModal({ onClose, onSaved }) {
+  const [form, setForm] = useState({ kind: 'capital', label: '', amount: '', interestAmount: '', opDate: aujourdhui(), paymentMethod: 'virement' });
+  const [erreur, setErreur] = useState('');
+  const [envoi, setEnvoi] = useState(false);
+  const maj = (champ) => (e) => setForm({ ...form, [champ]: e.target.value });
+  const entree = ENTREES_FINANCEMENT.includes(form.kind);
+  const existantPossible = ['capital', 'emprunt'].includes(form.kind);
+  const modeCaisse = ['especes', 'wave', 'orange_money'].includes(form.paymentMethod);
+
+  function changerType(e) {
+    const kind = e.target.value;
+    setForm({ ...form, kind, paymentMethod: form.paymentMethod === 'existant' && !['capital', 'emprunt'].includes(kind) ? 'virement' : form.paymentMethod });
+  }
+
+  async function valider(e) {
+    e.preventDefault();
+    setErreur('');
+    setEnvoi(true);
+    try {
+      await api.createAccountingFinancing({
+        kind: form.kind, label: form.label, amount: Number(form.amount),
+        interestAmount: form.kind === 'remboursement' && form.interestAmount ? Number(form.interestAmount) : 0,
+        opDate: form.opDate, paymentMethod: form.paymentMethod,
+        warehouseId: modeCaisse ? boutiqueActive() || undefined : undefined,
+      });
+      onSaved();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnvoi(false);
+    }
+  }
+
+  return (
+    <div className="modale-fond" onClick={onClose}>
+      <div className="modale" style={{ maxWidth: 460, width: '96%', maxHeight: '92vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        <h2>Nouvelle opération de financement</h2>
+        <form onSubmit={valider}>
+          <div className="champ-groupe">
+            <label className="etiquette">Type d'opération</label>
+            <select className="champ" value={form.kind} onChange={changerType}>
+              {TYPES_FINANCEMENT.map((m) => <option key={m[0]} value={m[0]}>{m[1]}</option>)}
+            </select>
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Description (facultatif)</label>
+            <input className="champ" maxLength={150} placeholder={form.kind === 'emprunt' || form.kind === 'remboursement' ? 'Ex : Prêt banque, échéance de mars…' : 'Ex : Capital de départ…'} value={form.label} onChange={maj('label')} />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">{form.kind === 'remboursement' ? 'Capital remboursé (FCFA)' : 'Montant (FCFA)'}</label>
+            <input type="number" min="1" step="any" className="champ" value={form.amount} onChange={maj('amount')} required />
+          </div>
+          {form.kind === 'remboursement' && (
+            <div className="champ-groupe">
+              <label className="etiquette">Intérêts payés avec l'échéance (FCFA)</label>
+              <input type="number" min="0" step="any" className="champ" value={form.interestAmount} onChange={maj('interestAmount')} />
+            </div>
+          )}
+          <div className="champ-groupe">
+            <label className="etiquette">Date</label>
+            <input type="date" className="champ" value={form.opDate} max={aujourdhui()} onChange={maj('opDate')} required />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">{entree ? 'Reçu par' : 'Payé par'}</label>
+            <select className="champ" value={form.paymentMethod} onChange={maj('paymentMethod')}>
+              <option value="virement">Virement bancaire</option>
+              <option value="especes">Espèces ({entree ? 'entre en caisse' : 'sort de la caisse'})</option>
+              <option value="wave">Wave ({entree ? 'entre en caisse' : 'sort de la caisse'})</option>
+              <option value="orange_money">Orange Money ({entree ? 'entre en caisse' : 'sort de la caisse'})</option>
+              {existantPossible && <option value="existant">Déjà en place avant la comptabilité</option>}
+            </select>
+            {modeCaisse && (
+              <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '4px 0 0' }}>
+                Concerne la caisse de la boutique active (choisie sur la page Caisse).
+              </p>
+            )}
+            {form.paymentMethod === 'existant' && (
+              <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '4px 0 0' }}>
+                Repris au bilan d'ouverture, sans mouvement de trésorerie (contrepartie : report à nouveau).
+              </p>
+            )}
+          </div>
+          {erreur && <div className="erreur">{erreur}</div>}
+          <div className="actions-modale">
+            <button type="button" className="btn" onClick={onClose}>Annuler</button>
+            <button type="submit" className="btn btn-principal" disabled={envoi}>{envoi ? 'Enregistrement…' : 'Enregistrer'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function FinancementTab() {
+  const [cle, setCle] = useState(0);
+  const [donnees, erreur] = useDonnees(() => api.getAccountingFinancing(), [cle]);
+  const [modale, setModale] = useState(false);
+  const [erreurAction, setErreurAction] = useState('');
+
+  const recharger = () => {
+    setModale(false);
+    setCle((k) => k + 1);
+  };
+
+  async function supprimer(op) {
+    if (!window.confirm(`Supprimer « ${op.kindLabel} » du ${dateFr(op.date)} (${fmt(op.amount)} FCFA) ? Son écriture et le mouvement de caisse lié seront supprimés.`)) return;
+    setErreurAction('');
+    try {
+      await api.deleteAccountingFinancing(op.id);
+      recharger();
+    } catch (err) {
+      setErreurAction(err.message);
+    }
+  }
+
+  if (erreur) return <div className="erreur">{erreur}</div>;
+  if (!donnees) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
+  const { summary, operations } = donnees;
+
+  return (
+    <div className="md-carte">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+        <h2 style={{ margin: 0 }}>Capital et financement</h2>
+        <button type="button" className="btn btn-principal" style={boutonPetit} onClick={() => setModale(true)}>Nouvelle opération</button>
+      </div>
+      <p style={{ margin: '0 0 12px', color: 'var(--encre-douce)', fontSize: 13 }}>
+        Capital versé, apports et retraits de l'exploitant, emprunts et remboursements. Sans ces opérations, le bilan ne montre ni le capital ni les dettes bancaires.
+      </p>
+      {erreurAction && <div className="erreur" style={{ marginBottom: 10 }}>{erreurAction}</div>}
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', margin: '0 0 14px', fontSize: 13.5 }}>
+        <span>Capital : <strong>{fmt(summary.capital)}</strong></span>
+        <span>Compte courant de l'exploitant : <strong>{fmt(summary.currentAccount)}</strong></span>
+        <span>Emprunts restant dus : <strong>{fmt(summary.loans)}</strong></span>
+      </div>
+      {operations.length === 0 ? (
+        <p style={{ color: 'var(--encre-douce)' }}>Aucune opération enregistrée.</p>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={enteteTable}>Date</th>
+                <th style={enteteTable}>Opération</th>
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Montant</th>
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Intérêts</th>
+                <th style={enteteTable}>Mode</th>
+                <th style={enteteTable} />
+              </tr>
+            </thead>
+            <tbody>
+              {operations.map((o) => (
+                <tr key={o.id}>
+                  <td style={cellule}>{dateFr(o.date)}</td>
+                  <td style={cellule}>
+                    <strong>{o.kindLabel}</strong>
+                    {o.label && o.label !== o.kindLabel && <div style={{ color: 'var(--encre-douce)', fontSize: 12 }}>{o.label}</div>}
+                  </td>
+                  <td style={droite}>{fmt(o.amount)}</td>
+                  <td style={droite}>{o.interest ? fmt(o.interest) : ''}</td>
+                  <td style={cellule}>{o.paymentMethod === 'existant' ? 'Repris à l\'ouverture' : libelleMode(o.paymentMethod)}</td>
+                  <td style={cellule}><button type="button" className="btn" style={boutonPetit} onClick={() => supprimer(o)}>Supprimer</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {modale && <FinancementModal onClose={() => setModale(false)} onSaved={recharger} />}
+    </div>
+  );
+}
+
+// ---------- Régularisations ----------
+// Rattache chaque charge à la bonne période avant de clôturer : charge payée d'avance ou
+// charge engagée mais pas encore facturée. L'extourne est passée automatiquement le lendemain.
+
+const TYPES_REGULARISATION = [
+  ['charge_avance', "Charge constatée d'avance (payée, mais concerne la période suivante)"],
+  ['charge_a_payer', 'Charge à payer (consommée, facture pas encore reçue)'],
+];
+
+function RegularisationModal({ onClose, onSaved }) {
+  const [natures, setNatures] = useState([]);
+  const [form, setForm] = useState({ kind: 'charge_avance', chargeAccount: '', label: '', amount: '', adjDate: aujourdhui(), reverse: true });
+  const [erreur, setErreur] = useState('');
+  const [envoi, setEnvoi] = useState(false);
+  const maj = (champ) => (e) => setForm({ ...form, [champ]: e.target.value });
+
+  useEffect(() => {
+    api.getCaisseNatures().then((d) => {
+      const liste = d?.natures || [];
+      setNatures(liste);
+      setForm((f) => ({ ...f, chargeAccount: f.chargeAccount || liste[0]?.code || '' }));
+    }).catch(() => setNatures([]));
+  }, []);
+
+  async function valider(e) {
+    e.preventDefault();
+    setErreur('');
+    setEnvoi(true);
+    try {
+      await api.createAccountingAdjustment({ ...form, amount: Number(form.amount) });
+      onSaved();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnvoi(false);
+    }
+  }
+
+  return (
+    <div className="modale-fond" onClick={onClose}>
+      <div className="modale" style={{ maxWidth: 460, width: '96%', maxHeight: '92vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        <h2>Nouvelle régularisation</h2>
+        <form onSubmit={valider}>
+          <div className="champ-groupe">
+            <label className="etiquette">Type</label>
+            <select className="champ" value={form.kind} onChange={maj('kind')}>
+              {TYPES_REGULARISATION.map((m) => <option key={m[0]} value={m[0]}>{m[1]}</option>)}
+            </select>
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Nature de la charge</label>
+            <select className="champ" value={form.chargeAccount} onChange={maj('chargeAccount')} required>
+              {natures.map((n) => <option key={n.code} value={n.code}>{n.label}</option>)}
+            </select>
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Description (facultatif)</label>
+            <input className="champ" maxLength={150} placeholder="Ex : assurance annuelle, électricité de décembre…" value={form.label} onChange={maj('label')} />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Montant (FCFA)</label>
+            <input type="number" min="1" step="any" className="champ" value={form.amount} onChange={maj('amount')} required />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Date de la régularisation (ex : 31/12)</label>
+            <input type="date" className="champ" value={form.adjDate} max={aujourdhui()} onChange={maj('adjDate')} required />
+          </div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13.5, margin: '0 0 12px' }}>
+            <input type="checkbox" checked={form.reverse} onChange={(e) => setForm({ ...form, reverse: e.target.checked })} />
+            Annuler automatiquement le lendemain (extourne) — recommandé
+          </label>
+          {erreur && <div className="erreur">{erreur}</div>}
+          <div className="actions-modale">
+            <button type="button" className="btn" onClick={onClose}>Annuler</button>
+            <button type="submit" className="btn btn-principal" disabled={envoi || natures.length === 0}>{envoi ? 'Enregistrement…' : 'Enregistrer'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function RegularisationsTab() {
+  const [cle, setCle] = useState(0);
+  const [liste, erreur] = useDonnees(() => api.getAccountingAdjustments(), [cle]);
+  const [modale, setModale] = useState(false);
+  const [erreurAction, setErreurAction] = useState('');
+
+  const recharger = () => {
+    setModale(false);
+    setCle((k) => k + 1);
+  };
+
+  async function supprimer(a) {
+    if (!window.confirm(`Supprimer la régularisation « ${a.label} » (${fmt(a.amount)} FCFA) et son extourne ?`)) return;
+    setErreurAction('');
+    try {
+      await api.deleteAccountingAdjustment(a.id);
+      recharger();
+    } catch (err) {
+      setErreurAction(err.message);
+    }
+  }
+
+  if (erreur) return <div className="erreur">{erreur}</div>;
+  if (!liste) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
+
+  return (
+    <div className="md-carte">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+        <h2 style={{ margin: 0 }}>Régularisations de fin de période</h2>
+        <button type="button" className="btn btn-principal" style={boutonPetit} onClick={() => setModale(true)}>Nouvelle régularisation</button>
+      </div>
+      <p style={{ margin: '0 0 12px', color: 'var(--encre-douce)', fontSize: 13 }}>
+        À faire avant de clôturer l'exercice : une assurance payée en décembre pour toute l'année suivante n'est pas une charge de l'année écoulée (charge constatée d'avance) ; l'électricité consommée en décembre mais facturée en janvier l'est (charge à payer).
+      </p>
+      {erreurAction && <div className="erreur" style={{ marginBottom: 10 }}>{erreurAction}</div>}
+      {liste.length === 0 ? (
+        <p style={{ color: 'var(--encre-douce)' }}>Aucune régularisation enregistrée.</p>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={enteteTable}>Date</th>
+                <th style={enteteTable}>Régularisation</th>
+                <th style={enteteTable}>Charge</th>
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Montant</th>
+                <th style={enteteTable}>Extourne</th>
+                <th style={enteteTable} />
+              </tr>
+            </thead>
+            <tbody>
+              {liste.map((a) => (
+                <tr key={a.id}>
+                  <td style={cellule}>{dateFr(a.date)}</td>
+                  <td style={cellule}>
+                    <strong>{a.kindLabel}</strong>
+                    {a.label && a.label !== a.natureLabel && <div style={{ color: 'var(--encre-douce)', fontSize: 12 }}>{a.label}</div>}
+                  </td>
+                  <td style={cellule}>{a.natureLabel}</td>
+                  <td style={droite}>{fmt(a.amount)}</td>
+                  <td style={cellule}>{a.reverseDate ? `le ${dateFr(a.reverseDate)}` : 'Non'}</td>
+                  <td style={cellule}><button type="button" className="btn" style={boutonPetit} onClick={() => supprimer(a)}>Supprimer</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {modale && <RegularisationModal onClose={() => setModale(false)} onSaved={recharger} />}
+    </div>
+  );
+}
+
 // ---------- Impôts & cotisations ----------
 // Les impôts (TVA, IR/TRIMF, CFCE) se paient chaque mois. Les cotisations (CSS, IPRES)
 // suivent la périodicité choisie par le manager. Les montants sont calculés depuis les
@@ -1553,7 +1893,7 @@ function ClotureTab() {
 
 let afficherApercu = null;
 
-async function exporterPdf(payload) {
+export async function exporterPdf(payload) {
   if (!afficherApercu) return;
   afficherApercu({ titre: payload.titre, chargement: true });
   try {
@@ -1564,7 +1904,7 @@ async function exporterPdf(payload) {
   }
 }
 
-function ApercuPdf() {
+export function ApercuPdf() {
   const [etat, setEtat] = useState(null);
   const [url, setUrl] = useState('');
   const cadre = useRef(null);
@@ -1626,6 +1966,8 @@ function ApercuPdf() {
 const ONGLETS = [
   { id: 'journal', label: 'Journal', composant: JournalTab },
   { id: 'immobilisations', label: 'Immobilisations', composant: ImmobilisationsTab },
+  { id: 'financement', label: 'Capital et emprunts', composant: FinancementTab },
+  { id: 'regularisations', label: 'Régularisations', composant: RegularisationsTab },
   { id: 'cloture', label: 'Clôture', composant: ClotureTab },
   { id: 'plan', label: 'Plan comptable', composant: PlanTab },
   { id: 'grandlivre', label: 'Grand livre', composant: GrandLivreTab },
@@ -1679,7 +2021,7 @@ export function ComptabilitePage() {
         </button>
       </div>
       <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '0 0 14px' }}>
-        Reprises automatiquement : ventes, retours, règlements clients et assureurs, achats, règlements fournisseurs, salaires, sorties de caisse (dont les charges saisies dans la page Caisse), factures à payer, immobilisations et amortissements, et valeur du stock.
+        Reprises automatiquement : ventes, retours, règlements clients et assureurs, achats, règlements fournisseurs, salaires, sorties de caisse (dont les charges saisies dans la page Caisse), factures à payer, immobilisations et amortissements, capital et emprunts, et valeur du stock.
       </p>
       {synchro?.warnings?.length > 0 && (
         <ul style={{ margin: '0 0 14px', paddingLeft: 18, fontSize: 12.5, color: 'var(--encre-douce)' }}>

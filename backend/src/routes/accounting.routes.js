@@ -220,12 +220,12 @@ async function verifierCaisse(req, client, merchantId, warehouseId, mode, montan
 router.use(requireRole('manager'));
 router.use(requireModule('comptabilite'));
 // Impôts, cotisations et paiements à l'État : module Fiscalité (activé séparément par l'owner).
-router.use(['/state-dues', '/state-payments', '/tax-settings'], requireOwnerModule('fiscalite'));
+router.use(['/state-dues', '/state-payments', '/tax-settings', '/tax-profile', '/declarations', '/filings'], requireOwnerModule('fiscalite'));
 
 // Les consultations (journal, grand livre, balance, résultat, bilan) lancent
 // d'abord la synchronisation automatique (au plus une fois toutes les 30 s) :
 // rien n'est à saisir ni à actualiser à la main.
-router.use(['/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues', '/closing-preview', '/fiscal-years'], async (req, res, next) => {
+router.use(['/financing', '/adjustments', '/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues', '/closing-preview', '/fiscal-years', '/declarations'], async (req, res, next) => {
   if (req.method === 'GET') await assurerSynchro(req.user.merchantId, req.user.id);
   next();
 });
@@ -479,6 +479,245 @@ router.delete('/assets/:id', async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     repondreErreur(res, err, "Erreur lors de la suppression de l'immobilisation.");
+  } finally {
+    client.release();
+  }
+});
+
+// ---------- Capital, apports et emprunts (financement) ----------
+// Opérations qui n'apparaissent ni dans les ventes ni dans les charges : capital versé,
+// apport ou retrait de l'exploitant, emprunt reçu et remboursement (capital + intérêts).
+// Les écritures sont générées par la synchronisation à partir de cette table.
+
+const KINDS_FINANCEMENT = {
+  capital: { entree: true, label: 'Capital' },
+  apport: { entree: true, label: "Apport de l'exploitant" },
+  retrait: { entree: false, label: "Retrait de l'exploitant" },
+  emprunt: { entree: true, label: 'Emprunt reçu' },
+  remboursement: { entree: false, label: "Remboursement d'emprunt" },
+};
+const MODES_FINANCEMENT = ['especes', 'wave', 'orange_money', 'virement', 'existant'];
+
+router.get('/financing', async (req, res) => {
+  try {
+    const merchantId = req.user.merchantId;
+    const ops = await pool.query(
+      `SELECT id::text AS id, kind, label, amount, interest_amount, to_char(op_date, 'YYYY-MM-DD') AS op_date, payment_method
+       FROM accounting_financing WHERE merchant_id = $1 ORDER BY op_date DESC, created_at DESC`,
+      [merchantId]
+    );
+    const rows = await agreger(merchantId, null, aujourdhui());
+    const solde = (code, sens) => {
+      const r = rows.find((x) => x.code === code);
+      return r ? arrondi(sens === 'credit' ? r.credit - r.debit : r.debit - r.credit) : 0;
+    };
+    res.json({
+      operations: ops.rows.map((o) => ({
+        id: o.id, kind: o.kind, kindLabel: KINDS_FINANCEMENT[o.kind]?.label || o.kind, label: o.label,
+        amount: Number(o.amount), interest: Number(o.interest_amount), date: o.op_date, paymentMethod: o.payment_method,
+      })),
+      summary: { capital: solde('101', 'credit'), currentAccount: solde('462', 'credit'), loans: solde('162', 'credit') },
+    });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors du chargement du financement.');
+  }
+});
+
+router.post('/financing', async (req, res) => {
+  const { kind, paymentMethod, warehouseId } = req.body;
+  const k = KINDS_FINANCEMENT[kind];
+  const montant = arrondi(req.body.amount);
+  const interets = kind === 'remboursement' ? arrondi(req.body.interestAmount || 0) : 0;
+  const date = req.body.opDate || aujourdhui();
+  const libelle = String(req.body.label || '').trim().slice(0, 150);
+  if (!k) return res.status(400).json({ error: "Type d'opération invalide." });
+  if (!(montant > 0)) return res.status(400).json({ error: 'Le montant doit être positif.' });
+  if (interets < 0) return res.status(400).json({ error: 'Les intérêts ne peuvent pas être négatifs.' });
+  if (!MODES_FINANCEMENT.includes(paymentMethod)) return res.status(400).json({ error: 'Mode invalide.' });
+  if (paymentMethod === 'existant' && !['capital', 'emprunt'].includes(kind)) {
+    return res.status(400).json({ error: "« Déjà en place avant la comptabilité » ne concerne que le capital et un emprunt en cours." });
+  }
+  if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: 'Date invalide.' });
+  const merchantId = req.user.merchantId;
+  const enCaisse = MODES_CAISSE.includes(paymentMethod);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const debut = await debutComptabilite(client, merchantId);
+    if (date < debut && paymentMethod !== 'existant') {
+      throw erreurMetier(400, `Cette date est antérieure au début de la comptabilité (${debut}) : choisissez « Déjà en place avant la comptabilité ».`);
+    }
+    await verifierExerciceOuvert(client, merchantId, date < debut ? debut : date);
+    if (kind === 'remboursement') {
+      const s = await client.query(
+        `SELECT COALESCE(SUM(CASE WHEN kind = 'emprunt' THEN amount ELSE 0 END), 0)
+              - COALESCE(SUM(CASE WHEN kind = 'remboursement' THEN amount ELSE 0 END), 0) AS reste
+         FROM accounting_financing WHERE merchant_id = $1`,
+        [merchantId]
+      );
+      if (montant > Number(s.rows[0].reste)) {
+        throw erreurMetier(400, `Le capital remboursé dépasse le solde des emprunts enregistrés (${Math.round(Number(s.rows[0].reste)).toLocaleString('fr-FR')} FCFA). Enregistrez d'abord l'emprunt.`);
+      }
+    }
+    for (const [code, nom] of COMPTES_FINANCEMENT) await assurerCompte(client, merchantId, code, nom);
+    let depenseId = null;
+    if (enCaisse) {
+      const total = arrondi(montant + interets);
+      if (k.entree) {
+        if (!UUID_RE.test(String(warehouseId || ''))) throw erreurMetier(400, 'Choisissez la boutique dont la caisse reçoit le versement (page Caisse).');
+        const w = await client.query(`SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2`, [warehouseId, merchantId]);
+        if (w.rows.length === 0) throw erreurMetier(400, 'Boutique introuvable.');
+      } else {
+        await verifierCaisse(req, client, merchantId, warehouseId, paymentMethod, total);
+      }
+      const d = await client.query(
+        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id)
+         VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8) RETURNING id`,
+        [merchantId, req.user.id, paymentMethod, total, `${MOTIF_FINANCEMENT}${k.label}${libelle ? ` : ${libelle}` : ''}`, date, k.entree ? 'entree' : 'sortie', warehouseId]
+      );
+      depenseId = d.rows[0].id;
+    }
+    await client.query(
+      `INSERT INTO accounting_financing (merchant_id, kind, label, amount, interest_amount, op_date, payment_method, cash_expense_id, warehouse_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8, $9, $10)`,
+      [merchantId, kind, libelle || k.label, montant, interets, date, paymentMethod, depenseId, enCaisse ? warehouseId : null, req.user.id]
+    );
+    await client.query('COMMIT');
+    ETAT_SYNCHRO.delete(merchantId);
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de l'enregistrement de l'opération.");
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/financing/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Opération invalide.' });
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const r = await client.query(
+      `SELECT id, kind, amount, to_char(op_date, 'YYYY-MM-DD') AS d, cash_expense_id
+       FROM accounting_financing WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
+      [req.params.id, merchantId]
+    );
+    if (r.rows.length === 0) throw erreurMetier(404, 'Opération introuvable.');
+    const o = r.rows[0];
+    await verifierExerciceOuvert(client, merchantId, o.d);
+    if (o.kind === 'emprunt') {
+      // On ne supprime pas un emprunt déjà remboursé en partie : le solde deviendrait négatif.
+      const s = await client.query(
+        `SELECT COALESCE(SUM(CASE WHEN kind = 'emprunt' THEN amount ELSE 0 END), 0)
+              - COALESCE(SUM(CASE WHEN kind = 'remboursement' THEN amount ELSE 0 END), 0) AS reste
+         FROM accounting_financing WHERE merchant_id = $1`,
+        [merchantId]
+      );
+      if (Number(s.rows[0].reste) - Number(o.amount) < 0) {
+        throw erreurMetier(400, 'Des remboursements sont enregistrés sur cet emprunt : supprimez-les d\'abord.');
+      }
+    }
+    if (o.cash_expense_id) await client.query(`DELETE FROM cash_expenses WHERE merchant_id = $1 AND id::text = $2`, [merchantId, String(o.cash_expense_id)]);
+    await client.query(`DELETE FROM accounting_financing WHERE id = $1`, [o.id]);
+    await client.query('COMMIT');
+    ETAT_SYNCHRO.delete(merchantId);
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de la suppression de l'opération.");
+  } finally {
+    client.release();
+  }
+});
+
+// ---------- Régularisations de fin de période ----------
+// Charges payées d'avance (assurance annuelle…) ou engagées mais pas encore facturées
+// (électricité consommée en décembre, facture reçue en janvier…). Elles rattachent la
+// charge à la bonne période ; l'extourne (écriture inverse) est passée le lendemain.
+
+const KINDS_REGULARISATION = {
+  charge_avance: 'Charge constatée d\'avance',
+  charge_a_payer: 'Charge à payer',
+};
+
+router.get('/adjustments', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT id::text AS id, kind, nature_account, label, amount, reverse, to_char(adj_date, 'YYYY-MM-DD') AS adj_date
+       FROM accounting_adjustments WHERE merchant_id = $1 ORDER BY adj_date DESC, created_at DESC`,
+      [req.user.merchantId]
+    );
+    res.json(r.rows.map((a) => ({
+      id: a.id, kind: a.kind, kindLabel: KINDS_REGULARISATION[a.kind] || a.kind, natureAccount: a.nature_account,
+      natureLabel: NATURES_CHARGES.find((n) => n[1] === a.nature_account)?.[0] || a.nature_account,
+      label: a.label, amount: Number(a.amount), reverse: a.reverse, date: a.adj_date, reverseDate: a.reverse ? jourSuivant(a.adj_date) : null,
+    })));
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors du chargement des régularisations.');
+  }
+});
+
+router.post('/adjustments', async (req, res) => {
+  const { kind, chargeAccount } = req.body;
+  const montant = arrondi(req.body.amount);
+  const date = req.body.adjDate || aujourdhui();
+  const nature = NATURES_CHARGES.find((n) => n[1] === String(chargeAccount));
+  const libelle = String(req.body.label || '').trim().slice(0, 150);
+  if (!KINDS_REGULARISATION[kind]) return res.status(400).json({ error: 'Type de régularisation invalide.' });
+  if (!nature) return res.status(400).json({ error: 'Choisissez la nature de la charge.' });
+  if (!(montant > 0)) return res.status(400).json({ error: 'Le montant doit être positif.' });
+  if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: 'Date invalide.' });
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const debut = await debutComptabilite(client, merchantId);
+    if (date < debut) throw erreurMetier(400, `Cette date est antérieure au début de la comptabilité (${debut}).`);
+    await verifierExerciceOuvert(client, merchantId, date);
+    for (const [code, nom] of COMPTES_FINANCEMENT) await assurerCompte(client, merchantId, code, nom);
+    await assurerCompte(client, merchantId, nature[1], nature[0]);
+    await client.query(
+      `INSERT INTO accounting_adjustments (merchant_id, kind, nature_account, label, amount, adj_date, reverse, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6::date, $7, $8)`,
+      [merchantId, kind, nature[1], libelle || nature[0], montant, date, req.body.reverse !== false, req.user.id]
+    );
+    await client.query('COMMIT');
+    ETAT_SYNCHRO.delete(merchantId);
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de l'enregistrement de la régularisation.");
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/adjustments/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Régularisation invalide.' });
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const r = await client.query(
+      `SELECT id, reverse, to_char(adj_date, 'YYYY-MM-DD') AS d FROM accounting_adjustments WHERE id = $1 AND merchant_id = $2 FOR UPDATE`,
+      [req.params.id, merchantId]
+    );
+    if (r.rows.length === 0) throw erreurMetier(404, 'Régularisation introuvable.');
+    await verifierExerciceOuvert(client, merchantId, r.rows[0].d);
+    if (r.rows[0].reverse) await verifierExerciceOuvert(client, merchantId, jourSuivant(r.rows[0].d));
+    await client.query(`DELETE FROM accounting_adjustments WHERE id = $1`, [r.rows[0].id]);
+    await client.query('COMMIT');
+    ETAT_SYNCHRO.delete(merchantId);
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, 'Erreur lors de la suppression de la régularisation.');
   } finally {
     client.release();
   }
@@ -747,6 +986,7 @@ const MOTIF_ETAT = 'Paiement État — ';
 const MOTIF_REGLEMENT = 'Règlement facture — ';
 const MOTIF_ACQUISITION = 'Acquisition — ';
 const MOTIF_CESSION = 'Cession — ';
+const MOTIF_FINANCEMENT = 'Financement — ';
 
 async function assurerCompte(client, merchantId, code, label) {
   const r = await client.query(`SELECT id FROM accounting_accounts WHERE merchant_id = $1 AND code = $2`, [merchantId, code]);
@@ -1467,6 +1707,250 @@ router.post('/pdf', async (req, res) => {
   doc.end();
 });
 
+// ---------- Déclarations DGID (TVA, retenues sur salaires) ----------
+// Le module prépare les montants dans l'ordre des rubriques des déclarations de la DGID, avec une
+// fiche PDF à recopier dans « Mon Espace Perso » / e-Tax. Le dépôt lui-même se fait sur le portail :
+// une fois déposée, la déclaration est enregistrée ici avec son numéro de récépissé.
+
+const REGIMES = ['cgu', 'reel_simplifie', 'reel_normal'];
+const FORMES = ['societe_is', 'entreprise_individuelle'];
+const NOMS_REGIME = { cgu: 'Contribution globale unique (CGU)', reel_simplifie: 'Réel simplifié', reel_normal: 'Réel normal' };
+
+async function lireProfilFiscal(db, merchantId) {
+  const r = await db.query(
+    `SELECT ninea, legal_name, address, tax_center, regime, legal_form FROM accounting_tax_profile WHERE merchant_id = $1`,
+    [merchantId]
+  );
+  const m = await db.query(`SELECT business_name FROM merchants WHERE id = $1`, [merchantId]);
+  const p = r.rows[0] || {};
+  return {
+    ninea: p.ninea || '', legalName: p.legal_name || m.rows[0]?.business_name || '', address: p.address || '',
+    taxCenter: p.tax_center || '', regime: p.regime || 'reel_simplifie', legalForm: p.legal_form || 'societe_is',
+  };
+}
+
+router.get('/tax-profile', async (req, res) => {
+  try {
+    res.json(await lireProfilFiscal(pool, req.user.merchantId));
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la lecture du profil fiscal.');
+  }
+});
+
+router.put('/tax-profile', async (req, res) => {
+  const { ninea, legalName, address, taxCenter, regime, legalForm } = req.body;
+  if (!REGIMES.includes(regime)) return res.status(400).json({ error: "Régime d'imposition invalide." });
+  if (!FORMES.includes(legalForm)) return res.status(400).json({ error: 'Forme juridique invalide.' });
+  const net = (v, max) => (v ? String(v).trim().slice(0, max) : null);
+  try {
+    await pool.query(
+      `INSERT INTO accounting_tax_profile (merchant_id, ninea, legal_name, address, tax_center, regime, legal_form, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+       ON CONFLICT (merchant_id) DO UPDATE SET ninea = EXCLUDED.ninea, legal_name = EXCLUDED.legal_name, address = EXCLUDED.address,
+         tax_center = EXCLUDED.tax_center, regime = EXCLUDED.regime, legal_form = EXCLUDED.legal_form, updated_at = now()`,
+      [req.user.merchantId, net(ninea, 20), net(legalName, 200), net(address, 300), net(taxCenter, 200), regime, legalForm]
+    );
+    res.json(await lireProfilFiscal(pool, req.user.merchantId));
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de l'enregistrement du profil fiscal.");
+  }
+});
+
+const MOIS_RE_DECL = /^\d{4}-(0[1-9]|1[0-2])$/;
+const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
+const dateFr = (iso) => String(iso).slice(0, 10).split('-').reverse().join('/');
+const dernierJour = (mois) => {
+  const [a, m] = mois.split('-').map(Number);
+  return `${mois}-${String(new Date(a, m, 0).getDate()).padStart(2, '0')}`;
+};
+function limiteDepot(mois) {
+  const [a, m] = mois.split('-').map(Number);
+  const suivant = m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, '0')}`;
+  return `${suivant}-15`;
+}
+
+function enteteDeclaration(profil, titre, mois) {
+  return {
+    entreprise: profil.legalName || 'Entreprise',
+    titre,
+    periode: `Période : ${libellePeriode(mois)} · NINEA : ${profil.ninea || 'à renseigner'} · Régime : ${NOMS_REGIME[profil.regime]}`,
+  };
+}
+
+// GET /accounting/declarations/tva?month=AAAA-MM
+router.get('/declarations/tva', async (req, res) => {
+  try {
+    const mois = String(req.query.month || '');
+    if (!MOIS_RE_DECL.test(mois)) return res.status(400).json({ error: 'Mois invalide (AAAA-MM).' });
+    const merchantId = req.user.merchantId;
+    const profil = await lireProfilFiscal(pool, merchantId);
+    const mvt = await pool.query(
+      `SELECT to_char(e.entry_date, 'YYYY-MM') AS m, a.code, COALESCE(SUM(l.debit), 0) AS d, COALESCE(SUM(l.credit), 0) AS c
+       FROM accounting_lines l JOIN accounting_entries e ON e.id = l.entry_id JOIN accounting_accounts a ON a.id = l.account_id
+       WHERE l.merchant_id = $1 AND (a.code IN ('443', '445') OR a.code LIKE '70%') AND e.entry_date <= $2::date
+         AND e.source_type <> 'paiement_etat' GROUP BY 1, 2`,
+      [merchantId, dernierJour(mois)]
+    );
+    const facturee = {};
+    const deduc = {};
+    let chiffreHt = 0;
+    for (const r of mvt.rows) {
+      if (r.code === '443') facturee[r.m] = arrondi((facturee[r.m] || 0) + Number(r.c) - Number(r.d));
+      else if (r.code === '445') deduc[r.m] = arrondi((deduc[r.m] || 0) + Number(r.d) - Number(r.c));
+      else if (r.m === mois) chiffreHt = arrondi(chiffreHt + Number(r.c) - Number(r.d));
+    }
+    const t = chaineTva(facturee, deduc, mois)[mois] || { collectee: 0, deductible: 0, creditReporte: 0, creditUtilise: 0, creditAReporter: 0, du: 0 };
+    const baseImposable = arrondi(t.collectee / 0.18);
+    const exonere = Math.max(0, arrondi(chiffreHt - baseImposable));
+    const deposee = await pool.query(
+      `SELECT filed_on, receipt_number, amount_due FROM accounting_tax_filings WHERE merchant_id = $1 AND kind = 'tva' AND period = $2`,
+      [merchantId, mois]
+    );
+    const neant = chiffreHt === 0 && t.collectee === 0;
+    const alertes = [];
+    if (profil.regime === 'cgu') alertes.push("Régime CGU : le redevable de la CGU ne facture pas la TVA. Vérifiez votre régime dans le profil fiscal.");
+    if (!profil.ninea) alertes.push('NINEA non renseigné : complétez le profil fiscal avant de déclarer.');
+    const rubriques = [
+      ['A', "Chiffre d'affaires hors taxes du mois", chiffreHt],
+      ['A1', 'dont opérations imposables à 18 %', baseImposable],
+      ['A2', 'dont opérations exonérées (ex. médicaments et produits pharmaceutiques)', exonere],
+      ['B', 'TVA collectée (18 %)', t.collectee],
+      ['C', 'TVA déductible du mois (achats de biens et services)', t.deductible],
+      ['D', 'Crédit de TVA reporté du mois précédent', t.creditUtilise],
+      ['E', 'TVA nette à payer (B − C − D)', t.du],
+      ['F', 'Crédit de TVA à reporter sur la prochaine déclaration', t.creditAReporter],
+    ];
+    const entete = enteteDeclaration(profil, 'Déclaration de TVA', mois);
+    const pdf = {
+      ...entete,
+      sections: [
+        {
+          titre: neant ? 'Aucune opération ce mois : déclaration « NÉANT »' : `À déposer au plus tard le ${dateFr(limiteDepot(mois))}`,
+          colonnes: [{ label: 'Rubrique' }, { label: 'Désignation' }, { label: 'Montant (FCFA)', align: 'right' }],
+          lignes: rubriques.map(([code, label, montant]) => ({ fort: ['E', 'F'].includes(code), cells: [code, label, fcfa(montant)] })),
+        },
+      ],
+    };
+    res.json({
+      kind: 'tva', month: mois, profile: profil, deadline: limiteDepot(mois), neant, alertes,
+      figures: { chiffreHt, baseImposable, exonere, collectee: t.collectee, deductible: t.deductible, creditReporte: t.creditUtilise, aPayer: t.du, creditAReporter: t.creditAReporter },
+      rubriques: rubriques.map(([code, label, montant]) => ({ code, label, amount: montant })),
+      filed: deposee.rows[0] || null, pdf,
+    });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la préparation de la déclaration de TVA.');
+  }
+});
+
+// GET /accounting/declarations/vrs?month=AAAA-MM — retenues sur salaires : IR, TRIMF, CFCE.
+router.get('/declarations/vrs', async (req, res) => {
+  try {
+    const mois = String(req.query.month || '');
+    if (!MOIS_RE_DECL.test(mois)) return res.status(400).json({ error: 'Mois invalide (AAAA-MM).' });
+    const merchantId = req.user.merchantId;
+    const profil = await lireProfilFiscal(pool, merchantId);
+    const r = await pool.query(
+      `SELECT u.full_name, COALESCE(p.gross_salary, 0) AS brut, COALESCE(p.irpp, 0) AS irpp, COALESCE(p.trimf, 0) AS trimf, COALESCE(p.cfce, 0) AS cfce
+       FROM payslips p JOIN users u ON u.id = p.user_id WHERE p.merchant_id = $1 AND p.month = $2 ORDER BY u.full_name`,
+      [merchantId, mois]
+    );
+    const lignes = r.rows.map((x) => ({
+      name: x.full_name, gross: arrondi(x.brut), ir: arrondi(x.irpp), trimf: arrondi(x.trimf), cfce: arrondi(x.cfce),
+    }));
+    const tot = lignes.reduce((t, l) => ({ gross: t.gross + l.gross, ir: t.ir + l.ir, trimf: t.trimf + l.trimf, cfce: t.cfce + l.cfce }), { gross: 0, ir: 0, trimf: 0, cfce: 0 });
+    const aVerser = arrondi(tot.ir + tot.trimf + tot.cfce);
+    const deposee = await pool.query(
+      `SELECT filed_on, receipt_number, amount_due FROM accounting_tax_filings WHERE merchant_id = $1 AND kind = 'vrs' AND period = $2`,
+      [merchantId, mois]
+    );
+    const alertes = [];
+    if (!profil.ninea) alertes.push('NINEA non renseigné : complétez le profil fiscal avant de déclarer.');
+    if (lignes.length === 0) alertes.push("Aucun bulletin de paie pour ce mois : générez les bulletins dans le module Paie avant de déclarer.");
+    if (aVerser > 0 && aVerser < 20000) alertes.push("Montant inférieur à 20 000 FCFA : le versement peut se faire par trimestre, dans les 15 jours suivant le trimestre échu.");
+    const entete = enteteDeclaration(profil, 'Versement des retenues sur salaires (IR, TRIMF, CFCE)', mois);
+    const pdf = {
+      ...entete,
+      sections: [
+        {
+          titre: `À verser au plus tard le ${dateFr(limiteDepot(mois))}`,
+          colonnes: [{ label: 'Salarié' }, { label: 'Salaire brut', align: 'right' }, { label: 'IR', align: 'right' }, { label: 'TRIMF', align: 'right' }, { label: 'CFCE', align: 'right' }],
+          lignes: [
+            ...lignes.map((l) => [l.name, fcfa(l.gross), fcfa(l.ir), fcfa(l.trimf), fcfa(l.cfce)]),
+            { fort: true, cells: ['Total', fcfa(tot.gross), fcfa(tot.ir), fcfa(tot.trimf), fcfa(tot.cfce)] },
+          ],
+        },
+        {
+          titre: 'Récapitulatif du versement',
+          colonnes: [{ label: 'Désignation' }, { label: 'Montant (FCFA)', align: 'right' }],
+          lignes: [
+            ['Impôt sur le revenu retenu (IR)', fcfa(tot.ir)],
+            ['Taxe représentative de l\'impôt du minimum fiscal (TRIMF)', fcfa(tot.trimf)],
+            ['Contribution forfaitaire à la charge de l\'employeur (CFCE)', fcfa(tot.cfce)],
+            { fort: true, cells: ['Total à verser', fcfa(aVerser)] },
+          ],
+        },
+      ],
+    };
+    res.json({
+      kind: 'vrs', month: mois, profile: profil, deadline: limiteDepot(mois), alertes,
+      lines: lignes, totals: { ...tot, aVerser }, filed: deposee.rows[0] || null, pdf,
+    });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la préparation du versement des retenues sur salaires.');
+  }
+});
+
+router.get('/filings', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT id, kind, period, amount_due, filed_on, receipt_number, created_at FROM accounting_tax_filings
+       WHERE merchant_id = $1 ORDER BY period DESC, kind LIMIT 120`,
+      [req.user.merchantId]
+    );
+    res.json(r.rows);
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la lecture des déclarations déposées.');
+  }
+});
+
+// POST /accounting/filings {kind, period, filedOn, receiptNumber, amountDue, snapshot}
+router.post('/filings', async (req, res) => {
+  const { kind, period, filedOn, receiptNumber, amountDue, snapshot } = req.body;
+  if (!['tva', 'vrs'].includes(kind)) return res.status(400).json({ error: 'Type de déclaration invalide.' });
+  if (!MOIS_RE_DECL.test(String(period || ''))) return res.status(400).json({ error: 'Période invalide (AAAA-MM).' });
+  if (!dateOk(filedOn) || filedOn > aujourdhui()) return res.status(400).json({ error: 'Date de dépôt invalide.' });
+  const montant = arrondi(amountDue);
+  if (!(montant >= 0)) return res.status(400).json({ error: 'Montant invalide.' });
+  try {
+    await pool.query(
+      `INSERT INTO accounting_tax_filings (merchant_id, kind, period, amount_due, filed_on, receipt_number, snapshot, created_by)
+       VALUES ($1, $2, $3, $4, $5::date, $6, $7::jsonb, $8)
+       ON CONFLICT (merchant_id, kind, period) DO UPDATE SET amount_due = EXCLUDED.amount_due, filed_on = EXCLUDED.filed_on,
+         receipt_number = EXCLUDED.receipt_number, snapshot = EXCLUDED.snapshot, created_by = EXCLUDED.created_by`,
+      [req.user.merchantId, kind, period, montant, filedOn, receiptNumber ? String(receiptNumber).trim().slice(0, 60) : null,
+        JSON.stringify(snapshot && typeof snapshot === 'object' ? snapshot : {}), req.user.id]
+    );
+    await logActivity({
+      merchantId: req.user.merchantId, userId: req.user.id, action: 'tax_filing',
+      description: `a enregistré le dépôt de la déclaration ${kind === 'tva' ? 'de TVA' : 'des retenues sur salaires'} (${libellePeriode(period)})`,
+    });
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de l'enregistrement du dépôt.");
+  }
+});
+
+router.delete('/filings/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Dépôt introuvable.' });
+  try {
+    const r = await pool.query(`DELETE FROM accounting_tax_filings WHERE id = $1 AND merchant_id = $2`, [req.params.id, req.user.merchantId]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Dépôt introuvable.' });
+    res.json({ ok: true });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la suppression du dépôt.');
+  }
+});
+
 // ---------- Synchronisation automatique ----------
 
 const DELAI_SYNCHRO_MS = 30000;
@@ -1691,7 +2175,7 @@ async function lireCaisse(client, merchantId, debut, ctx) {
     let sigCharge = '';
 
     if (entree) {
-      if (/^de la boutique/.test(motif) || row.reason.startsWith(MOTIF_CESSION)) continue; // transfert entre boutiques, cession d'immobilisation
+      if (/^de la boutique/.test(motif) || row.reason.startsWith(MOTIF_CESSION) || row.reason.startsWith(MOTIF_FINANCEMENT)) continue; // transfert entre boutiques, cession d'immobilisation
       const [compte, j] = tresorerie(mode === 'cheque' ? 'especes' : mode);
       journal = j;
       if (/solde de debut|solde initial|solde d ouverture/.test(motif)) {
@@ -1708,7 +2192,8 @@ async function lireCaisse(client, merchantId, debut, ctx) {
       }
     } else {
       if (/^(salaire|remboursement retour|transfert vers)/.test(motif) || row.reason.startsWith('Charge — ') || row.reason.startsWith(MOTIF_ETAT)
-        || row.reason.startsWith(MOTIF_REGLEMENT) || row.reason.startsWith(MOTIF_ACQUISITION)) continue;
+        || row.reason.startsWith(MOTIF_REGLEMENT) || row.reason.startsWith(MOTIF_ACQUISITION)
+        || row.reason.startsWith(MOTIF_FINANCEMENT)) continue;
       // Nature de charge choisie dans le formulaire de la page Caisse : elle prime sur les mots-clés.
       const compteCharge = /^6\d{1,5}$/.test(row.charge_account || '') ? row.charge_account : null;
       const regle = REGLES_DEPENSES.find(([re]) => re.test(motif));
@@ -2332,6 +2817,107 @@ async function lireCessions(client, merchantId) {
   return out;
 }
 
+// ---------- Financement et régularisations : écritures automatiques ----------
+
+const COMPTES_FINANCEMENT = [
+  ['101', 'Capital social'],
+  ['462', 'Associés, comptes courants'],
+  ['162', "Emprunts auprès des établissements de crédit"],
+  ['671', "Intérêts des emprunts"],
+  ['476', "Charges constatées d'avance"],
+  ['408', 'Fournisseurs, factures non parvenues'],
+];
+
+function jourSuivant(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// Capital, apports, retraits, emprunts et remboursements. Les opérations « déjà en place
+// avant la comptabilité » (capital, emprunt en cours) sont reprises à la date de début,
+// en contrepartie du report à nouveau (121).
+async function lireFinancement(client, merchantId, debut) {
+  const r = await client.query(
+    `SELECT id::text AS id, kind, label, amount, interest_amount, payment_method, to_char(op_date, 'YYYY-MM-DD') AS d
+     FROM accounting_financing WHERE merchant_id = $1 ORDER BY op_date, created_at`,
+    [merchantId]
+  );
+  const out = [];
+  for (const row of r.rows) {
+    const montant = arrondi(row.amount);
+    const interets = arrondi(row.interest_amount);
+    const existant = row.payment_method === 'existant';
+    const date = existant && row.d < debut ? debut : row.d;
+    if (!existant && row.d < debut) continue;
+    const [compte, journal] = existant ? ['121', 'OD'] : tresorerie(row.payment_method);
+    let lignes;
+    let nom;
+    if (row.kind === 'capital') {
+      lignes = [ligne(compte, montant, 0), ligne('101', 0, montant)];
+      nom = existant ? 'Reprise du capital' : 'Apport en capital';
+    } else if (row.kind === 'apport') {
+      lignes = [ligne(compte, montant, 0), ligne('462', 0, montant)];
+      nom = "Apport de l'exploitant";
+    } else if (row.kind === 'retrait') {
+      lignes = [ligne('462', montant, 0), ligne(compte, 0, montant)];
+      nom = "Retrait de l'exploitant";
+    } else if (row.kind === 'emprunt') {
+      lignes = [ligne(compte, montant, 0), ligne('162', 0, montant)];
+      nom = existant ? "Reprise d'emprunt en cours" : 'Emprunt reçu';
+    } else {
+      lignes = [ligne('162', montant, 0)];
+      if (interets > 0) lignes.push(ligne('671', interets, 0));
+      lignes.push(ligne(compte, 0, arrondi(montant + interets)));
+      nom = "Remboursement d'emprunt";
+    }
+    out.push({
+      sourceId: row.id, date, journal, reference: 'FIN',
+      label: `${nom} : ${row.label}`.slice(0, 120),
+      sig: `${row.kind}|${montant}|${interets}|${row.payment_method}|${date}|${row.label}|t1`,
+      lignes,
+    });
+  }
+  return out;
+}
+
+// Charges constatées d'avance (476) et charges à payer (408), avec extourne le lendemain.
+async function lireRegularisations(client, merchantId, debut) {
+  const r = await client.query(
+    `SELECT id::text AS id, kind, nature_account, label, amount, reverse, to_char(adj_date, 'YYYY-MM-DD') AS d
+     FROM accounting_adjustments WHERE merchant_id = $1 AND adj_date >= $2::date ORDER BY adj_date`,
+    [merchantId, debut]
+  );
+  const out = [];
+  const jour = aujourdhui();
+  for (const a of r.rows) {
+    const montant = arrondi(a.amount);
+    const avance = a.kind === 'charge_avance';
+    const compteBilan = avance ? '476' : '408';
+    const nom = avance ? "Charge constatée d'avance" : 'Charge à payer';
+    out.push({
+      sourceId: `${a.id}|reg`, date: a.d, journal: 'OD', reference: 'REG',
+      label: `${nom} : ${a.label}`.slice(0, 120),
+      sig: `${a.kind}|${montant}|${a.nature_account}|${a.d}|${a.label}|t1`,
+      lignes: avance
+        ? [ligne(compteBilan, montant, 0), ligne(a.nature_account, 0, montant)]
+        : [ligne(a.nature_account, montant, 0), ligne(compteBilan, 0, montant)],
+    });
+    const dateExtourne = jourSuivant(a.d);
+    if (a.reverse && dateExtourne <= jour) {
+      out.push({
+        sourceId: `${a.id}|ext`, date: dateExtourne, journal: 'OD', reference: 'EXT',
+        label: `Extourne — ${nom.toLowerCase()} : ${a.label}`.slice(0, 120),
+        sig: `${a.kind}|${montant}|${a.nature_account}|${dateExtourne}|${a.label}|t1`,
+        lignes: avance
+          ? [ligne(a.nature_account, montant, 0), ligne(compteBilan, 0, montant)]
+          : [ligne(compteBilan, montant, 0), ligne(a.nature_account, 0, montant)],
+      });
+    }
+  }
+  return out;
+}
+
 const SOURCES = [
   { type: 'vente', lire: lireVentes },
   { type: 'retour', lire: lireRetours },
@@ -2347,6 +2933,8 @@ const SOURCES = [
   { type: 'immobilisation', lire: lireImmobilisations },
   { type: 'amortissement', lire: lireAmortissements },
   { type: 'cession', lire: lireCessions },
+  { type: 'financement', lire: lireFinancement },
+  { type: 'regularisation', lire: lireRegularisations },
   { type: 'stock', lire: lireStock },
 ];
 
@@ -2369,6 +2957,7 @@ async function synchroniserMaintenant(merchantId, userId) {
       await assurerCompte(client, merchantId, '441', 'État, impôts sur les bénéfices');
       await assurerCompte(client, merchantId, '891', 'Impôts sur les bénéfices');
       for (const [code, nom] of COMPTES_IMMO_COMMUNS) await assurerCompte(client, merchantId, code, nom);
+      for (const [code, nom] of COMPTES_FINANCEMENT) await assurerCompte(client, merchantId, code, nom);
       for (const c of Object.values(CATEGORIES_IMMO)) {
         await assurerCompte(client, merchantId, c.compte, c.nom);
         if (c.amort) await assurerCompte(client, merchantId, c.amort, c.nomAmort);

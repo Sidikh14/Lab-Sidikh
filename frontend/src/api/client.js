@@ -404,6 +404,18 @@ export const api = {
     request(`/accounting/assets/${id}/dispose`, { method: 'POST', body: JSON.stringify(data) }),
   deleteAccountingAsset: (id) => request(`/accounting/assets/${id}`, { method: 'DELETE' }),
 
+  // Capital, apports, emprunts et remboursements.
+  getAccountingFinancing: () => request('/accounting/financing'),
+  createAccountingFinancing: (data) =>
+    request('/accounting/financing', { method: 'POST', body: JSON.stringify(data) }),
+  deleteAccountingFinancing: (id) => request(`/accounting/financing/${id}`, { method: 'DELETE' }),
+
+  // Régularisations de fin de période (charges constatées d'avance, charges à payer).
+  getAccountingAdjustments: () => request('/accounting/adjustments'),
+  createAccountingAdjustment: (data) =>
+    request('/accounting/adjustments', { method: 'POST', body: JSON.stringify(data) }),
+  deleteAccountingAdjustment: (id) => request(`/accounting/adjustments/${id}`, { method: 'DELETE' }),
+
   // Impôts et cotisations dus à l'État (TVA, retenues sur salaires, CSS, IPRES, CFCE, IS).
   getAccountingStateDues: (params) => request(`/accounting/state-dues${qs(params)}`),
   getAccountingStatePayments: () => request('/accounting/state-payments'),
@@ -414,6 +426,15 @@ export const api = {
 
   // Impôt sur les résultats et clôture d'exercice.
   buildAccountingPdf: (payload) => requestBlob('/accounting/pdf', payload),
+  // Fiscalité : profil du contribuable, déclarations DGID préparées, dépôts enregistrés.
+  getTaxProfile: () => request('/accounting/tax-profile'),
+  setTaxProfile: (data) =>
+    request('/accounting/tax-profile', { method: 'PUT', body: JSON.stringify(data) }),
+  getTaxDeclaration: (kind, month) => request(`/accounting/declarations/${kind}?month=${encodeURIComponent(month)}`),
+  getTaxFilings: () => request('/accounting/filings'),
+  createTaxFiling: (data) =>
+    request('/accounting/filings', { method: 'POST', body: JSON.stringify(data) }),
+  deleteTaxFiling: (id) => request(`/accounting/filings/${id}`, { method: 'DELETE' }),
   getAccountingTaxSettings: () => request('/accounting/tax-settings'),
   setAccountingTaxSettings: (data) =>
     request('/accounting/tax-settings', { method: 'PUT', body: JSON.stringify(data) }),
