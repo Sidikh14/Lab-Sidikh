@@ -30,6 +30,7 @@ const insurersRoutes = require('./routes/insurers.routes');
 const zakatRoutes = require('./routes/zakat.routes');
 const maintenanceRoutes = require('./routes/maintenance.routes');
 const accountingRoutes = require('./routes/accounting.routes');
+const modulesRoutes = require('./routes/modules.routes');
 
 const app = express();
 
@@ -77,6 +78,7 @@ app.use('/insurers', insurersRoutes);
 app.use('/zakat', zakatRoutes);
 app.use('/maintenance', maintenanceRoutes); // public : état de maintenance d'un secteur
 app.use('/accounting', accountingRoutes); // module comptabilité (activé par l'owner)
+app.use('/modules', modulesRoutes); // modules activés par l'owner (menu latéral)
 
 // Gestion des routes inconnues
 app.use((req, res) => {

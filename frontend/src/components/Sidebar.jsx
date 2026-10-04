@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getSecteurConfig } from '../config/sectorConfig';
+import { useAccountingAccess } from '../hooks/useAccountingAccess';
 import { useModulesAccess } from '../hooks/useModulesAccess';
+import { ModuleNonActive } from './ModuleNonActive';
 
 function IconDashboard() {
   return (
@@ -149,6 +151,15 @@ function IconFiscalite() {
   );
 }
 
+function IconCadenasMenu() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: 'auto', opacity: 0.7, flexShrink: 0 }}>
+      <rect x="4" y="10" width="16" height="10" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
 function IconChevronGroupe({ ouvert }) {
   return (
     <svg
@@ -194,10 +205,10 @@ function IconFermer() {
   );
 }
 
-// Deux groupes repliables : un seul est ouvert à la fois, pour garder un menu court.
+// Deux groupes repliables, indépendants : ouvrir ou fermer l'un ne touche pas à l'autre.
 const TITRES_GROUPES = { gestion: 'Gestion & Stock', finance: 'Finance & Administration' };
 const CHEMINS_FINANCE = ['/comptabilite', '/fiscalite', '/paie', '/entreprise', '/equipe'];
-const CLE_GROUPE_OUVERT = 'sidebarGroupeOuvert';
+const CLE_GROUPES = 'sidebarGroupesOuverts';
 
 function groupeDuChemin(pathname) {
   if (CHEMINS_FINANCE.some((c) => pathname === c || pathname.startsWith(`${c}/`))) return 'finance';
@@ -205,12 +216,13 @@ function groupeDuChemin(pathname) {
   return 'gestion';
 }
 
-function lireGroupeMemorise() {
+// Par défaut les deux groupes sont ouverts : rien n'est caché tant qu'on ne le replie pas soi-même.
+function lireGroupesOuverts() {
   try {
-    const v = localStorage.getItem(CLE_GROUPE_OUVERT);
-    return v === 'gestion' || v === 'finance' || v === 'aucun' ? v : null;
+    const v = JSON.parse(localStorage.getItem(CLE_GROUPES));
+    return { gestion: v?.gestion !== false, finance: v?.finance !== false };
   } catch {
-    return null;
+    return { gestion: true, finance: true };
   }
 }
 
@@ -219,7 +231,11 @@ export function Sidebar({ ouvert = false, onFermer }) {
   const { pathname } = useLocation();
   const secteurConfig = getSecteurConfig(merchant?.sector);
   // Comptabilité, Fiscalité et Paie : visibles seulement si l'owner a donné l'accès.
-  const { accounting: comptaActive, fiscalite: fiscaliteActive, payroll: paieActive } = useModulesAccess();
+  const { enabled: comptaOriginale } = useAccountingAccess();
+  const { loaded: modulesCharges, accounting, fiscalite: fiscaliteActive, payroll: paieActive } = useModulesAccess();
+  const comptaActive = comptaOriginale || accounting;
+  // Module cliqué alors qu'il n'est pas activé : message « rapprochez-vous de l'administrateur ».
+  const [moduleBloque, setModuleBloque] = useState('');
   const autorises = modulesAutorises(user);
   // "Fournisseurs" héberge aussi l'onglet Achats depuis la fusion des pages
   // (20/09) : le lien reste visible si le membre a l'un OU l'autre module.
@@ -238,9 +254,13 @@ export function Sidebar({ ouvert = false, onFermer }) {
   }
 
   const liensFinance = [];
-  if (estManager && comptaActive) liensFinance.push({ to: '/comptabilite', label: 'Comptabilité', icone: IconComptabilite });
-  if (estManager && comptaActive && fiscaliteActive) liensFinance.push({ to: '/fiscalite', label: 'Fiscalité', icone: IconFiscalite });
-  if (estManager && paieActive) liensFinance.push({ to: '/paie', label: 'Paie', icone: IconSalaires });
+  // Le manager voit toujours Comptabilité, Fiscalité et Paie ; sans activation par l'owner, le clic
+  // affiche un message au lieu d'ouvrir la page (verrouillé = cadenas).
+  if (estManager) {
+    liensFinance.push({ to: '/comptabilite', label: 'Comptabilité', icone: IconComptabilite, verrouille: modulesCharges && !comptaActive });
+    liensFinance.push({ to: '/fiscalite', label: 'Fiscalité', icone: IconFiscalite, verrouille: modulesCharges && !(comptaActive && fiscaliteActive) });
+    liensFinance.push({ to: '/paie', label: 'Paie', icone: IconSalaires, verrouille: modulesCharges && !paieActive });
+  }
   if (estManager) liensFinance.push({ to: '/entreprise', label: 'Entreprise', icone: IconEntreprise });
   if (voitEquipe) liensFinance.push({ to: '/equipe', label: 'Équipe', icone: IconEquipe });
 
@@ -249,21 +269,23 @@ export function Sidebar({ ouvert = false, onFermer }) {
     { id: 'finance', liens: liensFinance },
   ].filter((g) => g.liens.length > 0);
 
-  // Groupe ouvert : celui de la page affichée ; sinon le dernier choix mémorisé ; sinon « Gestion & Stock ».
-  const [groupeOuvert, setGroupeOuvert] = useState(() => groupeDuChemin(pathname) || lireGroupeMemorise() || 'gestion');
+  const [ouverts, setOuverts] = useState(lireGroupesOuverts);
+  // Si la page affichée appartient à un groupe replié, ce groupe se rouvre (sans toucher à l'autre).
   useEffect(() => {
     const g = groupeDuChemin(pathname);
-    if (g) setGroupeOuvert(g);
+    if (g) setOuverts((o) => (o[g] ? o : { ...o, [g]: true }));
   }, [pathname]);
 
   function basculerGroupe(id) {
-    const suivant = groupeOuvert === id ? 'aucun' : id;
-    setGroupeOuvert(suivant);
-    try {
-      localStorage.setItem(CLE_GROUPE_OUVERT, suivant);
-    } catch {
-      // mémorisation facultative
-    }
+    setOuverts((o) => {
+      const suivant = { ...o, [id]: !o[id] };
+      try {
+        localStorage.setItem(CLE_GROUPES, JSON.stringify(suivant));
+      } catch {
+        // mémorisation facultative
+      }
+      return suivant;
+    });
   }
 
   const initiales = (user?.fullName || '?')
@@ -275,6 +297,22 @@ export function Sidebar({ ouvert = false, onFermer }) {
 
   const lienNav = (lien) => {
     const Icone = lien.icone;
+    if (lien.verrouille) {
+      return (
+        <li key={lien.to}>
+          <button
+            type="button"
+            className="nav-lien"
+            style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', font: 'inherit', color: 'inherit' }}
+            onClick={() => setModuleBloque(lien.label)}
+          >
+            <Icone />
+            {lien.label}
+            <IconCadenasMenu />
+          </button>
+        </li>
+      );
+    }
     return (
       <li key={lien.to}>
         <NavLink to={lien.to} className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}>
@@ -312,7 +350,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
         </li>
         {groupes.length === 1 && groupes[0].liens.map(lienNav)}
         {groupes.length > 1 && groupes.map((g) => {
-          const ouvertG = groupeOuvert === g.id;
+          const ouvertG = ouverts[g.id];
           return (
             <li key={g.id} style={{ listStyle: 'none' }}>
               <button
@@ -326,6 +364,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
           );
         })}
       </ul>
+      {moduleBloque && <ModuleNonActive nom={moduleBloque} onFermer={() => setModuleBloque('')} />}
       {user && (
         <div className="pied-sidebar">
           <span className="avatar">{initiales}</span>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
+import { PageModuleNonActive } from '../components/ModuleNonActive';
 import { api } from '../api/client';
 import { useAccountingAccess } from '../hooks/useAccountingAccess';
 import { useAuth } from '../context/AuthContext';
@@ -793,7 +794,7 @@ function BilanTab() {
   );
 }
 
-// ---------- Modes de paiement (partagés par les onglets) ----------
+// ---------- Charges ----------
 
 const MODES = [
   ['especes', 'Espèces'],
@@ -804,6 +805,317 @@ const MODES = [
 ];
 const libelleMode = (m) => (MODES.find((x) => x[0] === m) || [m, m])[1];
 const moisCourant = () => aujourdhui().slice(0, 7);
+
+// [nom, compte SYSCOHADA, mensuelle par défaut]
+const SUGGESTIONS = [
+  ['Loyer', '622', true],
+  ['Électricité / Eau', '605', true],
+  ['Téléphone et Internet', '628', true],
+  ['Assurance', '625', false],
+  ['Transport', '618', false],
+  ['Frais bancaires', '631', true],
+  ['Entretien et réparations', '624', false],
+  ['Publicité', '627', false],
+  ['Impôts et taxes', '641', false],
+];
+
+function ChargeModal({ comptes, initial, onClose, onSaved }) {
+  const [label, setLabel] = useState(initial?.label || '');
+  const [accountId, setAccountId] = useState(initial?.accountId || '');
+  const [amount, setAmount] = useState(initial?.amount ? String(Number(initial.amount)) : '');
+  const [recurrente, setRecurrente] = useState(initial?.recurrente ?? false);
+  const [jour, setJour] = useState(initial?.jour || 5);
+  const [mode, setMode] = useState(initial?.mode || 'especes');
+  const [debut, setDebut] = useState(initial?.debut || moisCourant());
+  const [erreur, setErreur] = useState('');
+  const [envoi, setEnvoi] = useState(false);
+  const classe6 = comptes.filter((c) => c.code[0] === '6' && c.is_active);
+
+  async function enregistrer(e) {
+    e.preventDefault();
+    setErreur('');
+    setEnvoi(true);
+    const data = {
+      label,
+      accountId,
+      amount: amount ? Number(amount) : null,
+      isRecurring: recurrente,
+      dayOfMonth: Number(jour),
+      paymentMethod: mode,
+      startMonth: recurrente ? debut : null,
+    };
+    try {
+      if (initial?.id) await api.updateAccountingCharge(initial.id, data);
+      else await api.createAccountingCharge(data);
+      onSaved();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnvoi(false);
+    }
+  }
+
+  return (
+    <div className="modale-fond" onClick={onClose}>
+      <div className="modale" style={{ maxWidth: 520, width: '96%', maxHeight: '92vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        <h2>{initial?.id ? 'Modifier la charge' : 'Nouvelle charge'}</h2>
+        <form onSubmit={enregistrer}>
+          <div className="champ-groupe">
+            <label className="etiquette">Nom</label>
+            <input className="champ" value={label} maxLength={150} onChange={(e) => setLabel(e.target.value)} required />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Compte de charge</label>
+            <select className="champ" value={accountId} onChange={(e) => setAccountId(e.target.value)} required>
+              <option value="">Choisir…</option>
+              {classe6.map((c) => <option key={c.id} value={c.id}>{c.code} — {c.label}</option>)}
+            </select>
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Montant habituel (FCFA)</label>
+            <input type="number" min="1" step="any" className="champ" value={amount} onChange={(e) => setAmount(e.target.value)} required={recurrente} />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Mode de paiement</label>
+            <select className="champ" value={mode} onChange={(e) => setMode(e.target.value)}>
+              {MODES.map((m) => <option key={m[0]} value={m[0]}>{m[1]}</option>)}
+            </select>
+          </div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '10px 0' }}>
+            <input type="checkbox" checked={recurrente} onChange={(e) => setRecurrente(e.target.checked)} />
+            Charge mensuelle : comptabilisée automatiquement chaque mois
+          </label>
+          {recurrente && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div className="champ-groupe">
+                <label className="etiquette">Jour du mois (1 à 28)</label>
+                <input type="number" min="1" max="28" className="champ" value={jour} onChange={(e) => setJour(e.target.value)} />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette">À partir du mois</label>
+                <input type="month" className="champ" value={debut} onChange={(e) => setDebut(e.target.value)} />
+              </div>
+            </div>
+          )}
+          {erreur && <div className="erreur">{erreur}</div>}
+          <div className="actions-modale">
+            <button type="button" className="btn" onClick={onClose}>Annuler</button>
+            <button type="submit" className="btn btn-principal" disabled={envoi}>{envoi ? 'Enregistrement…' : 'Enregistrer'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function PaiementChargeModal({ charge, onClose, onSaved }) {
+  const [date, setDate] = useState(aujourdhui());
+  const [amount, setAmount] = useState(charge.amount ? String(Number(charge.amount)) : '');
+  const [mode, setMode] = useState(charge.payment_method);
+  const [erreur, setErreur] = useState('');
+  const [envoi, setEnvoi] = useState(false);
+
+  async function valider(e) {
+    e.preventDefault();
+    setErreur('');
+    setEnvoi(true);
+    try {
+      await api.payAccountingCharge(charge.id, {
+        date, amount: Number(amount), paymentMethod: mode,
+        warehouseId: ['especes', 'wave', 'orange_money'].includes(mode) ? boutiqueActive() || undefined : undefined,
+      });
+      onSaved();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnvoi(false);
+    }
+  }
+
+  return (
+    <div className="modale-fond" onClick={onClose}>
+      <div className="modale" style={{ maxWidth: 440, width: '96%' }} onClick={(e) => e.stopPropagation()}>
+        <h2>{charge.label}</h2>
+        <p style={{ color: 'var(--encre-douce)', fontSize: 13.5 }}>
+          L'écriture comptable est créée automatiquement.
+          {['especes', 'wave', 'orange_money'].includes(mode) && " Le montant sort de la caisse de la boutique active (choisie sur la page Caisse)."}
+        </p>
+        <form onSubmit={valider}>
+          <div className="champ-groupe">
+            <label className="etiquette">Date</label>
+            <input type="date" className="champ" value={date} onChange={(e) => setDate(e.target.value)} required />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Montant (FCFA)</label>
+            <input type="number" min="1" step="any" className="champ" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette">Mode de paiement</label>
+            <select className="champ" value={mode} onChange={(e) => setMode(e.target.value)}>
+              {MODES.map((m) => <option key={m[0]} value={m[0]}>{m[1]}</option>)}
+            </select>
+          </div>
+          {erreur && <div className="erreur">{erreur}</div>}
+          <div className="actions-modale">
+            <button type="button" className="btn" onClick={onClose}>Annuler</button>
+            <button type="submit" className="btn btn-principal" disabled={envoi}>{envoi ? 'Enregistrement…' : 'Comptabiliser'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ChargesTab() {
+  const [version, setVersion] = useState(0);
+  const [modale, setModale] = useState(null); // { type: 'charge', initial } | { type: 'paiement', charge }
+  const [erreurAction, setErreurAction] = useState('');
+  // Les charges mensuelles échues sont comptabilisées d'elles-mêmes avant l'affichage.
+  const [donnees, erreur] = useDonnees(async () => {
+    await api.generateAccountingCharges().catch(() => null);
+    const [charges, historique, comptes] = await Promise.all([
+      api.getAccountingCharges(),
+      api.getAccountingChargePostings({ limit: 100 }),
+      api.getAccountingAccounts(),
+    ]);
+    return { charges, historique, comptes };
+  }, [version]);
+
+  const recharger = () => { setModale(null); setVersion((v) => v + 1); };
+
+  function suggerer([nom, code, mensuelle]) {
+    const compte = donnees.comptes.find((c) => c.code === code);
+    setModale({ type: 'charge', initial: { label: nom, accountId: compte?.id || '', recurrente: mensuelle } });
+  }
+
+  async function basculer(c) {
+    setErreurAction('');
+    try {
+      await api.updateAccountingCharge(c.id, { isActive: !c.is_active });
+      setVersion((v) => v + 1);
+    } catch (err) {
+      setErreurAction(err.message);
+    }
+  }
+
+  async function annuler(p) {
+    if (!window.confirm(`Annuler la comptabilisation « ${p.charge_label} » du ${dateFr(p.entry_date)} ?`)) return;
+    setErreurAction('');
+    try {
+      await api.cancelAccountingChargePosting(p.id);
+      setVersion((v) => v + 1);
+    } catch (err) {
+      setErreurAction(err.message);
+    }
+  }
+
+  if (erreur) return <div className="erreur">{erreur}</div>;
+  if (!donnees) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
+  const { charges, historique, comptes } = donnees;
+
+  return (
+    <div>
+      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0 }}>
+        Déclarez une charge une seule fois. Une charge mensuelle est ensuite comptabilisée toute seule à sa date ;
+        une charge ponctuelle se comptabilise en un clic. Il n'y a aucune écriture à saisir.
+      </p>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18 }}>
+        {SUGGESTIONS.map((sg) => (
+          <button key={sg[0]} type="button" className="btn" style={boutonPetit} onClick={() => suggerer(sg)}>+ {sg[0]}</button>
+        ))}
+        <button type="button" className="btn btn-principal" style={boutonPetit} onClick={() => setModale({ type: 'charge', initial: null })}>
+          Autre charge
+        </button>
+      </div>
+
+      {erreurAction && <div className="erreur">{erreurAction}</div>}
+
+      {charges.length === 0 ? (
+        <p className="etat-vide">Aucune charge déclarée. Choisissez une suggestion ci-dessus pour commencer.</p>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 26 }}>
+          {charges.map((c) => (
+            <div key={c.id} className="carte-entite" style={{ opacity: c.is_active ? 1 : 0.55 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                <div>
+                  <strong>{c.label}</strong>
+                  <div style={{ color: 'var(--encre-douce)', fontSize: 13 }}>
+                    {c.account_code} — {c.account_label} · {libelleMode(c.payment_method)}
+                  </div>
+                  <div style={{ fontSize: 13.5, marginTop: 2 }}>
+                    {c.amount ? `${fmt(c.amount)} FCFA` : 'Montant variable'}
+                    {c.is_recurring ? ` · chaque mois le ${c.day_of_month} (depuis ${c.start_month})` : ' · ponctuelle'}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                  {c.is_active && (
+                    <button type="button" className="btn btn-principal" style={boutonPetit} onClick={() => setModale({ type: 'paiement', charge: c })}>
+                      Comptabiliser un paiement
+                    </button>
+                  )}
+                  <button type="button" className="btn" style={boutonPetit}
+                    onClick={() => setModale({ type: 'charge', initial: {
+                      id: c.id, label: c.label, accountId: c.account_id, amount: c.amount, recurrente: c.is_recurring,
+                      jour: c.day_of_month || 5, mode: c.payment_method, debut: c.start_month || moisCourant(),
+                    } })}>
+                    Modifier
+                  </button>
+                  <button type="button" className="btn" style={boutonPetit} onClick={() => basculer(c)}>
+                    {c.is_active ? 'Désactiver' : 'Réactiver'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <h3 style={{ fontSize: 15 }}>Charges comptabilisées</h3>
+      {historique.length === 0 ? (
+        <p className="etat-vide">Rien de comptabilisé pour l'instant.</p>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={enteteTable}>Date</th>
+                <th style={enteteTable}>Charge</th>
+                <th style={enteteTable}>Paiement</th>
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Montant</th>
+                <th style={enteteTable}>Écriture</th>
+                <th style={enteteTable} />
+              </tr>
+            </thead>
+            <tbody>
+              {historique.map((p) => (
+                <tr key={p.id} style={{ opacity: p.cancelled ? 0.5 : 1 }}>
+                  <td style={cellule}>{dateFr(p.entry_date)}</td>
+                  <td style={cellule}>{p.charge_label}{p.period ? ` (${p.period})` : ''}</td>
+                  <td style={cellule}>{libelleMode(p.payment_method)}</td>
+                  <td style={droite}>{fmt(p.amount)}</td>
+                  <td style={cellule}>{p.cancelled ? 'Annulée' : `N°${p.entry_number}`}</td>
+                  <td style={{ ...cellule, textAlign: 'right' }}>
+                    {!p.cancelled && (
+                      <button type="button" className="btn btn-brique" style={boutonPetit} onClick={() => annuler(p)}>Annuler</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modale?.type === 'charge' && (
+        <ChargeModal comptes={comptes} initial={modale.initial} onClose={() => setModale(null)} onSaved={recharger} />
+      )}
+      {modale?.type === 'paiement' && (
+        <PaiementChargeModal charge={modale.charge} onClose={() => setModale(null)} onSaved={recharger} />
+      )}
+    </div>
+  );
+}
 
 // ---------- Impôts & cotisations ----------
 // Les impôts (TVA, IR/TRIMF, CFCE) se paient chaque mois. Les cotisations (CSS, IPRES)
@@ -1310,6 +1622,7 @@ function ApercuPdf() {
 
 const ONGLETS = [
   { id: 'journal', label: 'Journal', composant: JournalTab },
+  { id: 'charges', label: 'Charges', composant: ChargesTab },
   { id: 'cloture', label: 'Clôture', composant: ClotureTab },
   { id: 'plan', label: 'Plan comptable', composant: PlanTab },
   { id: 'grandlivre', label: 'Grand livre', composant: GrandLivreTab },
@@ -1332,7 +1645,7 @@ export function ComptabilitePage() {
   }, [enabled]);
 
   if (loading) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
-  if (!enabled) return <Navigate to="/" replace />;
+  if (!enabled) return <PageModuleNonActive nom="Comptabilité" />;
 
   async function actualiser() {
     setEnSynchro(true);
@@ -1363,7 +1676,7 @@ export function ComptabilitePage() {
         </button>
       </div>
       <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '0 0 14px' }}>
-        Reprises automatiquement : ventes, retours, règlements clients et assureurs, achats, règlements fournisseurs, salaires, sorties de caisse (dont les charges saisies dans la page Caisse) et valeur du stock.
+        Reprises automatiquement : ventes, retours, règlements clients et assureurs, achats, règlements fournisseurs, salaires, charges et valeur du stock.
       </p>
       {synchro?.warnings?.length > 0 && (
         <ul style={{ margin: '0 0 14px', paddingLeft: 18, fontSize: 12.5, color: 'var(--encre-douce)' }}>

@@ -2,6 +2,7 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useModulesAccess } from '../hooks/useModulesAccess';
 import { ImpotsTab } from './ComptabilitePage';
+import { PageModuleNonActive } from '../components/ModuleNonActive';
 
 // Module Fiscalité : impôts (TVA, IR/TRIMF, CFCE) chaque mois et cotisations (CSS, IPRES)
 // selon la périodicité choisie. Les montants viennent de la comptabilité et de la paie.
@@ -12,7 +13,7 @@ export function FiscalitePage() {
 
   if (user?.role !== 'manager') return <Navigate to="/" replace />;
   if (!loaded) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
-  if (!accounting || !fiscalite) return <Navigate to="/" replace />;
+  if (!accounting || !fiscalite) return <PageModuleNonActive nom="Fiscalité" />;
 
   return (
     <div>

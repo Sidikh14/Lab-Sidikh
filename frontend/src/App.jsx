@@ -14,6 +14,8 @@ import { SettingsPage } from './pages/SettingsPage';
 import { AdminPage } from './pages/AdminPage';
 import { WarehousesPage } from './pages/WarehousesPage';
 import { ComptabilitePage } from './pages/ComptabilitePage';
+import { FiscalitePage } from './pages/FiscalitePage';
+import { PaiePage } from './pages/PaiePage';
 import { api } from './api/client';
 import OfflineBanner from './offline/OfflineBanner';
 import CreditRequestNotifications from './components/CreditRequestNotifications';
@@ -60,11 +62,13 @@ export default function App() {
           <Route path="/achats" element={<Navigate to="/fournisseurs?tab=achats" replace />} />
           <Route path="/caisse" element={<RouteCommercant><CaissePage /></RouteCommercant>} />
           <Route path="/entreprise" element={<RouteCommercant><SettingsPage /></RouteCommercant>} />
-          <Route path="/salaires" element={<Navigate to="/equipe?tab=salaires" replace />} />
+          <Route path="/salaires" element={<Navigate to="/paie" replace />} />
+          <Route path="/paie" element={<RouteCommercant><PaiePage /></RouteCommercant>} />
           <Route path="/boutiques" element={<RouteCommercant><WarehousesPage /></RouteCommercant>} />
           <Route path="/transferts" element={<Navigate to="/boutiques?tab=transferts" replace />} />
           <Route path="/equipe" element={<RouteCommercant><TeamPage /></RouteCommercant>} />
           <Route path="/comptabilite" element={<RouteCommercant><ComptabilitePage /></RouteCommercant>} />
+          <Route path="/fiscalite" element={<RouteCommercant><FiscalitePage /></RouteCommercant>} />
           <Route
             path="/admin"
             element={

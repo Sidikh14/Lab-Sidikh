@@ -66,6 +66,8 @@ router.get('/merchants', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT m.id, m.business_name, m.sector, m.email, m.is_active, m.accounting_enabled,
+              COALESCE((to_jsonb(m)->>'payroll_enabled')::boolean, false) AS payroll_enabled,
+              COALESCE((to_jsonb(m)->>'fiscalite_enabled')::boolean, false) AS fiscalite_enabled,
               m.max_team_members, m.max_warehouses, m.created_at,
               (SELECT COUNT(*)::int FROM users u WHERE u.merchant_id = m.id) AS member_count,
               (SELECT COUNT(*)::int FROM warehouses w WHERE w.merchant_id = m.id) AS warehouse_count
@@ -153,6 +155,13 @@ router.patch('/merchants/:id/accounting', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    if (!enabled) {
+      const dep = await client.query(`SELECT fiscalite_enabled FROM merchants WHERE id = $1`, [req.params.id]);
+      if (dep.rows[0]?.fiscalite_enabled === true) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: "Retirez d'abord le module Fiscalité : il s'appuie sur la comptabilité." });
+      }
+    }
     const result = await client.query(
       `UPDATE merchants SET accounting_enabled = $1 WHERE id = $2 RETURNING id, business_name, accounting_enabled`,
       [enabled, req.params.id]
@@ -170,6 +179,51 @@ router.patch('/merchants/:id/accounting', async (req, res) => {
     res.status(500).json({ error: "Erreur lors de la mise à jour de l'accès comptabilité." });
   } finally {
     client.release();
+  }
+});
+
+// PATCH /admin/merchants/:id/payroll — donne ou retire l'accès au module Paie
+// (salaires, bulletins). Les données sont conservées si l'accès est retiré.
+router.patch('/merchants/:id/payroll', async (req, res) => {
+  const { enabled } = req.body;
+  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled doit être un booléen.' });
+  try {
+    const result = await pool.query(
+      `UPDATE merchants SET payroll_enabled = $1 WHERE id = $2 RETURNING id, business_name, payroll_enabled`,
+      [enabled, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Commerçant introuvable.' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    if (err.code === '42703') return res.status(500).json({ error: "Migration manquante : exécutez 068_modules_paie_fiscalite.sql puis réessayez." });
+    res.status(500).json({ error: "Erreur lors de la mise à jour de l'accès paie." });
+  }
+});
+
+// PATCH /admin/merchants/:id/fiscalite — donne ou retire l'accès au module Fiscalité.
+// Il lit les données de la comptabilité : la comptabilité doit donc être active.
+router.patch('/merchants/:id/fiscalite', async (req, res) => {
+  const { enabled } = req.body;
+  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled doit être un booléen.' });
+  try {
+    if (enabled) {
+      const m = await pool.query(`SELECT accounting_enabled FROM merchants WHERE id = $1`, [req.params.id]);
+      if (m.rows.length === 0) return res.status(404).json({ error: 'Commerçant introuvable.' });
+      if (m.rows[0].accounting_enabled !== true) {
+        return res.status(400).json({ error: "Activez d'abord la comptabilité : la fiscalité s'appuie sur ses données." });
+      }
+    }
+    const result = await pool.query(
+      `UPDATE merchants SET fiscalite_enabled = $1 WHERE id = $2 RETURNING id, business_name, fiscalite_enabled`,
+      [enabled, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Commerçant introuvable.' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    if (err.code === '42703') return res.status(500).json({ error: "Migration manquante : exécutez 062_fiscalite_acces.sql puis réessayez." });
+    res.status(500).json({ error: "Erreur lors de la mise à jour de l'accès fiscalité." });
   }
 });
 

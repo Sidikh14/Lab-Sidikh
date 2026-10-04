@@ -159,6 +159,7 @@ export function AdminPage() {
       await charger();
     } catch (err) {
       setErreur(err.message);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }
 
@@ -168,6 +169,7 @@ export function AdminPage() {
       await charger();
     } catch (err) {
       setErreur(err.message);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }
 
@@ -177,6 +179,7 @@ export function AdminPage() {
       await charger();
     } catch (err) {
       setErreur(err.message);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }
 
