@@ -23,12 +23,75 @@ export const boutonPetit = { padding: '6px 10px', fontSize: 12.5 };
 const useEntreprise = () => useAuth().merchant?.businessName || '';
 const libellePeriode = (p) => `Du ${dateFr(p.from)} au ${dateFr(p.to)}`;
 
-function BoutonPdf({ onClick, disabled }) {
+// Format de la sortie en cours : les fonctions d'export des onglets appellent toutes
+// exporterPdf(payload) ; le bouton « Excel » fait aiguiller ce même payload vers un fichier
+// tableur, sans dupliquer la construction du rapport dans chaque onglet.
+let formatSortie = 'pdf';
+
+function BoutonExport({ onClick, disabled }) {
+  function lancer(format) {
+    formatSortie = format;
+    try {
+      onClick();
+    } finally {
+      formatSortie = 'pdf';
+    }
+  }
   return (
-    <button type="button" className="btn" style={boutonPetit} disabled={disabled} onClick={onClick}>
-      Exporter en PDF
-    </button>
+    <div style={{ display: 'flex', gap: 8 }}>
+      <button type="button" className="btn" style={boutonPetit} disabled={disabled} onClick={() => lancer('pdf')}>
+        Exporter en PDF
+      </button>
+      <button type="button" className="btn" style={boutonPetit} disabled={disabled} onClick={() => lancer('excel')}>
+        Exporter pour Excel
+      </button>
+    </div>
   );
+}
+
+// ---------- Export tableur (CSV lisible par Excel) ----------
+// Les montants affichés (« 1 234 567,5 ») sont convertis en vrais nombres pour que les
+// colonnes se totalisent dans Excel. Séparateur « ; » + BOM UTF-8 : s'ouvre directement
+// en français, accents compris.
+
+const MONTANT_AFFICHE = /^-?\d{1,3}(?:[\u202f\u00a0 ]\d{3})*(?:,\d+)?$|^-?\d+(?:,\d+)?$/;
+
+function celluleTableur(valeur) {
+  if (valeur === null || valeur === undefined) return '';
+  let s = String(valeur);
+  if (MONTANT_AFFICHE.test(s.trim())) {
+    // Nombre : on retire les séparateurs de milliers, la virgule décimale reste (Excel FR).
+    return s.trim().replace(/[\u202f\u00a0 ]/g, '').replace('-', '-');
+  }
+  // Un texte qui commencerait par = + @ - serait pris pour une formule par le tableur.
+  if (/^[=+@\-\t\r]/.test(s)) s = `'${s}`;
+  s = s.replace(/^ +/, (esp) => '\u00a0'.repeat(esp.length)); // garde l'indentation des sous-comptes
+  return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function exporterTableur(payload) {
+  const lignesCsv = [];
+  const ajouter = (cells) => lignesCsv.push(cells.map(celluleTableur).join(';'));
+  if (payload.entreprise) ajouter([payload.entreprise]);
+  ajouter([payload.titre || 'Rapport']);
+  if (payload.periode) ajouter([payload.periode]);
+  for (const section of payload.sections || []) {
+    ajouter([]);
+    if (section.titre) ajouter([section.titre]);
+    if (section.colonnes) ajouter(section.colonnes.map((c) => c.label));
+    for (const ligne of section.lignes || []) ajouter(Array.isArray(ligne) ? ligne : ligne.cells || []);
+  }
+  const contenu = `\uFEFF${lignesCsv.join('\r\n')}\r\n`;
+  const blob = new Blob([contenu], { type: 'text/csv;charset=utf-8' });
+  const nom = `${String(payload.titre || 'rapport').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_|_$/g, '')}_${aujourdhui()}.csv`;
+  const url = URL.createObjectURL(blob);
+  const lien = document.createElement('a');
+  lien.href = url;
+  lien.download = nom;
+  document.body.appendChild(lien);
+  lien.click();
+  lien.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
 const CLASSES = {
@@ -259,7 +322,7 @@ function JournalTab() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
         <Periode periode={periode} onChange={setPeriode} />
         <div style={{ display: 'flex', gap: 8 }}>
-          <BoutonPdf disabled={!ecritures || ecritures.length === 0} onClick={exporterJournal} />
+          <BoutonExport disabled={!ecritures || ecritures.length === 0} onClick={exporterJournal} />
           <button type="button" className="btn btn-principal" disabled={!ref} onClick={() => setModale(true)}>
             Nouvelle écriture
           </button>
@@ -503,7 +566,7 @@ function GrandLivreTab() {
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
         <Periode periode={periode} onChange={setPeriode} />
-        <BoutonPdf disabled={!pret || comptesAffiches.length === 0} onClick={exporter} />
+        <BoutonExport disabled={!pret || comptesAffiches.length === 0} onClick={exporter} />
       </div>
       {erreur && <div className="erreur">{erreur}</div>}
       {!code ? (
@@ -578,7 +641,7 @@ function BalanceTab() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
         <Periode periode={periode} onChange={setPeriode} />
-        <BoutonPdf disabled={lignes.length === 0} onClick={exporter} />
+        <BoutonExport disabled={lignes.length === 0} onClick={exporter} />
       </div>
       <select className="champ" style={{ width: 'auto', marginBottom: 14 }} value={filtre} onChange={(e) => setFiltre(e.target.value)}>
         <option value="tous">Balance générale (tous les comptes)</option>
@@ -673,7 +736,7 @@ function ResultatTab() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
         <Periode periode={periode} onChange={setPeriode} />
-        <BoutonPdf disabled={!r} onClick={exporter} />
+        <BoutonExport disabled={!r} onClick={exporter} />
       </div>
       {erreur && <div className="erreur">{erreur}</div>}
       {!r ? (
@@ -746,7 +809,7 @@ function BilanTab() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
         <Periode periode={{ from: '', to: date }} unSeulJour onChange={(p) => setDate(p.to)} />
-        <BoutonPdf disabled={!b} onClick={exporter} />
+        <BoutonExport disabled={!b} onClick={exporter} />
       </div>
       {erreur && <div className="erreur">{erreur}</div>}
       {!b ? (
@@ -1894,6 +1957,10 @@ function ClotureTab() {
 let afficherApercu = null;
 
 export async function exporterPdf(payload) {
+  if (formatSortie === 'excel') {
+    exporterTableur(payload);
+    return;
+  }
   if (!afficherApercu) return;
   afficherApercu({ titre: payload.titre, chargement: true });
   try {
