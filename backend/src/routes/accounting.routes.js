@@ -225,7 +225,7 @@ router.use(['/state-dues', '/state-payments', '/tax-settings', '/tax-profile', '
 // Les consultations (journal, grand livre, balance, résultat, bilan) lancent
 // d'abord la synchronisation automatique (au plus une fois toutes les 30 s) :
 // rien n'est à saisir ni à actualiser à la main.
-router.use(['/financing', '/adjustments', '/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues', '/closing-preview', '/fiscal-years', '/declarations'], async (req, res, next) => {
+router.use(['/financing', '/adjustments', '/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues', '/closing-preview', '/fiscal-years', '/declarations', '/reconciliations'], async (req, res, next) => {
   if (req.method === 'GET') await assurerSynchro(req.user.merchantId, req.user.id);
   next();
 });
@@ -3500,6 +3500,102 @@ router.get('/balance-sheet', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors du calcul du bilan.' });
+  }
+});
+
+// ---------- Rapprochement caisse / banque / mobile money ----------
+// Compare le solde réel (relevé de la banque, application Wave ou Orange Money,
+// argent compté en caisse) au solde que la comptabilité calcule à la même date.
+// Aucune écriture n'est générée : on garde seulement la comparaison et son historique.
+
+const COMPTES_RAPPROCHEMENT = ['571', '5211', '5212', '521']; // Caisse, Wave, Orange Money, Banque
+
+// Solde débiteur (débit − crédit) de chaque compte de trésorerie, écritures jusqu'à la date incluse.
+// Les codes sont comparés exactement : 521 (banque) n'englobe pas 5211 (Wave) ni 5212 (Orange Money).
+async function soldesTresorerie(merchantId, date) {
+  const result = await pool.query(
+    `SELECT a.code, COALESCE(SUM(l.debit), 0) - COALESCE(SUM(l.credit), 0) AS solde
+     FROM accounting_lines l
+     JOIN accounting_entries e ON e.id = l.entry_id
+     JOIN accounting_accounts a ON a.id = l.account_id
+     WHERE l.merchant_id = $1 AND a.code = ANY($2::text[]) AND e.entry_date <= $3::date
+     GROUP BY a.code`,
+    [merchantId, COMPTES_RAPPROCHEMENT, date]
+  );
+  const soldes = new Map(result.rows.map((row) => [row.code, arrondi(row.solde)]));
+  return COMPTES_RAPPROCHEMENT.map((code) => ({ code, label: NOM_TRESORERIE[code], bookBalance: soldes.get(code) || 0 }));
+}
+
+// GET /accounting/reconciliations/balances?date= — soldes comptables des 4 comptes à la date.
+router.get('/reconciliations/balances', async (req, res) => {
+  const date = req.query.date || aujourdhui();
+  if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: 'Date invalide.' });
+  try {
+    res.json({ date, accounts: await soldesTresorerie(req.user.merchantId, date) });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors du calcul des soldes comptables.');
+  }
+});
+
+// GET /accounting/reconciliations?account= — historique, du plus récent au plus ancien.
+router.get('/reconciliations', async (req, res) => {
+  const compte = req.query.account ? String(req.query.account) : null;
+  if (compte && !COMPTES_RAPPROCHEMENT.includes(compte)) return res.status(400).json({ error: 'Compte invalide.' });
+  try {
+    const r = await pool.query(
+      `SELECT id::text AS id, account_code, to_char(rec_date, 'YYYY-MM-DD') AS rec_date,
+              real_balance, book_balance, note, created_at
+       FROM accounting_reconciliations
+       WHERE merchant_id = $1 AND ($2::text IS NULL OR account_code = $2)
+       ORDER BY rec_date DESC, created_at DESC
+       LIMIT 300`,
+      [req.user.merchantId, compte]
+    );
+    res.json(r.rows.map((x) => ({
+      id: x.id, accountCode: x.account_code, accountLabel: NOM_TRESORERIE[x.account_code] || x.account_code,
+      date: x.rec_date, realBalance: Number(x.real_balance), bookBalance: Number(x.book_balance),
+      gap: arrondi(Number(x.real_balance) - Number(x.book_balance)), note: x.note || '', createdAt: x.created_at,
+    })));
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors du chargement de l'historique des rapprochements.");
+  }
+});
+
+// POST /accounting/reconciliations — { accountCode, recDate, realBalance, note }
+// Le solde comptable est recalculé côté serveur (après synchro) et figé avec le solde réel.
+router.post('/reconciliations', async (req, res) => {
+  const { accountCode } = req.body;
+  const date = req.body.recDate || aujourdhui();
+  const brut = req.body.realBalance;
+  const reel = brut === null || brut === undefined || brut === '' ? NaN : Number(brut);
+  if (!COMPTES_RAPPROCHEMENT.includes(String(accountCode))) return res.status(400).json({ error: 'Choisissez le compte à rapprocher.' });
+  if (!Number.isFinite(reel) || Math.abs(reel) >= 1e15) return res.status(400).json({ error: 'Saisissez le solde réel.' });
+  if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: 'Date invalide.' });
+  const note = String(req.body.note || '').trim().slice(0, 300);
+  const merchantId = req.user.merchantId;
+  try {
+    await assurerSynchro(merchantId, req.user.id);
+    const compte = (await soldesTresorerie(merchantId, date)).find((c) => c.code === String(accountCode));
+    const ins = await pool.query(
+      `INSERT INTO accounting_reconciliations (merchant_id, account_code, rec_date, real_balance, book_balance, note, created_by)
+       VALUES ($1, $2, $3::date, $4, $5, $6, $7) RETURNING id::text AS id`,
+      [merchantId, String(accountCode), date, arrondi(reel), compte.bookBalance, note || null, req.user.id]
+    );
+    res.status(201).json({ id: ins.rows[0].id, bookBalance: compte.bookBalance, gap: arrondi(reel - compte.bookBalance) });
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de l'enregistrement du rapprochement.");
+  }
+});
+
+// DELETE /accounting/reconciliations/:id — corrige une saisie erronée (aucune écriture à annuler).
+router.delete('/reconciliations/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Rapprochement invalide.' });
+  try {
+    const r = await pool.query(`DELETE FROM accounting_reconciliations WHERE id = $1 AND merchant_id = $2`, [req.params.id, req.user.merchantId]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Rapprochement introuvable.' });
+    res.json({ ok: true });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la suppression du rapprochement.');
   }
 });
 

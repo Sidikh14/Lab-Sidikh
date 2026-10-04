@@ -416,6 +416,13 @@ export const api = {
     request('/accounting/adjustments', { method: 'POST', body: JSON.stringify(data) }),
   deleteAccountingAdjustment: (id) => request(`/accounting/adjustments/${id}`, { method: 'DELETE' }),
 
+  // Rapprochement caisse / banque / mobile money (solde réel vs solde comptable).
+  getReconciliationBalances: (params) => request(`/accounting/reconciliations/balances${qs(params)}`),
+  getReconciliations: (params) => request(`/accounting/reconciliations${qs(params)}`),
+  createReconciliation: (data) =>
+    request('/accounting/reconciliations', { method: 'POST', body: JSON.stringify(data) }),
+  deleteReconciliation: (id) => request(`/accounting/reconciliations/${id}`, { method: 'DELETE' }),
+
   // Impôts et cotisations dus à l'État (TVA, retenues sur salaires, CSS, IPRES, CFCE, IS).
   getAccountingStateDues: (params) => request(`/accounting/state-dues${qs(params)}`),
   getAccountingStatePayments: () => request('/accounting/state-payments'),

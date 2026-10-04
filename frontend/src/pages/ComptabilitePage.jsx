@@ -1523,6 +1523,171 @@ function RegularisationsTab() {
   );
 }
 
+// ---------- Rapprochement caisse / banque / mobile money ----------
+// On saisit le solde réel à une date (relevé de la banque, application Wave ou Orange Money,
+// argent compté dans la caisse). L'application affiche le solde calculé par la comptabilité à
+// la même date et l'écart. Aucune écriture n'est générée : chaque rapprochement est seulement
+// conservé avec sa date et une note facultative.
+
+const arrondiMontant = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+function styleEcart(ecart) {
+  if (ecart === null) return { color: 'var(--encre-douce)' };
+  return { color: ecart === 0 ? 'var(--succes, #1a7f4b)' : 'var(--danger, #b42318)', fontWeight: 600 };
+}
+
+function texteEcart(ecart) {
+  if (ecart === null) return '—';
+  if (ecart === 0) return 'Concorde';
+  return `${ecart > 0 ? '+' : '−'}${fmt(Math.abs(ecart))}`;
+}
+
+function RapprochementTab() {
+  const [date, setDate] = useState(aujourdhui());
+  const [cle, setCle] = useState(0);
+  const [filtre, setFiltre] = useState('');
+  const [saisies, setSaisies] = useState({});
+  const [envoi, setEnvoi] = useState('');
+  const [erreurAction, setErreurAction] = useState('');
+  const [soldes, erreurSoldes] = useDonnees(() => api.getReconciliationBalances({ date }), [date, cle]);
+  const [historique, erreurHistorique] = useDonnees(() => api.getReconciliations({ account: filtre }), [filtre, cle]);
+
+  const maj = (code, champ) => (e) => setSaisies((s) => ({ ...s, [code]: { ...s[code], [champ]: e.target.value } }));
+
+  async function enregistrer(code) {
+    const s = saisies[code] || {};
+    setErreurAction('');
+    setEnvoi(code);
+    try {
+      await api.createReconciliation({ accountCode: code, recDate: date, realBalance: Number(s.reel), note: (s.note || '').trim() });
+      setSaisies((v) => ({ ...v, [code]: { reel: '', note: '' } }));
+      setCle((k) => k + 1);
+    } catch (err) {
+      setErreurAction(err.message);
+    } finally {
+      setEnvoi('');
+    }
+  }
+
+  async function supprimer(h) {
+    if (!window.confirm(`Supprimer le rapprochement « ${h.accountLabel} » du ${dateFr(h.date)} ? Aucune écriture comptable n'est concernée.`)) return;
+    setErreurAction('');
+    try {
+      await api.deleteReconciliation(h.id);
+      setCle((k) => k + 1);
+    } catch (err) {
+      setErreurAction(err.message);
+    }
+  }
+
+  return (
+    <div className="md-carte">
+      <h2 style={{ margin: '0 0 6px' }}>Rapprochement caisse, banque et mobile money</h2>
+      <p style={{ margin: '0 0 12px', color: 'var(--encre-douce)', fontSize: 13 }}>
+        Saisissez le solde réel à la date choisie : relevé de la banque, application Wave ou Orange Money, argent compté dans la caisse.
+        Un écart nul signifie que tout concorde ; sinon vous voyez de combien le réel s'éloigne de la comptabilité.
+        Rien n'est écrit en comptabilité : c'est une comparaison.
+      </p>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
+        <label className="etiquette">Solde réel au</label>
+        <input type="date" className="champ" style={{ width: 'auto' }} value={date} max={aujourdhui()}
+          onChange={(e) => e.target.value && setDate(e.target.value)} />
+      </div>
+      {erreurSoldes && <div className="erreur">{erreurSoldes}</div>}
+      {erreurAction && <div className="erreur" style={{ marginBottom: 10 }}>{erreurAction}</div>}
+      {!soldes && !erreurSoldes && <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>}
+      {soldes && (
+        <div style={{ overflowX: 'auto', marginBottom: 24 }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={enteteTable}>Compte</th>
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Solde comptable</th>
+                <th style={enteteTable}>Solde réel (FCFA)</th>
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Écart</th>
+                <th style={enteteTable}>Note (facultatif)</th>
+                <th style={enteteTable} />
+              </tr>
+            </thead>
+            <tbody>
+              {soldes.accounts.map((c) => {
+                const s = saisies[c.code] || {};
+                const saisi = s.reel !== undefined && s.reel !== '' && Number.isFinite(Number(s.reel));
+                const ecart = saisi ? arrondiMontant(Number(s.reel) - c.bookBalance) : null;
+                return (
+                  <tr key={c.code}>
+                    <td style={cellule}><strong>{c.label}</strong></td>
+                    <td style={droite}>{fmt(c.bookBalance)}</td>
+                    <td style={cellule}>
+                      <input type="number" step="any" className="champ" style={{ width: 150 }} value={s.reel ?? ''}
+                        onChange={maj(c.code, 'reel')} placeholder="Solde réel" />
+                    </td>
+                    <td style={{ ...droite, ...styleEcart(ecart) }}>{texteEcart(ecart)}</td>
+                    <td style={cellule}>
+                      <input className="champ" style={{ minWidth: 160 }} maxLength={300} value={s.note ?? ''}
+                        onChange={maj(c.code, 'note')} placeholder="Ex : relevé du 30/09" />
+                    </td>
+                    <td style={cellule}>
+                      <button type="button" className="btn btn-principal" style={boutonPetit} disabled={!saisi || envoi === c.code}
+                        onClick={() => enregistrer(c.code)}>
+                        {envoi === c.code ? 'Enregistrement…' : 'Enregistrer'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p style={{ margin: '8px 0 0', color: 'var(--encre-douce)', fontSize: 12.5 }}>
+            Écart = solde réel − solde comptable. Positif : il y a plus d'argent que la comptabilité n'en compte ; négatif : il en manque.
+          </p>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+        <h3 style={{ margin: 0 }}>Historique</h3>
+        <select className="champ" style={{ width: 'auto' }} value={filtre} onChange={(e) => setFiltre(e.target.value)}>
+          <option value="">Tous les comptes</option>
+          {(soldes?.accounts || []).map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+        </select>
+      </div>
+      {erreurHistorique && <div className="erreur">{erreurHistorique}</div>}
+      {!historique && !erreurHistorique && <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>}
+      {historique && historique.length === 0 && <p style={{ color: 'var(--encre-douce)' }}>Aucun rapprochement enregistré.</p>}
+      {historique && historique.length > 0 && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={enteteTable}>Date</th>
+                <th style={enteteTable}>Compte</th>
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Solde réel</th>
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Solde comptable</th>
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Écart</th>
+                <th style={enteteTable}>Note</th>
+                <th style={enteteTable} />
+              </tr>
+            </thead>
+            <tbody>
+              {historique.map((h) => (
+                <tr key={h.id}>
+                  <td style={cellule}>{dateFr(h.date)}</td>
+                  <td style={cellule}>{h.accountLabel}</td>
+                  <td style={droite}>{fmt(h.realBalance)}</td>
+                  <td style={droite}>{fmt(h.bookBalance)}</td>
+                  <td style={{ ...droite, ...styleEcart(h.gap) }}>{texteEcart(h.gap)}</td>
+                  <td style={cellule}>{h.note}</td>
+                  <td style={cellule}><button type="button" className="btn" style={boutonPetit} onClick={() => supprimer(h)}>Supprimer</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- Impôts & cotisations ----------
 // Les impôts (TVA, IR/TRIMF, CFCE) se paient chaque mois. Les cotisations (CSS, IPRES)
 // suivent la périodicité choisie par le manager. Les montants sont calculés depuis les
@@ -2035,6 +2200,7 @@ const ONGLETS = [
   { id: 'immobilisations', label: 'Immobilisations', composant: ImmobilisationsTab },
   { id: 'financement', label: 'Capital et emprunts', composant: FinancementTab },
   { id: 'regularisations', label: 'Régularisations', composant: RegularisationsTab },
+  { id: 'rapprochement', label: 'Rapprochement', composant: RapprochementTab },
   { id: 'cloture', label: 'Clôture', composant: ClotureTab },
   { id: 'plan', label: 'Plan comptable', composant: PlanTab },
   { id: 'grandlivre', label: 'Grand livre', composant: GrandLivreTab },
