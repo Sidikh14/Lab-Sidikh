@@ -277,7 +277,15 @@ function ProfilTab() {
       {succes && <p style={{ color: 'var(--succes, #1a7f37)', fontSize: 13 }}>{succes}</p>}
       <div className="champ-groupe">
         <label className="etiquette">NINEA</label>
-        <input type="text" className="champ" maxLength={20} value={profil.ninea} onChange={maj('ninea')} />
+        <input
+          type="text" className="champ" maxLength={20} value={profil.ninea} onChange={maj('ninea')}
+          readOnly={profil.nineaSource === 'entreprise'}
+        />
+        <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '4px 0 0' }}>
+          {profil.nineaSource === 'entreprise'
+            ? 'Repris de la page Entreprise (à modifier là-bas).'
+            : 'Non trouvé dans la page Entreprise : renseignez-le là-bas pour qu\'il soit repris automatiquement.'}
+        </p>
       </div>
       <div className="champ-groupe">
         <label className="etiquette">Raison sociale</label>
@@ -285,7 +293,13 @@ function ProfilTab() {
       </div>
       <div className="champ-groupe">
         <label className="etiquette">Adresse</label>
-        <input type="text" className="champ" maxLength={300} value={profil.address} onChange={maj('address')} />
+        <input
+          type="text" className="champ" maxLength={300} value={profil.address} onChange={maj('address')}
+          readOnly={profil.addressSource === 'entreprise'}
+        />
+        {profil.addressSource === 'entreprise' && (
+          <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '4px 0 0' }}>Reprise de la page Entreprise.</p>
+        )}
       </div>
       <div className="champ-groupe">
         <label className="etiquette">Centre des services fiscaux de rattachement</label>

@@ -1721,10 +1721,20 @@ async function lireProfilFiscal(db, merchantId) {
     `SELECT ninea, legal_name, address, tax_center, regime, legal_form FROM accounting_tax_profile WHERE merchant_id = $1`,
     [merchantId]
   );
-  const m = await db.query(`SELECT business_name FROM merchants WHERE id = $1`, [merchantId]);
+  // Les informations de l'entreprise (NINEA, adresse, nom) viennent de la page Entreprise : c'est elle
+  // qui fait foi. Le profil fiscal ne sert qu'à ce qui n'y figure pas (centre des impôts, régime…).
+  const m = await db.query(`SELECT business_name, to_jsonb(m) AS fiche FROM merchants m WHERE id = $1`, [merchantId]);
+  const fiche = m.rows[0]?.fiche || {};
+  const premier = (...cles) => cles.map((k) => fiche[k]).find((v) => typeof v === 'string' && v.trim()) || '';
   const p = r.rows[0] || {};
+  const nineaEntreprise = String(premier('ninea', 'ninea_number', 'numero_ninea', 'tax_id')).trim();
+  const adresseEntreprise = String(premier('address', 'adresse', 'business_address')).trim();
   return {
-    ninea: p.ninea || '', legalName: p.legal_name || m.rows[0]?.business_name || '', address: p.address || '',
+    ninea: nineaEntreprise || p.ninea || '',
+    nineaSource: nineaEntreprise ? 'entreprise' : p.ninea ? 'profil' : '',
+    legalName: p.legal_name || m.rows[0]?.business_name || '',
+    address: adresseEntreprise || p.address || '',
+    addressSource: adresseEntreprise ? 'entreprise' : p.address ? 'profil' : '',
     taxCenter: p.tax_center || '', regime: p.regime || 'reel_simplifie', legalForm: p.legal_form || 'societe_is',
   };
 }
@@ -1773,7 +1783,7 @@ function enteteDeclaration(profil, titre, mois) {
   return {
     entreprise: profil.legalName || 'Entreprise',
     titre,
-    periode: `Période : ${libellePeriode(mois)} · NINEA : ${profil.ninea || 'à renseigner'} · Régime : ${NOMS_REGIME[profil.regime]}`,
+    periode: `Période : ${libellePeriode(mois)} · NINEA : ${profil.ninea || 'à renseigner (page Entreprise)'} · Régime : ${NOMS_REGIME[profil.regime]}`,
   };
 }
 
@@ -1809,7 +1819,7 @@ router.get('/declarations/tva', async (req, res) => {
     const neant = chiffreHt === 0 && t.collectee === 0;
     const alertes = [];
     if (profil.regime === 'cgu') alertes.push("Régime CGU : le redevable de la CGU ne facture pas la TVA. Vérifiez votre régime dans le profil fiscal.");
-    if (!profil.ninea) alertes.push('NINEA non renseigné : complétez le profil fiscal avant de déclarer.');
+    if (!profil.ninea) alertes.push('NINEA non renseigné : renseignez-le dans la page Entreprise avant de déclarer.');
     const rubriques = [
       ['A', "Chiffre d'affaires hors taxes du mois", chiffreHt],
       ['A1', 'dont opérations imposables à 18 %', baseImposable],
@@ -1864,7 +1874,7 @@ router.get('/declarations/vrs', async (req, res) => {
       [merchantId, mois]
     );
     const alertes = [];
-    if (!profil.ninea) alertes.push('NINEA non renseigné : complétez le profil fiscal avant de déclarer.');
+    if (!profil.ninea) alertes.push('NINEA non renseigné : renseignez-le dans la page Entreprise avant de déclarer.');
     if (lignes.length === 0) alertes.push("Aucun bulletin de paie pour ce mois : générez les bulletins dans le module Paie avant de déclarer.");
     if (aVerser > 0 && aVerser < 20000) alertes.push("Montant inférieur à 20 000 FCFA : le versement peut se faire par trimestre, dans les 15 jours suivant le trimestre échu.");
     const entete = enteteDeclaration(profil, 'Versement des retenues sur salaires (IR, TRIMF, CFCE)', mois);
