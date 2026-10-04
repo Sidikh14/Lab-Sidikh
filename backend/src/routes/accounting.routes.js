@@ -220,7 +220,7 @@ async function verifierCaisse(req, client, merchantId, warehouseId, mode, montan
 router.use(requireRole('manager'));
 router.use(requireModule('comptabilite'));
 // Impôts, cotisations et paiements à l'État : module Fiscalité (activé séparément par l'owner).
-router.use(['/state-dues', '/state-payments', '/tax-settings', '/tax-profile', '/declarations', '/filings'], requireOwnerModule('fiscalite'));
+router.use(['/state-dues', '/state-payments', '/tax-settings', '/tax-profile', '/declarations', '/filings', '/brs-entries'], requireOwnerModule('fiscalite'));
 
 // Les consultations (journal, grand livre, balance, résultat, bilan) lancent
 // d'abord la synchronisation automatique (au plus une fois toutes les 30 s) :
@@ -1766,7 +1766,16 @@ router.put('/tax-profile', async (req, res) => {
   }
 });
 
-const MOIS_RE_DECL = /^\d{4}-(0[1-9]|1[0-2])$/;
+// ---------- Documents de déclaration au format DGID ----------
+// Chaque déclaration reprend la présentation des documents de « Mon Espace Perso » : bloc
+// « Contribuable et renseignements fiscaux » puis « Annexe fiscale » avec des lignes numérotées.
+// Seuls les numéros de la CEL sur la valeur ajoutée viennent d'un document officiel ; ceux de la
+// TVA, des retenues sur salaires et de la BRS sont provisoires (provisoire: true) tant que le
+// formulaire officiel correspondant n'a pas été fourni.
+
+const NOMS_DECL = { tva: 'Déclaration de TVA', vrs: 'Retenues sur salaires (IR, TRIMF, CFCE)', brs: 'Retenue à la source (BRS)', cel: 'CEL sur la valeur ajoutée' };
+const MOIS_MOIS_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+const ANNEE_RE = /^\d{4}$/;
 const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
 const dateFr = (iso) => String(iso).slice(0, 10).split('-').reverse().join('/');
 const dernierJour = (mois) => {
@@ -1778,20 +1787,62 @@ function limiteDepot(mois) {
   const suivant = m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, '0')}`;
   return `${suivant}-15`;
 }
+const libelleOuiNon = (v) => (v ? 'OUI' : 'NON');
 
-function enteteDeclaration(profil, titre, mois) {
-  return {
-    entreprise: profil.legalName || 'Entreprise',
-    titre,
-    periode: `Période : ${libellePeriode(mois)} · NINEA : ${profil.ninea || 'à renseigner (page Entreprise)'} · Régime : ${NOMS_REGIME[profil.regime]}`,
+// Assemble le document commun : en-tête, annexe fiscale numérotée, annexes nominatives, fiche PDF.
+function construireDocument({ kind, profil, periodeLabel, debut, fin, limiteDepotIso, limitePaiementIso, lignes, annexes = [], provisoire, alertes = [], titreAnnexe = 'Annexe fiscale' }) {
+  const titre = NOMS_DECL[kind];
+  const objet = titre;
+  const entete = [
+    ['NINEA', profil.ninea || '—', "PÉRIODE D'IMPOSITION", periodeLabel],
+    ["COMPTE D'IMPÔT", '—', 'NOM DU CONTRIBUABLE', profil.legalName || '—'],
+    ['CENTRE FISCAL', profil.taxCenter || '—', 'TYPE DE TAXE', titre],
+    ['ÉTABLISSEMENT', '—', 'CENTRE DE PERCEPTION', '—'],
+    ['DÉBUT DE LA PÉRIODE', dateFr(debut), 'OBJET IMPOSABLE', objet],
+    ['DATE LIMITE DE DÉPÔT', dateFr(limiteDepotIso), 'FIN DE LA PÉRIODE', dateFr(fin)],
+    ['ADRESSE DE CORRESPONDANCE', profil.address || '—', 'DATE LIMITE DE PAIEMENT', dateFr(limitePaiementIso)],
+  ];
+  const valeur = (l) => (l.type === 'ouinon' ? libelleOuiNon(l.value) : l.value === null || l.value === undefined ? '' : l.type === 'nombre' ? String(l.value) : fcfa(l.value));
+  const pdf = {
+    entreprise: 'RÉPUBLIQUE DU SÉNÉGAL · Un Peuple – Un But – Une Foi',
+    titre: titre.toUpperCase(),
+    periode: `DGID – Ministère des Finances et du Budget · Mon Espace Perso · Préparé par Amaterasu${provisoire ? ' · numéros de ligne provisoires' : ''}`,
+    sections: [
+      {
+        colonnes: [{ label: 'CONTRIBUABLE ET RENSEIGNEMENTS FISCAUX' }, { label: '' }, { label: '' }, { label: '' }],
+        lignes: entete,
+      },
+      {
+        colonnes: [{ label: titreAnnexe }, { label: 'Ligne', align: 'right' }, { label: 'Montant', align: 'right' }],
+        lignes: lignes.map((l) => ({ fort: l.fort === true, cells: [l.label, String(l.ligne), valeur(l)] })),
+      },
+      ...annexes.map((x) => ({ titre: x.titre, colonnes: x.colonnes, lignes: x.lignes })),
+    ],
   };
+  return {
+    kind, title: titre, period: periodeLabel, deadline: limiteDepotIso, deadlinePay: limitePaiementIso,
+    provisoire, alertes, header: entete, lines: lignes, annexes, pdf,
+  };
+}
+
+async function depotEnregistre(merchantId, kind, period) {
+  const r = await pool.query(
+    `SELECT filed_on, receipt_number, amount_due FROM accounting_tax_filings WHERE merchant_id = $1 AND kind = $2 AND period = $3`,
+    [merchantId, kind, period]
+  );
+  return r.rows[0] || null;
+}
+
+function alertesProfil(profil, alertes) {
+  if (!profil.ninea) alertes.push('NINEA non renseigné : renseignez-le dans la page Entreprise avant de déclarer.');
+  if (!profil.taxCenter) alertes.push('Centre fiscal non renseigné : complétez le profil fiscal.');
 }
 
 // GET /accounting/declarations/tva?month=AAAA-MM
 router.get('/declarations/tva', async (req, res) => {
   try {
     const mois = String(req.query.month || '');
-    if (!MOIS_RE_DECL.test(mois)) return res.status(400).json({ error: 'Mois invalide (AAAA-MM).' });
+    if (!MOIS_MOIS_RE.test(mois)) return res.status(400).json({ error: 'Mois invalide (AAAA-MM).' });
     const merchantId = req.user.merchantId;
     const profil = await lireProfilFiscal(pool, merchantId);
     const mvt = await pool.query(
@@ -1809,54 +1860,39 @@ router.get('/declarations/tva', async (req, res) => {
       else if (r.code === '445') deduc[r.m] = arrondi((deduc[r.m] || 0) + Number(r.d) - Number(r.c));
       else if (r.m === mois) chiffreHt = arrondi(chiffreHt + Number(r.c) - Number(r.d));
     }
-    const t = chaineTva(facturee, deduc, mois)[mois] || { collectee: 0, deductible: 0, creditReporte: 0, creditUtilise: 0, creditAReporter: 0, du: 0 };
+    const t = chaineTva(facturee, deduc, mois)[mois] || { collectee: 0, deductible: 0, creditUtilise: 0, creditAReporter: 0, du: 0 };
     const baseImposable = arrondi(t.collectee / 0.18);
     const exonere = Math.max(0, arrondi(chiffreHt - baseImposable));
-    const deposee = await pool.query(
-      `SELECT filed_on, receipt_number, amount_due FROM accounting_tax_filings WHERE merchant_id = $1 AND kind = 'tva' AND period = $2`,
-      [merchantId, mois]
-    );
     const neant = chiffreHt === 0 && t.collectee === 0;
     const alertes = [];
-    if (profil.regime === 'cgu') alertes.push("Régime CGU : le redevable de la CGU ne facture pas la TVA. Vérifiez votre régime dans le profil fiscal.");
-    if (!profil.ninea) alertes.push('NINEA non renseigné : renseignez-le dans la page Entreprise avant de déclarer.');
-    const rubriques = [
-      ['A', "Chiffre d'affaires hors taxes du mois", chiffreHt],
-      ['A1', 'dont opérations imposables à 18 %', baseImposable],
-      ['A2', 'dont opérations exonérées (ex. médicaments et produits pharmaceutiques)', exonere],
-      ['B', 'TVA collectée (18 %)', t.collectee],
-      ['C', 'TVA déductible du mois (achats de biens et services)', t.deductible],
-      ['D', 'Crédit de TVA reporté du mois précédent', t.creditUtilise],
-      ['E', 'TVA nette à payer (B − C − D)', t.du],
-      ['F', 'Crédit de TVA à reporter sur la prochaine déclaration', t.creditAReporter],
+    alertesProfil(profil, alertes);
+    if (profil.regime === 'cgu') alertes.push('Régime CGU : le redevable de la CGU ne facture pas la TVA. Vérifiez votre régime dans le profil fiscal.');
+    if (neant) alertes.push('Aucune opération ce mois : déclaration « NÉANT ».');
+    const lignes = [
+      { ligne: 5, label: "Chiffre d'affaires total du mois (HT)", value: chiffreHt },
+      { ligne: 10, label: 'Opérations exonérées (ex. médicaments et produits pharmaceutiques)', value: exonere },
+      { ligne: 15, label: "Chiffre d'affaires imposable à 18 %", value: baseImposable },
+      { ligne: 20, label: 'TVA collectée', value: t.collectee },
+      { ligne: 25, label: 'TVA déductible sur achats de biens et services', value: t.deductible },
+      { ligne: 30, label: 'Crédit de TVA reporté du mois précédent', value: t.creditUtilise },
+      { ligne: 35, label: 'TVA nette à payer (ligne 20 − 25 − 30)', value: t.du, fort: true },
+      { ligne: 40, label: 'Crédit de TVA à reporter sur la prochaine déclaration', value: t.creditAReporter, fort: true },
     ];
-    const entete = enteteDeclaration(profil, 'Déclaration de TVA', mois);
-    const pdf = {
-      ...entete,
-      sections: [
-        {
-          titre: neant ? 'Aucune opération ce mois : déclaration « NÉANT »' : `À déposer au plus tard le ${dateFr(limiteDepot(mois))}`,
-          colonnes: [{ label: 'Rubrique' }, { label: 'Désignation' }, { label: 'Montant (FCFA)', align: 'right' }],
-          lignes: rubriques.map(([code, label, montant]) => ({ fort: ['E', 'F'].includes(code), cells: [code, label, fcfa(montant)] })),
-        },
-      ],
-    };
-    res.json({
-      kind: 'tva', month: mois, profile: profil, deadline: limiteDepot(mois), neant, alertes,
-      figures: { chiffreHt, baseImposable, exonere, collectee: t.collectee, deductible: t.deductible, creditReporte: t.creditUtilise, aPayer: t.du, creditAReporter: t.creditAReporter },
-      rubriques: rubriques.map(([code, label, montant]) => ({ code, label, amount: montant })),
-      filed: deposee.rows[0] || null, pdf,
+    const doc = construireDocument({
+      kind: 'tva', profil, periodeLabel: libellePeriode(mois), debut: `${mois}-01`, fin: dernierJour(mois),
+      limiteDepotIso: limiteDepot(mois), limitePaiementIso: limiteDepot(mois), lignes, provisoire: true, alertes,
     });
+    res.json({ ...doc, month: mois, amountDue: t.du, snapshot: { chiffreHt, baseImposable, exonere, collectee: t.collectee, deductible: t.deductible, aPayer: t.du }, filed: await depotEnregistre(merchantId, 'tva', mois) });
   } catch (err) {
     repondreErreur(res, err, 'Erreur lors de la préparation de la déclaration de TVA.');
   }
 });
 
-// GET /accounting/declarations/vrs?month=AAAA-MM — retenues sur salaires : IR, TRIMF, CFCE.
+// GET /accounting/declarations/vrs?month=AAAA-MM — retenues sur salaires, un impôt par ligne.
 router.get('/declarations/vrs', async (req, res) => {
   try {
     const mois = String(req.query.month || '');
-    if (!MOIS_RE_DECL.test(mois)) return res.status(400).json({ error: 'Mois invalide (AAAA-MM).' });
+    if (!MOIS_MOIS_RE.test(mois)) return res.status(400).json({ error: 'Mois invalide (AAAA-MM).' });
     const merchantId = req.user.merchantId;
     const profil = await lireProfilFiscal(pool, merchantId);
     const r = await pool.query(
@@ -1864,49 +1900,211 @@ router.get('/declarations/vrs', async (req, res) => {
        FROM payslips p JOIN users u ON u.id = p.user_id WHERE p.merchant_id = $1 AND p.month = $2 ORDER BY u.full_name`,
       [merchantId, mois]
     );
-    const lignes = r.rows.map((x) => ({
-      name: x.full_name, gross: arrondi(x.brut), ir: arrondi(x.irpp), trimf: arrondi(x.trimf), cfce: arrondi(x.cfce),
-    }));
-    const tot = lignes.reduce((t, l) => ({ gross: t.gross + l.gross, ir: t.ir + l.ir, trimf: t.trimf + l.trimf, cfce: t.cfce + l.cfce }), { gross: 0, ir: 0, trimf: 0, cfce: 0 });
+    const salaries = r.rows.map((x) => ({ name: x.full_name, gross: arrondi(x.brut), ir: arrondi(x.irpp), trimf: arrondi(x.trimf), cfce: arrondi(x.cfce) }));
+    const tot = salaries.reduce((t, l) => ({ gross: t.gross + l.gross, ir: t.ir + l.ir, trimf: t.trimf + l.trimf, cfce: t.cfce + l.cfce }), { gross: 0, ir: 0, trimf: 0, cfce: 0 });
     const aVerser = arrondi(tot.ir + tot.trimf + tot.cfce);
-    const deposee = await pool.query(
-      `SELECT filed_on, receipt_number, amount_due FROM accounting_tax_filings WHERE merchant_id = $1 AND kind = 'vrs' AND period = $2`,
-      [merchantId, mois]
-    );
     const alertes = [];
-    if (!profil.ninea) alertes.push('NINEA non renseigné : renseignez-le dans la page Entreprise avant de déclarer.');
-    if (lignes.length === 0) alertes.push("Aucun bulletin de paie pour ce mois : générez les bulletins dans le module Paie avant de déclarer.");
-    if (aVerser > 0 && aVerser < 20000) alertes.push("Montant inférieur à 20 000 FCFA : le versement peut se faire par trimestre, dans les 15 jours suivant le trimestre échu.");
-    const entete = enteteDeclaration(profil, 'Versement des retenues sur salaires (IR, TRIMF, CFCE)', mois);
-    const pdf = {
-      ...entete,
-      sections: [
-        {
-          titre: `À verser au plus tard le ${dateFr(limiteDepot(mois))}`,
-          colonnes: [{ label: 'Salarié' }, { label: 'Salaire brut', align: 'right' }, { label: 'IR', align: 'right' }, { label: 'TRIMF', align: 'right' }, { label: 'CFCE', align: 'right' }],
-          lignes: [
-            ...lignes.map((l) => [l.name, fcfa(l.gross), fcfa(l.ir), fcfa(l.trimf), fcfa(l.cfce)]),
-            { fort: true, cells: ['Total', fcfa(tot.gross), fcfa(tot.ir), fcfa(tot.trimf), fcfa(tot.cfce)] },
-          ],
-        },
-        {
-          titre: 'Récapitulatif du versement',
-          colonnes: [{ label: 'Désignation' }, { label: 'Montant (FCFA)', align: 'right' }],
-          lignes: [
-            ['Impôt sur le revenu retenu (IR)', fcfa(tot.ir)],
-            ['Taxe représentative de l\'impôt du minimum fiscal (TRIMF)', fcfa(tot.trimf)],
-            ['Contribution forfaitaire à la charge de l\'employeur (CFCE)', fcfa(tot.cfce)],
-            { fort: true, cells: ['Total à verser', fcfa(aVerser)] },
-          ],
-        },
+    alertesProfil(profil, alertes);
+    if (salaries.length === 0) alertes.push('Aucun bulletin de paie pour ce mois : générez les bulletins dans le module Paie avant de déclarer.');
+    if (aVerser > 0 && aVerser < 20000) alertes.push('Montant inférieur à 20 000 FCFA : le versement peut se faire par trimestre, dans les 15 jours suivant le trimestre échu.');
+    const lignes = [
+      { ligne: 5, label: 'Nombre de salariés payés', value: salaries.length, type: 'nombre' },
+      { ligne: 10, label: 'Masse salariale brute du mois', value: arrondi(tot.gross) },
+      { ligne: 15, label: 'Impôt sur le revenu (IR) retenu sur salaires', value: arrondi(tot.ir) },
+      { ligne: 20, label: "Taxe représentative de l'impôt du minimum fiscal (TRIMF) retenue", value: arrondi(tot.trimf) },
+      { ligne: 25, label: "Contribution forfaitaire à la charge de l'employeur (CFCE)", value: arrondi(tot.cfce) },
+      { ligne: 30, label: 'Total à verser (lignes 15 + 20 + 25)', value: aVerser, fort: true },
+    ];
+    const annexes = [{
+      titre: 'État nominatif des salariés',
+      colonnes: [{ label: 'Salarié' }, { label: 'Salaire brut', align: 'right' }, { label: 'IR', align: 'right' }, { label: 'TRIMF', align: 'right' }, { label: 'CFCE', align: 'right' }],
+      lignes: [
+        ...salaries.map((l) => [l.name, fcfa(l.gross), fcfa(l.ir), fcfa(l.trimf), fcfa(l.cfce)]),
+        { fort: true, cells: ['Total', fcfa(tot.gross), fcfa(tot.ir), fcfa(tot.trimf), fcfa(tot.cfce)] },
       ],
-    };
-    res.json({
-      kind: 'vrs', month: mois, profile: profil, deadline: limiteDepot(mois), alertes,
-      lines: lignes, totals: { ...tot, aVerser }, filed: deposee.rows[0] || null, pdf,
+    }];
+    const doc = construireDocument({
+      kind: 'vrs', profil, periodeLabel: libellePeriode(mois), debut: `${mois}-01`, fin: dernierJour(mois),
+      limiteDepotIso: limiteDepot(mois), limitePaiementIso: limiteDepot(mois), lignes, annexes, provisoire: true, alertes,
     });
+    res.json({ ...doc, month: mois, amountDue: aVerser, snapshot: { ...tot, aVerser }, filed: await depotEnregistre(merchantId, 'vrs', mois) });
   } catch (err) {
     repondreErreur(res, err, 'Erreur lors de la préparation du versement des retenues sur salaires.');
+  }
+});
+
+// ----- BRS : retenue à la source de 5 % sur loyers et prestations versés à des tiers -----
+const TAUX_BRS = 0.05;
+const SEUIL_BRS_PRESTATION = 25000;
+const SEUIL_BRS_LOYER = 150000;
+
+router.get('/brs-entries', async (req, res) => {
+  const mois = String(req.query.month || '');
+  if (!MOIS_MOIS_RE.test(mois)) return res.status(400).json({ error: 'Mois invalide (AAAA-MM).' });
+  try {
+    const r = await pool.query(
+      `SELECT id, beneficiary_name, beneficiary_ref, nature, to_char(paid_on, 'YYYY-MM-DD') AS paid_on, gross_ht, note
+       FROM accounting_brs_entries WHERE merchant_id = $1 AND to_char(paid_on, 'YYYY-MM') = $2 ORDER BY paid_on, beneficiary_name`,
+      [req.user.merchantId, mois]
+    );
+    res.json(r.rows);
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la lecture du registre BRS.');
+  }
+});
+
+router.post('/brs-entries', async (req, res) => {
+  const { beneficiaryName, beneficiaryRef, nature, paidOn, grossHt, note } = req.body;
+  const nom = String(beneficiaryName || '').trim().slice(0, 200);
+  const montant = arrondi(grossHt);
+  if (!nom) return res.status(400).json({ error: 'Le nom du bénéficiaire est requis.' });
+  if (!['loyer', 'prestation'].includes(nature)) return res.status(400).json({ error: 'Nature invalide (loyer ou prestation).' });
+  if (!dateOk(paidOn) || paidOn > aujourdhui()) return res.status(400).json({ error: 'Date de paiement invalide.' });
+  if (!(montant > 0)) return res.status(400).json({ error: 'Le montant brut hors taxes doit être positif.' });
+  try {
+    await pool.query(
+      `INSERT INTO accounting_brs_entries (merchant_id, beneficiary_name, beneficiary_ref, nature, paid_on, gross_ht, note, created_by)
+       VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8)`,
+      [req.user.merchantId, nom, beneficiaryRef ? String(beneficiaryRef).trim().slice(0, 40) : null, nature, paidOn, montant,
+        note ? String(note).trim().slice(0, 200) : null, req.user.id]
+    );
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de l'enregistrement dans le registre BRS.");
+  }
+});
+
+router.delete('/brs-entries/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Ligne introuvable.' });
+  try {
+    const r = await pool.query(`DELETE FROM accounting_brs_entries WHERE id = $1 AND merchant_id = $2`, [req.params.id, req.user.merchantId]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Ligne introuvable.' });
+    res.json({ ok: true });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la suppression.');
+  }
+});
+
+// GET /accounting/declarations/brs?month=AAAA-MM
+router.get('/declarations/brs', async (req, res) => {
+  try {
+    const mois = String(req.query.month || '');
+    if (!MOIS_MOIS_RE.test(mois)) return res.status(400).json({ error: 'Mois invalide (AAAA-MM).' });
+    const merchantId = req.user.merchantId;
+    const profil = await lireProfilFiscal(pool, merchantId);
+    const r = await pool.query(
+      `SELECT beneficiary_name, beneficiary_ref, nature, to_char(paid_on, 'YYYY-MM-DD') AS paid_on, gross_ht
+       FROM accounting_brs_entries WHERE merchant_id = $1 AND to_char(paid_on, 'YYYY-MM') = $2 ORDER BY paid_on, beneficiary_name`,
+      [merchantId, mois]
+    );
+    const detail = r.rows.map((x) => {
+      const brut = arrondi(x.gross_ht);
+      const seuil = x.nature === 'loyer' ? SEUIL_BRS_LOYER : SEUIL_BRS_PRESTATION;
+      const soumis = brut >= seuil;
+      return { name: x.beneficiary_name, ref: x.beneficiary_ref || '', nature: x.nature, paidOn: x.paid_on, gross: brut, retenue: soumis ? arrondi(brut * TAUX_BRS) : 0, soumis };
+    });
+    const somme = (nature, champ) => arrondi(detail.filter((d) => d.nature === nature).reduce((t, d) => t + d[champ], 0));
+    const brutLoyers = arrondi(detail.filter((d) => d.nature === 'loyer' && d.soumis).reduce((t, d) => t + d.gross, 0));
+    const brutPrestations = arrondi(detail.filter((d) => d.nature === 'prestation' && d.soumis).reduce((t, d) => t + d.gross, 0));
+    const retLoyers = somme('loyer', 'retenue');
+    const retPrestations = somme('prestation', 'retenue');
+    const total = arrondi(retLoyers + retPrestations);
+    const alertes = [];
+    alertesProfil(profil, alertes);
+    if (detail.length === 0) alertes.push('Aucune somme versée à un tiers enregistrée pour ce mois : ajoutez-les dans le registre ci-dessous, ou déclarez « NÉANT ».');
+    const nonSoumis = detail.filter((d) => !d.soumis).length;
+    if (nonSoumis > 0) alertes.push(`${nonSoumis} versement(s) sous le seuil de retenue (prestation < 25 000 FCFA, loyer mensuel < 150 000 FCFA) : aucune retenue.`);
+    const lignes = [
+      { ligne: 5, label: 'Nombre de versements soumis à la retenue', value: detail.filter((d) => d.soumis).length, type: 'nombre' },
+      { ligne: 10, label: 'Montant brut hors taxes des loyers soumis à la retenue', value: brutLoyers },
+      { ligne: 15, label: 'Montant brut hors taxes des prestations soumises à la retenue', value: brutPrestations },
+      { ligne: 20, label: 'Retenue à la source sur les loyers (5 %)', value: retLoyers },
+      { ligne: 25, label: 'Retenue à la source sur les prestations (5 %)', value: retPrestations },
+      { ligne: 30, label: 'Total BRS à verser (lignes 20 + 25)', value: total, fort: true },
+    ];
+    const annexes = [{
+      titre: 'État nominatif des bénéficiaires',
+      colonnes: [{ label: 'Bénéficiaire' }, { label: 'NINEA / pièce' }, { label: 'Nature' }, { label: 'Date' }, { label: 'Montant brut HT', align: 'right' }, { label: 'Retenue 5 %', align: 'right' }],
+      lignes: [
+        ...detail.map((d) => [d.name, d.ref || '—', d.nature === 'loyer' ? 'Loyer' : 'Prestation', dateFr(d.paidOn), fcfa(d.gross), fcfa(d.retenue)]),
+        { fort: true, cells: ['Total', '', '', '', fcfa(arrondi(detail.reduce((t, d) => t + d.gross, 0))), fcfa(total)] },
+      ],
+    }];
+    const doc = construireDocument({
+      kind: 'brs', profil, periodeLabel: libellePeriode(mois), debut: `${mois}-01`, fin: dernierJour(mois),
+      limiteDepotIso: limiteDepot(mois), limitePaiementIso: limiteDepot(mois), lignes, annexes, provisoire: true, alertes,
+    });
+    res.json({ ...doc, month: mois, amountDue: total, snapshot: { brutLoyers, brutPrestations, retLoyers, retPrestations, total }, filed: await depotEnregistre(merchantId, 'brs', mois) });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la préparation de la déclaration BRS.');
+  }
+});
+
+// ----- CEL sur la valeur ajoutée : numéros de ligne du document officiel de la DGID -----
+// Base = valeur ajoutée de l'année précédente, plafonnée à 70 % du chiffre d'affaires ; taux 1 % ;
+// minimum 0,15 % du chiffre d'affaires (0,075 % pour les secteurs à faible marge ou à prix réglementés).
+// GET /accounting/declarations/cel?year=AAAA[&ca=&va=&exonere=1&faibleMarge=1&telecom=1&portuaire=1]
+router.get('/declarations/cel', async (req, res) => {
+  try {
+    const annee = String(req.query.year || '');
+    if (!ANNEE_RE.test(annee)) return res.status(400).json({ error: 'Année invalide (AAAA).' });
+    const merchantId = req.user.merchantId;
+    const profil = await lireProfilFiscal(pool, merchantId);
+    const n1 = Number(annee) - 1;
+    const rows = await agreger(merchantId, `${n1}-01-01`, `${n1}-12-31`);
+    const credit = (pref) => rows.filter((r) => pref.some((p) => r.code.startsWith(p))).reduce((t, r) => t + r.credit - r.debit, 0);
+    const debit = (pref) => rows.filter((r) => pref.some((p) => r.code.startsWith(p))).reduce((t, r) => t + r.debit - r.credit, 0);
+    const caCompta = arrondi(credit(['70']));
+    // Valeur ajoutée comptable : produits d'exploitation (70 à 74) − consommations (60 à 63).
+    const vaCompta = arrondi(credit(['70', '71', '72', '73', '74']) - debit(['60', '61', '62', '63']));
+    const nombre = (v, defaut) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? defaut : arrondi(Number(v)));
+    const ca = Math.max(0, Math.round(nombre(req.query.ca, caCompta)));
+    const va = Math.round(nombre(req.query.va, vaCompta));
+    const drapeau = (v) => v === '1' || v === 'true';
+    const exonere = drapeau(req.query.exonere);
+    const faibleMarge = drapeau(req.query.faibleMarge);
+    const telecom = drapeau(req.query.telecom);
+    const portuaire = drapeau(req.query.portuaire);
+    const reelSimplifie = profil.regime === 'reel_simplifie';
+    const vaMax = Math.round(ca * 0.7);
+    const vaImposable = Math.max(0, Math.min(va, vaMax));
+    const contribution1 = Math.round(vaImposable * 0.01);
+    const min015 = Math.round(ca * 0.0015);
+    const min0075 = Math.round(ca * 0.00075);
+    const minimum = faibleMarge ? min0075 : min015;
+    const aPayer = exonere ? 0 : Math.max(contribution1, minimum);
+    const alertes = [];
+    alertesProfil(profil, alertes);
+    if (profil.regime === 'cgu') alertes.push("Régime CGU : la CEL s'applique aux contribuables du régime du bénéfice réel. Vérifiez votre régime dans le profil fiscal.");
+    if (caCompta === 0) alertes.push(`Aucune vente comptabilisée en ${n1} : ajustez le chiffre d'affaires et la valeur ajoutée ci-dessous.`);
+    if (telecom || portuaire) alertes.push("Régime particulier (télécommunications, installations portuaires) : imposition unique sur le chiffre d'affaires, non calculée ici.");
+    alertes.push('Valeur ajoutée = produits d\'exploitation moins consommations (comptes 60 à 63). La loi liste les produits et charges admis selon le secteur : vérifiez-la avec votre comptable. Les lignes 45 à 105 sont indicatives, le portail calcule le montant définitif.');
+    const lignes = [
+      { ligne: 5, label: "Chiffre d'affaires de l'exercice précédent", value: ca },
+      { ligne: 10, label: 'Valeur ajoutée déclarée', value: va },
+      { ligne: 15, label: 'Valeur ajoutée imposable maximum (70 % du chiffre d\'affaires)', value: vaMax },
+      { ligne: 20, label: 'Entreprise exonérée de CEL ? (OUI ou NON)', value: exonere, type: 'ouinon' },
+      { ligne: 25, label: 'Activité faible marge ou à prix réglementé ? (OUI ou NON)', value: faibleMarge, type: 'ouinon' },
+      { ligne: 30, label: 'Exploitant agréé de réseau de télécom. ouvert au public ? (OUI ou NON)', value: telecom, type: 'ouinon' },
+      { ligne: 35, label: "Exploitant d'installations portuaires ? (OUI ou NON)", value: portuaire, type: 'ouinon' },
+      { ligne: 40, label: 'Entreprise sous régime du réel simplifié ? (OUI ou NON)', value: reelSimplifie, type: 'ouinon' },
+      { ligne: 45, label: 'Contribution minimale au taux de 0,15 %', value: min015 },
+      { ligne: 50, label: 'Contribution minimale au taux de 0,075 %', value: faibleMarge ? min0075 : null },
+      { ligne: 95, label: 'Montant de la contribution à 1 %', value: contribution1 },
+      { ligne: 105, label: "Montant de l'impôt à payer", value: aPayer, fort: true },
+    ];
+    const doc = construireDocument({
+      kind: 'cel', profil, periodeLabel: annee.toUpperCase(), debut: `${annee}-01-01`, fin: `${annee}-12-31`,
+      limiteDepotIso: `${annee}-04-30`, limitePaiementIso: `${annee}-07-31`, lignes, provisoire: false, alertes,
+    });
+    res.json({
+      ...doc, year: annee, amountDue: aPayer,
+      inputs: { ca, va, caCompta, vaCompta, exonere, faibleMarge, telecom, portuaire },
+      snapshot: { ca, va, vaMax, contribution1, minimum, aPayer },
+      filed: await depotEnregistre(merchantId, 'cel', annee),
+    });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la préparation de la CEL sur la valeur ajoutée.');
   }
 });
 
@@ -1926,8 +2124,9 @@ router.get('/filings', async (req, res) => {
 // POST /accounting/filings {kind, period, filedOn, receiptNumber, amountDue, snapshot}
 router.post('/filings', async (req, res) => {
   const { kind, period, filedOn, receiptNumber, amountDue, snapshot } = req.body;
-  if (!['tva', 'vrs'].includes(kind)) return res.status(400).json({ error: 'Type de déclaration invalide.' });
-  if (!MOIS_RE_DECL.test(String(period || ''))) return res.status(400).json({ error: 'Période invalide (AAAA-MM).' });
+  if (!['tva', 'vrs', 'brs', 'cel'].includes(kind)) return res.status(400).json({ error: 'Type de déclaration invalide.' });
+  const periodeOk = kind === 'cel' ? ANNEE_RE.test(String(period || '')) : MOIS_MOIS_RE.test(String(period || ''));
+  if (!periodeOk) return res.status(400).json({ error: 'Période invalide.' });
   if (!dateOk(filedOn) || filedOn > aujourdhui()) return res.status(400).json({ error: 'Date de dépôt invalide.' });
   const montant = arrondi(amountDue);
   if (!(montant >= 0)) return res.status(400).json({ error: 'Montant invalide.' });
@@ -1942,7 +2141,7 @@ router.post('/filings', async (req, res) => {
     );
     await logActivity({
       merchantId: req.user.merchantId, userId: req.user.id, action: 'tax_filing',
-      description: `a enregistré le dépôt de la déclaration ${kind === 'tva' ? 'de TVA' : 'des retenues sur salaires'} (${libellePeriode(period)})`,
+      description: `a enregistré le dépôt de « ${NOMS_DECL[kind]} » (${kind === 'cel' ? period : libellePeriode(period)})`,
     });
     res.status(201).json({ ok: true });
   } catch (err) {

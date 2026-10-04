@@ -430,7 +430,11 @@ export const api = {
   getTaxProfile: () => request('/accounting/tax-profile'),
   setTaxProfile: (data) =>
     request('/accounting/tax-profile', { method: 'PUT', body: JSON.stringify(data) }),
-  getTaxDeclaration: (kind, month) => request(`/accounting/declarations/${kind}?month=${encodeURIComponent(month)}`),
+  getTaxDeclaration: (kind, params) => request(`/accounting/declarations/${kind}${qs(params)}`),
+  getBrsEntries: (month) => request(`/accounting/brs-entries${qs({ month })}`),
+  createBrsEntry: (data) =>
+    request('/accounting/brs-entries', { method: 'POST', body: JSON.stringify(data) }),
+  deleteBrsEntry: (id) => request(`/accounting/brs-entries/${id}`, { method: 'DELETE' }),
   getTaxFilings: () => request('/accounting/filings'),
   createTaxFiling: (data) =>
     request('/accounting/filings', { method: 'POST', body: JSON.stringify(data) }),
