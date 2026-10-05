@@ -225,7 +225,7 @@ router.use(['/state-dues', '/state-payments', '/tax-settings', '/tax-profile', '
 // Les consultations (journal, grand livre, balance, résultat, bilan) lancent
 // d'abord la synchronisation automatique (au plus une fois toutes les 30 s) :
 // rien n'est à saisir ni à actualiser à la main.
-router.use(['/financing', '/adjustments', '/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues', '/closing-preview', '/fiscal-years', '/declarations', '/reconciliations'], async (req, res, next) => {
+router.use(['/financing', '/adjustments', '/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues', '/closing-preview', '/fiscal-years', '/declarations', '/reconciliations', '/aged-balance'], async (req, res, next) => {
   if (req.method === 'GET') await assurerSynchro(req.user.merchantId, req.user.id);
   next();
 });
@@ -1773,7 +1773,7 @@ router.put('/tax-profile', async (req, res) => {
 // TVA, des retenues sur salaires et de la BRS sont provisoires (provisoire: true) tant que le
 // formulaire officiel correspondant n'a pas été fourni.
 
-const NOMS_DECL = { tva: 'Déclaration de TVA', vrs: 'Retenues sur salaires (IR, TRIMF, CFCE)', brs: 'Retenue à la source (BRS)', cel: 'CEL sur la valeur ajoutée' };
+const NOMS_DECL = { tva: 'Taxe sur la valeur ajoutée', vrs: 'Retenues sur salaires (IR, TRIMF, CFCE)', brs: 'RAS Tiers et loyers', cel: 'CEL sur la valeur ajoutée' };
 const MOIS_MOIS_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const ANNEE_RE = /^\d{4}$/;
 const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
@@ -1782,46 +1782,64 @@ const dernierJour = (mois) => {
   const [a, m] = mois.split('-').map(Number);
   return `${mois}-${String(new Date(a, m, 0).getDate()).padStart(2, '0')}`;
 };
+// Le 15 du mois suivant ; s'il tombe un samedi ou un dimanche, l'échéance passe au lundi
+// (ex. le 15 décembre 2024, un dimanche, devient le 16). Les jours fériés ne sont pas pris en compte.
 function limiteDepot(mois) {
   const [a, m] = mois.split('-').map(Number);
-  const suivant = m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, '0')}`;
-  return `${suivant}-15`;
+  const d = new Date(Date.UTC(m === 12 ? a + 1 : a, m === 12 ? 0 : m, 15));
+  if (d.getUTCDay() === 6) d.setUTCDate(17);
+  else if (d.getUTCDay() === 0) d.setUTCDate(16);
+  return d.toISOString().slice(0, 10);
 }
 const libelleOuiNon = (v) => (v ? 'OUI' : 'NON');
 
 // Assemble le document commun : en-tête, annexe fiscale numérotée, annexes nominatives, fiche PDF.
-function construireDocument({ kind, profil, periodeLabel, debut, fin, limiteDepotIso, limitePaiementIso, lignes, annexes = [], provisoire, alertes = [], titreAnnexe = 'Annexe fiscale' }) {
+// Comme sur le portail, une ligne à zéro reste vide ; une ligne peut renvoyer à une annexe (colonne du milieu).
+const TEXTE_DGID = "Veuillez indiquer ci-dessous les renseignements demandés conformément au Code Général des Impôts. Vous devez également joindre les annexes requises sous peine des sanctions prévues par la loi. Les chèques bancaires ou postaux doivent être libellés à l'ordre du Chef du Bureau du Recouvrement. Les chèques bancaires doivent être barrés.";
+
+function construireDocument({ kind, profil, periodeLabel, debut, fin, limiteDepotIso, limitePaiementIso, dateSoumission, lignes, annexes = [], provisoire, alertes = [], titreAnnexe = 'Annexe fiscale' }) {
   const titre = NOMS_DECL[kind];
-  const objet = titre;
+  const adresse = profil.address || '';
   const entete = [
-    ['NINEA', profil.ninea || '—', "PÉRIODE D'IMPOSITION", periodeLabel],
-    ["COMPTE D'IMPÔT", '—', 'NOM DU CONTRIBUABLE', profil.legalName || '—'],
-    ['CENTRE FISCAL', profil.taxCenter || '—', 'TYPE DE TAXE', titre],
-    ['ÉTABLISSEMENT', '—', 'CENTRE DE PERCEPTION', '—'],
-    ['DÉBUT DE LA PÉRIODE', dateFr(debut), 'OBJET IMPOSABLE', objet],
+    ['NINEA', profil.ninea || '', "PÉRIODE D'IMPOSITION", periodeLabel.toUpperCase()],
+    ["COMPTE D'IMPÔT", '', 'NOM DU CONTRIBUABLE', profil.legalName || ''],
+    ['CENTRE FISCAL', profil.taxCenter || '', 'TYPE DE TAXE', titre.toUpperCase()],
+    ['ÉTABLISSEMENT', '', 'CENTRE DE PERCEPTION', ''],
+    ['DÉBUT DE LA PÉRIODE', dateFr(debut), 'OBJET IMPOSABLE', ''],
     ['DATE LIMITE DE DÉPÔT', dateFr(limiteDepotIso), 'FIN DE LA PÉRIODE', dateFr(fin)],
-    ['ADRESSE DE CORRESPONDANCE', profil.address || '—', 'DATE LIMITE DE PAIEMENT', dateFr(limitePaiementIso)],
+    ['DATE SOUMISSION', dateSoumission ? dateFr(dateSoumission) : '', 'DATE LIMITE DE PAIEMENT', dateFr(limitePaiementIso)],
+    ['ADRESSE DE CORRESPONDANCE', adresse, 'LOCALISATION', adresse],
   ];
-  const valeur = (l) => (l.type === 'ouinon' ? libelleOuiNon(l.value) : l.value === null || l.value === undefined ? '' : l.type === 'nombre' ? String(l.value) : fcfa(l.value));
+  const avecAnnexe = lignes.some((l) => l.annexe);
+  const valeur = (l) => {
+    if (l.type === 'ouinon') return l.value ? 'OUI' : 'NON';
+    if (l.value === null || l.value === undefined) return '';
+    if (l.type === 'nombre') return String(l.value);
+    return Math.round(l.value) === 0 ? '' : fcfa(l.value);
+  };
+  const colonnesAnnexe = avecAnnexe
+    ? [{ label: titreAnnexe }, { label: '' }, { label: 'Ligne', align: 'right' }, { label: 'Montant', align: 'right' }]
+    : [{ label: titreAnnexe }, { label: 'Ligne', align: 'right' }, { label: 'Montant', align: 'right' }];
   const pdf = {
     entreprise: 'RÉPUBLIQUE DU SÉNÉGAL · Un Peuple – Un But – Une Foi',
     titre: titre.toUpperCase(),
     periode: `DGID – Ministère des Finances et du Budget · Mon Espace Perso · Préparé par Amaterasu${provisoire ? ' · numéros de ligne provisoires' : ''}`,
     sections: [
+      { colonnes: [{ label: 'CONTRIBUABLE ET RENSEIGNEMENTS FISCAUX' }, { label: '' }, { label: '' }, { label: '' }], lignes: entete },
+      { colonnes: [{ label: '' }], lignes: [[TEXTE_DGID]] },
       {
-        colonnes: [{ label: 'CONTRIBUABLE ET RENSEIGNEMENTS FISCAUX' }, { label: '' }, { label: '' }, { label: '' }],
-        lignes: entete,
-      },
-      {
-        colonnes: [{ label: titreAnnexe }, { label: 'Ligne', align: 'right' }, { label: 'Montant', align: 'right' }],
-        lignes: lignes.map((l) => ({ fort: l.fort === true, cells: [l.label, String(l.ligne), valeur(l)] })),
+        colonnes: colonnesAnnexe,
+        lignes: lignes.map((l) => ({
+          fort: l.fort === true,
+          cells: avecAnnexe ? [l.label, l.annexe || '', String(l.ligne), valeur(l)] : [l.label, String(l.ligne), valeur(l)],
+        })),
       },
       ...annexes.map((x) => ({ titre: x.titre, colonnes: x.colonnes, lignes: x.lignes })),
     ],
   };
   return {
     kind, title: titre, period: periodeLabel, deadline: limiteDepotIso, deadlinePay: limitePaiementIso,
-    provisoire, alertes, header: entete, lines: lignes, annexes, pdf,
+    provisoire, alertes, header: entete, texte: TEXTE_DGID, lines: lignes, annexes, pdf,
   };
 }
 
@@ -1860,7 +1878,7 @@ router.get('/declarations/tva', async (req, res) => {
       else if (r.code === '445') deduc[r.m] = arrondi((deduc[r.m] || 0) + Number(r.d) - Number(r.c));
       else if (r.m === mois) chiffreHt = arrondi(chiffreHt + Number(r.c) - Number(r.d));
     }
-    const t = chaineTva(facturee, deduc, mois)[mois] || { collectee: 0, deductible: 0, creditUtilise: 0, creditAReporter: 0, du: 0 };
+    const t = chaineTva(facturee, deduc, mois)[mois] || { collectee: 0, deductible: 0, creditReporte: 0, creditUtilise: 0, creditAReporter: 0, du: 0 };
     const baseImposable = arrondi(t.collectee / 0.18);
     const exonere = Math.max(0, arrondi(chiffreHt - baseImposable));
     const neant = chiffreHt === 0 && t.collectee === 0;
@@ -1868,21 +1886,84 @@ router.get('/declarations/tva', async (req, res) => {
     alertesProfil(profil, alertes);
     if (profil.regime === 'cgu') alertes.push('Régime CGU : le redevable de la CGU ne facture pas la TVA. Vérifiez votre régime dans le profil fiscal.');
     if (neant) alertes.push('Aucune opération ce mois : déclaration « NÉANT ».');
+    alertes.push("Annexes non générées : exportations, exonérations, suspensions, précompte et importations (à joindre si elles vous concernent).");
+
+    // Lignes du formulaire « Taxe sur la valeur ajoutée » de la DGID (numéros et formules officiels).
+    const L = {};
+    L[5] = Math.round(chiffreHt);
+    L[15] = Math.round(exonere);
+    L[25] = (L[10] || 0) + L[15] + (L[20] || 0);
+    L[35] = L[5] - L[25];
+    L[45] = L[35] - (L[40] || 0);
+    L[50] = Math.round((L[40] || 0) * 0.1);
+    L[55] = Math.round(L[45] * 0.18);
+    L[60] = L[50] + L[55];
+    L[76] = (L[70] || 0) + (L[75] || 0);
+    L[90] = Math.round(t.deductible);
+    L[91] = (L[85] || 0) + L[90];
+    L[92] = L[76] + L[91];
+    L[100] = Math.round(t.creditReporte);
+    L[105] = (L[70] || 0) + (L[75] || 0) + (L[85] || 0) + L[90] + L[100];
+    L[110] = Math.max(0, L[60] - L[105]);
+    L[115] = Math.max(0, L[105] - L[60]);
+    const l = (ligne, label, extra = {}) => ({ ligne, label, value: L[ligne] === undefined ? null : L[ligne], ...extra });
     const lignes = [
-      { ligne: 5, label: "Chiffre d'affaires total du mois (HT)", value: chiffreHt },
-      { ligne: 10, label: 'Opérations exonérées (ex. médicaments et produits pharmaceutiques)', value: exonere },
-      { ligne: 15, label: "Chiffre d'affaires imposable à 18 %", value: baseImposable },
-      { ligne: 20, label: 'TVA collectée', value: t.collectee },
-      { ligne: 25, label: 'TVA déductible sur achats de biens et services', value: t.deductible },
-      { ligne: 30, label: 'Crédit de TVA reporté du mois précédent', value: t.creditUtilise },
-      { ligne: 35, label: 'TVA nette à payer (ligne 20 − 25 − 30)', value: t.du, fort: true },
-      { ligne: 40, label: 'Crédit de TVA à reporter sur la prochaine déclaration', value: t.creditAReporter, fort: true },
+      l(5, 'Montant des opérations'),
+      l(10, "Affaires à l'exportation", { annexe: 'EXPORTATIONS' }),
+      l(15, "Affaires réalisées à l'intérieur non taxées", { annexe: 'EXONERATIONS' }),
+      l(20, 'Affaires réalisées en suspension de la TVA', { annexe: 'SUSPENSIONS' }),
+      l(25, 'Total affaires non soumises à la TVA (L10+L15+L20)'),
+      l(30, 'Prélèvements et livraisons ou prestations à soi-même'),
+      l(35, 'Montant Total Taxable (L5-L25)'),
+      l(40, 'Montant taxable-Taux réduit'),
+      l(45, 'Montant taxable-Taux Normal (L35-L40)'),
+      l(50, 'Montant de la TVA-Taux Réduit (L40*10%)'),
+      l(55, 'Montant de la TVA-Taux Normal (L45*18%)'),
+      l(60, 'Montant de la TVA Brut (L50+L55)'),
+      l(65, 'Affaires soumises au précompte'),
+      l(70, 'Précompte de TVA', { annexe: 'TVA PRECOMPTEE' }),
+      l(75, 'Imputation de chèques DDI'),
+      l(76, 'Total des avances (L70+L75)'),
+      l(80, 'Montant des importations du mois'),
+      l(85, 'TVA Acquittée sur les importations du mois', { annexe: 'IMPORTATIONS' }),
+      l(90, 'TVA acquittées sur les achats intérieurs du mois', { annexe: 'ACHATS LOCAUX' }),
+      l(91, 'Déductions sur achats (L85+L90)'),
+      l(92, 'Total déductions pour le mois (L76+L91)'),
+      l(93, 'Solde total exigible pour la période'),
+      l(95, 'Montant des remboursements demandés et accordés'),
+      l(100, 'Crédit de TVA du mois précédent'),
+      l(105, 'Montant total déductible pour le mois (L70+L75+L85+L90+L100)'),
+      l(110, 'Solde Total Exigible (L60-L105 si positif)', { fort: true }),
+      l(115, 'Crédit de TVA à reporter (L105-L60 si positif)', { fort: true }),
+      l(120, 'Montant des remboursements demandés et en instruction'),
     ];
+
+    // Annexe « Achats locaux » : factures d'achat du mois avec leur TVA déductible.
+    const achats = await pool.query(
+      `SELECT to_char(COALESCE(m.movement_date, (m.created_at AT TIME ZONE 'UTC')::date), 'YYYY-MM-DD') AS d, MAX(s.name) AS fournisseur,
+              m.invoice_number AS facture, COALESCE(SUM(m.total_cost), 0) AS total, COALESCE(SUM(m.tva_amount), 0) AS tva
+       FROM stock_movements m LEFT JOIN suppliers s ON s.id = m.supplier_id
+       WHERE m.merchant_id = $1 AND m.movement_type = 'entree' AND m.transfer_id IS NULL AND COALESCE(m.tva_amount, 0) > 0
+         AND to_char(COALESCE(m.movement_date, (m.created_at AT TIME ZONE 'UTC')::date), 'YYYY-MM') = $2
+       GROUP BY m.supplier_id, m.invoice_number, COALESCE(m.movement_date, (m.created_at AT TIME ZONE 'UTC')::date)
+       ORDER BY 1`,
+      [merchantId, mois]
+    );
+    const annexes = achats.rows.length === 0 ? [] : [{
+      titre: 'Annexe ACHATS LOCAUX',
+      colonnes: [{ label: 'Date' }, { label: 'Fournisseur' }, { label: 'N° facture' }, { label: 'Montant HT', align: 'right' }, { label: 'TVA', align: 'right' }],
+      lignes: [
+        ...achats.rows.map((x) => [dateFr(x.d), x.fournisseur || '—', x.facture || '—', fcfa(Number(x.total) - Number(x.tva)), fcfa(x.tva)]),
+        { fort: true, cells: ['Total', '', '', fcfa(achats.rows.reduce((u, x) => u + Number(x.total) - Number(x.tva), 0)), fcfa(achats.rows.reduce((u, x) => u + Number(x.tva), 0))] },
+      ],
+    }];
+    const filed = await depotEnregistre(merchantId, 'tva', mois);
     const doc = construireDocument({
       kind: 'tva', profil, periodeLabel: libellePeriode(mois), debut: `${mois}-01`, fin: dernierJour(mois),
-      limiteDepotIso: limiteDepot(mois), limitePaiementIso: limiteDepot(mois), lignes, provisoire: true, alertes,
+      limiteDepotIso: limiteDepot(mois), limitePaiementIso: limiteDepot(mois), dateSoumission: filed?.filed_on,
+      lignes, annexes, provisoire: false, alertes,
     });
-    res.json({ ...doc, month: mois, amountDue: t.du, snapshot: { chiffreHt, baseImposable, exonere, collectee: t.collectee, deductible: t.deductible, aPayer: t.du }, filed: await depotEnregistre(merchantId, 'tva', mois) });
+    res.json({ ...doc, month: mois, amountDue: L[110], snapshot: { chiffreHt, exonere, collectee: t.collectee, deductible: t.deductible, creditReporte: t.creditReporte, aPayer: L[110], creditAReporter: L[115] }, filed });
   } catch (err) {
     repondreErreur(res, err, 'Erreur lors de la préparation de la déclaration de TVA.');
   }
@@ -1923,20 +2004,21 @@ router.get('/declarations/vrs', async (req, res) => {
         { fort: true, cells: ['Total', fcfa(tot.gross), fcfa(tot.ir), fcfa(tot.trimf), fcfa(tot.cfce)] },
       ],
     }];
+    const filed = await depotEnregistre(merchantId, 'vrs', mois);
     const doc = construireDocument({
       kind: 'vrs', profil, periodeLabel: libellePeriode(mois), debut: `${mois}-01`, fin: dernierJour(mois),
-      limiteDepotIso: limiteDepot(mois), limitePaiementIso: limiteDepot(mois), lignes, annexes, provisoire: true, alertes,
+      limiteDepotIso: limiteDepot(mois), limitePaiementIso: limiteDepot(mois), dateSoumission: filed?.filed_on,
+      lignes, annexes, provisoire: true, alertes,
     });
-    res.json({ ...doc, month: mois, amountDue: aVerser, snapshot: { ...tot, aVerser }, filed: await depotEnregistre(merchantId, 'vrs', mois) });
+    res.json({ ...doc, month: mois, amountDue: aVerser, snapshot: { ...tot, aVerser }, filed });
   } catch (err) {
     repondreErreur(res, err, 'Erreur lors de la préparation du versement des retenues sur salaires.');
   }
 });
 
-// ----- BRS : retenue à la source de 5 % sur loyers et prestations versés à des tiers -----
+// ----- RAS Tiers et loyers (BRS) : retenue à la source de 5 % sur les sommes versées à des tiers -----
+// Le registre contient uniquement les versements soumis à la retenue : la retenue est de 5 % du montant brut.
 const TAUX_BRS = 0.05;
-const SEUIL_BRS_PRESTATION = 25000;
-const SEUIL_BRS_LOYER = 150000;
 
 router.get('/brs-entries', async (req, res) => {
   const mois = String(req.query.month || '');
@@ -1997,46 +2079,40 @@ router.get('/declarations/brs', async (req, res) => {
        FROM accounting_brs_entries WHERE merchant_id = $1 AND to_char(paid_on, 'YYYY-MM') = $2 ORDER BY paid_on, beneficiary_name`,
       [merchantId, mois]
     );
-    const detail = r.rows.map((x) => {
-      const brut = arrondi(x.gross_ht);
-      const seuil = x.nature === 'loyer' ? SEUIL_BRS_LOYER : SEUIL_BRS_PRESTATION;
-      const soumis = brut >= seuil;
-      return { name: x.beneficiary_name, ref: x.beneficiary_ref || '', nature: x.nature, paidOn: x.paid_on, gross: brut, retenue: soumis ? arrondi(brut * TAUX_BRS) : 0, soumis };
-    });
-    const somme = (nature, champ) => arrondi(detail.filter((d) => d.nature === nature).reduce((t, d) => t + d[champ], 0));
-    const brutLoyers = arrondi(detail.filter((d) => d.nature === 'loyer' && d.soumis).reduce((t, d) => t + d.gross, 0));
-    const brutPrestations = arrondi(detail.filter((d) => d.nature === 'prestation' && d.soumis).reduce((t, d) => t + d.gross, 0));
-    const retLoyers = somme('loyer', 'retenue');
-    const retPrestations = somme('prestation', 'retenue');
-    const total = arrondi(retLoyers + retPrestations);
+    const detail = r.rows.map((x) => ({ name: x.beneficiary_name, ref: x.beneficiary_ref || '', nature: x.nature, paidOn: x.paid_on, gross: Math.round(Number(x.gross_ht)) }));
+    const somme = (nature) => detail.filter((d) => d.nature === nature).reduce((t, d) => t + d.gross, 0);
+    // Lignes du formulaire « RAS Tiers et loyers » de la DGID.
+    const L10 = somme('prestation');
+    const L20 = somme('loyer');
+    const L30 = L10 + L20;
+    const L40 = Math.round(L30 * TAUX_BRS);
     const alertes = [];
     alertesProfil(profil, alertes);
     if (detail.length === 0) alertes.push('Aucune somme versée à un tiers enregistrée pour ce mois : ajoutez-les dans le registre ci-dessous, ou déclarez « NÉANT ».');
-    const nonSoumis = detail.filter((d) => !d.soumis).length;
-    if (nonSoumis > 0) alertes.push(`${nonSoumis} versement(s) sous le seuil de retenue (prestation < 25 000 FCFA, loyer mensuel < 150 000 FCFA) : aucune retenue.`);
+    alertes.push("Ligne 20 : les loyers sont ici comptés en plus de la ligne 10. Si le portail les inclut déjà dans la ligne 10, indiquez-le-moi.");
     const lignes = [
-      { ligne: 5, label: 'Nombre de versements soumis à la retenue', value: detail.filter((d) => d.soumis).length, type: 'nombre' },
-      { ligne: 10, label: 'Montant brut hors taxes des loyers soumis à la retenue', value: brutLoyers },
-      { ligne: 15, label: 'Montant brut hors taxes des prestations soumises à la retenue', value: brutPrestations },
-      { ligne: 20, label: 'Retenue à la source sur les loyers (5 %)', value: retLoyers },
-      { ligne: 25, label: 'Retenue à la source sur les prestations (5 %)', value: retPrestations },
-      { ligne: 30, label: 'Total BRS à verser (lignes 20 + 25)', value: total, fort: true },
+      { ligne: 10, label: 'Montant brut des sommes versées à des résidents du Sénégal', value: L10 },
+      { ligne: 20, label: 'Montant brut des sommes versées à titre de loyer', value: L20 },
+      { ligne: 30, label: 'Total des sommes versées', value: L30 },
+      { ligne: 40, label: 'Total des retenues opérées', value: L40, fort: true },
     ];
-    const annexes = [{
+    const annexes = detail.length === 0 ? [] : [{
       titre: 'État nominatif des bénéficiaires',
-      colonnes: [{ label: 'Bénéficiaire' }, { label: 'NINEA / pièce' }, { label: 'Nature' }, { label: 'Date' }, { label: 'Montant brut HT', align: 'right' }, { label: 'Retenue 5 %', align: 'right' }],
+      colonnes: [{ label: 'Bénéficiaire' }, { label: 'NINEA / pièce' }, { label: 'Nature' }, { label: 'Date' }, { label: 'Montant brut', align: 'right' }, { label: 'Retenue 5 %', align: 'right' }],
       lignes: [
-        ...detail.map((d) => [d.name, d.ref || '—', d.nature === 'loyer' ? 'Loyer' : 'Prestation', dateFr(d.paidOn), fcfa(d.gross), fcfa(d.retenue)]),
-        { fort: true, cells: ['Total', '', '', '', fcfa(arrondi(detail.reduce((t, d) => t + d.gross, 0))), fcfa(total)] },
+        ...detail.map((d) => [d.name, d.ref || '—', d.nature === 'loyer' ? 'Loyer' : 'Prestation', dateFr(d.paidOn), fcfa(d.gross), fcfa(d.gross * TAUX_BRS)]),
+        { fort: true, cells: ['Total', '', '', '', fcfa(L30), fcfa(L40)] },
       ],
     }];
+    const filed = await depotEnregistre(merchantId, 'brs', mois);
     const doc = construireDocument({
       kind: 'brs', profil, periodeLabel: libellePeriode(mois), debut: `${mois}-01`, fin: dernierJour(mois),
-      limiteDepotIso: limiteDepot(mois), limitePaiementIso: limiteDepot(mois), lignes, annexes, provisoire: true, alertes,
+      limiteDepotIso: limiteDepot(mois), limitePaiementIso: limiteDepot(mois), dateSoumission: filed?.filed_on,
+      lignes, annexes, provisoire: false, alertes,
     });
-    res.json({ ...doc, month: mois, amountDue: total, snapshot: { brutLoyers, brutPrestations, retLoyers, retPrestations, total }, filed: await depotEnregistre(merchantId, 'brs', mois) });
+    res.json({ ...doc, month: mois, amountDue: L40, snapshot: { prestations: L10, loyers: L20, total: L30, retenues: L40 }, filed });
   } catch (err) {
-    repondreErreur(res, err, 'Erreur lors de la préparation de la déclaration BRS.');
+    repondreErreur(res, err, 'Erreur lors de la préparation de la déclaration RAS Tiers et loyers.');
   }
 });
 
@@ -2093,15 +2169,17 @@ router.get('/declarations/cel', async (req, res) => {
       { ligne: 95, label: 'Montant de la contribution à 1 %', value: contribution1 },
       { ligne: 105, label: "Montant de l'impôt à payer", value: aPayer, fort: true },
     ];
+    const filed = await depotEnregistre(merchantId, 'cel', annee);
     const doc = construireDocument({
-      kind: 'cel', profil, periodeLabel: annee.toUpperCase(), debut: `${annee}-01-01`, fin: `${annee}-12-31`,
-      limiteDepotIso: `${annee}-04-30`, limitePaiementIso: `${annee}-07-31`, lignes, provisoire: false, alertes,
+      kind: 'cel', profil, periodeLabel: annee, debut: `${annee}-01-01`, fin: `${annee}-12-31`,
+      limiteDepotIso: `${annee}-04-30`, limitePaiementIso: `${annee}-04-30`, dateSoumission: filed?.filed_on,
+      lignes, provisoire: false, alertes,
     });
     res.json({
       ...doc, year: annee, amountDue: aPayer,
       inputs: { ca, va, caCompta, vaCompta, exonere, faibleMarge, telecom, portuaire },
       snapshot: { ca, va, vaMax, contribution1, minimum, aPayer },
-      filed: await depotEnregistre(merchantId, 'cel', annee),
+      filed,
     });
   } catch (err) {
     repondreErreur(res, err, 'Erreur lors de la préparation de la CEL sur la valeur ajoutée.');
@@ -3318,6 +3396,26 @@ router.get('/ledger', async (req, res) => {
       totalCredit += credit;
       return { date: l.entry_date, entryNumber: Number(l.entry_number), journal: l.journal, reference: l.reference, label: l.label, debit, credit, solde: cumul };
     });
+    // Comptes de tiers (411…, 4119…, 401…) : lettre de chaque ligne. Le lettrage dépend de tout
+    // l'historique du compte jusqu'à la date de fin, pas seulement de la période affichée.
+    const codeCompte = String(compte.rows[0].code);
+    if (codeCompte.startsWith('411') || codeCompte.startsWith('401')) {
+      const histo = await pool.query(
+        `SELECT e.entry_number, l.debit, l.credit
+         FROM accounting_lines l JOIN accounting_entries e ON e.id = l.entry_id
+         WHERE l.merchant_id = $1 AND l.account_id = $2 AND ($3::date IS NULL OR e.entry_date <= $3::date)
+         ORDER BY e.entry_date, e.entry_number`,
+        [req.user.merchantId, idCompte, to || null]
+      );
+      const toutes = histo.rows.map((h) => ({ cle: `${Number(h.entry_number)}|${Number(h.debit)}|${Number(h.credit)}`, debit: Number(h.debit), credit: Number(h.credit) }));
+      const lettres = lettrerLignes(toutes, codeCompte.startsWith('401') ? 'credit' : 'debit');
+      const parCle = new Map();
+      toutes.forEach((t, i) => {
+        if (!parCle.has(t.cle)) parCle.set(t.cle, []);
+        parCle.get(t.cle).push(lettres[i]);
+      });
+      for (const m of mouvements) m.lettre = (parCle.get(`${m.entryNumber}|${m.debit}|${m.credit}`) || []).shift() || '';
+    }
     res.json({
       account: { code: compte.rows[0].code, label: compte.rows[0].label },
       opening: arrondi(ouverture),
@@ -3500,6 +3598,146 @@ router.get('/balance-sheet', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors du calcul du bilan.' });
+  }
+});
+
+// ---------- Balance âgée (clients, fournisseurs, assureurs) ----------
+// Calculée depuis les comptes auxiliaires (411…, 401…, 4119…) : aucune table à ajouter.
+// Les règlements ne sont pas rattachés à une facture précise ; ils sont imputés sur les
+// plus anciennes factures d'abord (méthode « premier entré, premier sorti »). Ce qui reste
+// ouvert est classé selon son ancienneté à la date choisie. Un règlement qui dépasse tout
+// ce qui est dû apparaît comme avance (crédit du tiers).
+
+const TRANCHES_AGE = [
+  { label: '0 à 30 jours', min: 0, max: 30 },
+  { label: '31 à 60 jours', min: 31, max: 60 },
+  { label: '61 à 90 jours', min: 61, max: 90 },
+  { label: 'Plus de 90 jours', min: 91, max: null },
+];
+const TIERS_AGES = {
+  client: { titre: 'Clients', sens: 'debit', filtre: `a.code LIKE '411%' AND a.code NOT LIKE '4119%'` },
+  assureur: { titre: 'Assureurs (tiers payant)', sens: 'debit', filtre: `a.code LIKE '4119%'` },
+  fournisseur: { titre: 'Fournisseurs', sens: 'credit', filtre: `a.code LIKE '401%'` },
+};
+
+function joursEntre(debut, fin) {
+  return Math.round((Date.parse(fin) - Date.parse(debut)) / 86400000);
+}
+
+// lignes : mouvements d'UN compte auxiliaire, triés par date. sens : 'debit' (le tiers nous doit,
+// ex. client) ou 'credit' (nous lui devons, ex. fournisseur).
+function ageerCompte(lignes, sens, auDate) {
+  const ouverts = [];
+  let reglements = 0;
+  for (const l of lignes) {
+    const net = arrondi(sens === 'debit' ? l.debit - l.credit : l.credit - l.debit);
+    if (net > 0) ouverts.push({ date: l.date, reference: l.reference || '', label: l.label || '', initial: net, restant: net });
+    else if (net < 0) reglements = arrondi(reglements - net);
+  }
+  for (const o of ouverts) {
+    if (reglements <= 0) break;
+    const pris = Math.min(o.restant, reglements);
+    o.restant = arrondi(o.restant - pris);
+    reglements = arrondi(reglements - pris);
+  }
+  const tranches = TRANCHES_AGE.map(() => 0);
+  const items = [];
+  for (const o of ouverts) {
+    if (o.restant <= 0) continue;
+    const age = Math.max(0, joursEntre(o.date, auDate));
+    const i = TRANCHES_AGE.findIndex((t) => age >= t.min && (t.max === null || age <= t.max));
+    tranches[i] = arrondi(tranches[i] + o.restant);
+    items.push({ ...o, age });
+  }
+  return { tranches, avance: reglements, total: arrondi(tranches.reduce((s, t) => s + t, 0)), items };
+}
+
+// ---------- Lettrage automatique (comptes de tiers) ----------
+// Même logique que la balance âgée : factures et règlements d'un tiers sont rapprochés du plus
+// ancien au plus récent. Un groupe de lignes dont le total des factures égale celui des règlements
+// reçoit une lettre (A, B, … Z, AA…) : ces lignes se compensent. Les lignes sans lettre sont
+// encore ouvertes. Calculé à la demande, rien n'est enregistré : il suit donc toujours la comptabilité.
+
+function lettreDepuisIndice(n) {
+  let s = '';
+  let k = n + 1;
+  while (k > 0) {
+    const reste = (k - 1) % 26;
+    s = String.fromCharCode(65 + reste) + s;
+    k = Math.floor((k - 1) / 26);
+  }
+  return s;
+}
+
+// lignes : mouvements d'UN compte de tiers, triés par date. Renvoie une lettre (ou '') par ligne.
+function lettrerLignes(lignes, sens) {
+  const factures = [];
+  const reglements = [];
+  lignes.forEach((l, i) => {
+    const net = arrondi(sens === 'debit' ? l.debit - l.credit : l.credit - l.debit);
+    if (net > 0) factures.push({ i, m: net });
+    else if (net < 0) reglements.push({ i, m: -net });
+  });
+  const lettres = lignes.map(() => '');
+  let f = 0;
+  let r = 0;
+  let sommeF = 0;
+  let sommeR = 0;
+  let groupe = [];
+  let nb = 0;
+  for (;;) {
+    if (groupe.length > 0 && sommeF === sommeR) {
+      const lettre = lettreDepuisIndice(nb++);
+      groupe.forEach((i) => { lettres[i] = lettre; });
+      groupe = [];
+    }
+    if (sommeF <= sommeR) {
+      if (f >= factures.length) break;
+      sommeF = arrondi(sommeF + factures[f].m);
+      groupe.push(factures[f++].i);
+    } else {
+      if (r >= reglements.length) break;
+      sommeR = arrondi(sommeR + reglements[r].m);
+      groupe.push(reglements[r++].i);
+    }
+  }
+  return lettres;
+}
+
+// GET /accounting/aged-balance?type=client|fournisseur|assureur&date=
+router.get('/aged-balance', async (req, res) => {
+  const type = String(req.query.type || 'client');
+  const cfg = TIERS_AGES[type];
+  const date = req.query.date || aujourdhui();
+  if (!cfg) return res.status(400).json({ error: 'Type de tiers invalide.' });
+  if (!dateOk(date)) return res.status(400).json({ error: 'Date invalide.' });
+  try {
+    const r = await pool.query(
+      `SELECT a.code, a.label AS compte, to_char(e.entry_date, 'YYYY-MM-DD') AS d, e.reference, e.label, l.debit, l.credit
+       FROM accounting_lines l
+       JOIN accounting_entries e ON e.id = l.entry_id
+       JOIN accounting_accounts a ON a.id = l.account_id
+       WHERE l.merchant_id = $1 AND ${cfg.filtre} AND e.entry_date <= $2::date
+       ORDER BY a.code, e.entry_date, e.entry_number`,
+      [req.user.merchantId, date]
+    );
+    const parCompte = new Map();
+    for (const row of r.rows) {
+      if (!parCompte.has(row.code)) parCompte.set(row.code, { code: row.code, label: row.compte, lignes: [] });
+      parCompte.get(row.code).lignes.push({ date: row.d, reference: row.reference, label: row.label, debit: Number(row.debit), credit: Number(row.credit) });
+    }
+    const tiers = [];
+    for (const c of parCompte.values()) {
+      const a = ageerCompte(c.lignes, cfg.sens, date);
+      if (a.total > 0 || a.avance > 0) tiers.push({ code: c.code, label: c.label, ...a });
+    }
+    const somme = (f) => arrondi(tiers.reduce((s, t) => s + f(t), 0));
+    res.json({
+      type, titre: cfg.titre, date, trancheLabels: TRANCHES_AGE.map((t) => t.label), tiers,
+      totals: { tranches: TRANCHES_AGE.map((_, i) => somme((t) => t.tranches[i])), avance: somme((t) => t.avance), total: somme((t) => t.total) },
+    });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors du calcul de la balance âgée.');
   }
 });
 

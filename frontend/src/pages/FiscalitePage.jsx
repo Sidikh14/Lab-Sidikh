@@ -16,10 +16,10 @@ import {
 const TYPES = [
   { id: 'tva', label: 'TVA' },
   { id: 'vrs', label: 'Retenues sur salaires' },
-  { id: 'brs', label: 'BRS' },
+  { id: 'brs', label: 'RAS Tiers et loyers' },
   { id: 'cel', label: 'CEL (valeur ajoutée)' },
 ];
-const NOMS_TYPES = { tva: 'TVA', vrs: 'Retenues sur salaires', brs: 'BRS', cel: 'CEL sur la valeur ajoutée' };
+const NOMS_TYPES = { tva: 'TVA', vrs: 'Retenues sur salaires', brs: 'RAS Tiers et loyers', cel: 'CEL sur la valeur ajoutée' };
 const NOMS_MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 const libelleMois = (m) => (m && m.length === 7 ? `${NOMS_MOIS[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}` : m || '');
 
@@ -30,10 +30,12 @@ function moisPrecedent() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+// Comme sur le portail, une ligne à zéro reste vide.
 const valeurLigne = (l) => {
   if (l.type === 'ouinon') return l.value ? 'OUI' : 'NON';
   if (l.value === null || l.value === undefined) return '';
-  return l.type === 'nombre' ? String(l.value) : fmt(l.value);
+  if (l.type === 'nombre') return String(l.value);
+  return Math.round(l.value) === 0 ? '' : fmt(l.value);
 };
 
 // Registre des sommes versées à des tiers (loyers, prestations) : sert de base à la déclaration BRS.
@@ -70,8 +72,7 @@ function RegistreBrs({ mois, lignes, onChange }) {
     <div style={{ margin: '18px 0' }}>
       <h3 style={{ fontSize: 15, marginBottom: 6 }}>Registre des sommes versées à des tiers — {libelleMois(mois)}</h3>
       <p style={{ color: 'var(--encre-douce)', fontSize: 13, margin: '0 0 10px' }}>
-        Ajoutez les loyers et prestations payés à des personnes ou entreprises. Une retenue de 5 % s'applique aux prestations de 25 000 FCFA ou plus
-        et aux loyers mensuels de 150 000 FCFA ou plus.
+        Ajoutez uniquement les loyers et prestations payés à des tiers qui sont soumis à la retenue à la source : la retenue est calculée à 5 % du montant brut.
       </p>
       {erreur && <div className="erreur">{erreur}</div>}
       <form onSubmit={ajouter} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
@@ -246,6 +247,8 @@ function DeclarationsTab() {
             </table>
           </div>
 
+          <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '10px 0 0' }}>{d.texte}</p>
+
           {type === 'cel' && (
             <div style={{ margin: '16px 0', padding: 12, border: '1px solid rgba(128,128,128,0.25)', borderRadius: 8 }}>
               <p style={{ margin: '0 0 8px', fontSize: 13.5, fontWeight: 600 }}>Ajuster les données de l'exercice {Number(annee) - 1}</p>
@@ -276,6 +279,7 @@ function DeclarationsTab() {
             <thead>
               <tr>
                 <th style={enteteTable}>Désignation</th>
+                {d.lines.some((l) => l.annexe) && <th style={enteteTable}>Annexe</th>}
                 <th style={{ ...enteteTable, textAlign: 'right', width: 70 }}>Ligne</th>
                 <th style={{ ...enteteTable, textAlign: 'right', width: 150 }}>Montant</th>
               </tr>
@@ -284,6 +288,7 @@ function DeclarationsTab() {
               {d.lines.map((l) => (
                 <tr key={l.ligne}>
                   <td style={{ ...cellule, fontWeight: l.fort ? 600 : 400 }}>{l.label}</td>
+                  {d.lines.some((x) => x.annexe) && <td style={{ ...cellule, fontSize: 12, color: 'var(--encre-douce)' }}>{l.annexe || ''}</td>}
                   <td style={{ ...droite, color: 'var(--encre-douce)' }}>{l.ligne}</td>
                   <td style={{ ...droite, fontWeight: l.fort ? 600 : 400 }}>{valeurLigne(l)}</td>
                 </tr>

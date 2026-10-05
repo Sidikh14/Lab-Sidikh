@@ -423,6 +423,9 @@ export const api = {
     request('/accounting/reconciliations', { method: 'POST', body: JSON.stringify(data) }),
   deleteReconciliation: (id) => request(`/accounting/reconciliations/${id}`, { method: 'DELETE' }),
 
+  // Balance âgée (clients, fournisseurs, assureurs).
+  getAgedBalance: (params) => request(`/accounting/aged-balance${qs(params)}`),
+
   // Impôts et cotisations dus à l'État (TVA, retenues sur salaires, CSS, IPRES, CFCE, IS).
   getAccountingStateDues: (params) => request(`/accounting/state-dues${qs(params)}`),
   getAccountingStatePayments: () => request('/accounting/state-payments'),

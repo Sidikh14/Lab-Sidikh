@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { PageModuleNonActive } from '../components/ModuleNonActive';
 import { api } from '../api/client';
@@ -468,11 +468,16 @@ const COLONNES_LIVRE = [
   { label: 'Débit', align: 'right' }, { label: 'Crédit', align: 'right' }, { label: 'Solde', align: 'right' },
 ];
 
+// Comptes de tiers : le serveur ajoute la lettre de chaque ligne (colonne « Lettre » en plus).
+const avecLettrage = (c) => c.lines.some((l) => l.lettre !== undefined);
+const colonnesLivre = (c) => (avecLettrage(c) ? [...COLONNES_LIVRE, { label: 'Lettre' }] : COLONNES_LIVRE);
+
 function lignesLivre(c, avecOuverture) {
+  const lettre = (v) => (avecLettrage(c) ? [v] : []);
   return [
-    ...(avecOuverture ? [{ fort: true, cells: ['', '', '', "Solde à l'ouverture", '', '', fmt(c.opening)] }] : []),
-    ...c.lines.map((l) => [dateFr(l.date), l.entryNumber, l.journal, l.label, l.debit > 0 ? fmt(l.debit) : '', l.credit > 0 ? fmt(l.credit) : '', fmt(l.solde)]),
-    { fort: true, cells: ['', '', '', 'Totaux', fmt(c.totalDebit), fmt(c.totalCredit), fmt(c.closing)] },
+    ...(avecOuverture ? [{ fort: true, cells: ['', '', '', "Solde à l'ouverture", '', '', fmt(c.opening), ...lettre('')] }] : []),
+    ...c.lines.map((l) => [dateFr(l.date), l.entryNumber, l.journal, l.label, l.debit > 0 ? fmt(l.debit) : '', l.credit > 0 ? fmt(l.credit) : '', fmt(l.solde), ...lettre(l.lettre || '')]),
+    { fort: true, cells: ['', '', '', 'Totaux', fmt(c.totalDebit), fmt(c.totalCredit), fmt(c.closing), ...lettre('')] },
   ];
 }
 
@@ -487,6 +492,7 @@ function TableCompte({ c, avecOuverture }) {
             <th style={{ ...enteteTable, textAlign: 'right' }}>Débit</th>
             <th style={{ ...enteteTable, textAlign: 'right' }}>Crédit</th>
             <th style={{ ...enteteTable, textAlign: 'right' }}>Solde</th>
+            {avecLettrage(c) && <th style={{ ...enteteTable, textAlign: 'center' }}>Lettre</th>}
           </tr>
         </thead>
         <tbody>
@@ -494,6 +500,7 @@ function TableCompte({ c, avecOuverture }) {
             <tr>
               <td style={cellule} colSpan={6}><em>Solde à l'ouverture de la période</em></td>
               <td style={droite}>{fmt(c.opening)}</td>
+              {avecLettrage(c) && <td style={cellule} />}
             </tr>
           )}
           {c.lines.map((l, i) => (
@@ -505,6 +512,7 @@ function TableCompte({ c, avecOuverture }) {
               <td style={droite}>{l.debit > 0 ? fmt(l.debit) : ''}</td>
               <td style={droite}>{l.credit > 0 ? fmt(l.credit) : ''}</td>
               <td style={droite}>{fmt(l.solde)}</td>
+              {avecLettrage(c) && <td style={{ ...cellule, textAlign: 'center', fontWeight: 600 }}>{l.lettre}</td>}
             </tr>
           ))}
           <tr>
@@ -512,6 +520,7 @@ function TableCompte({ c, avecOuverture }) {
             <td style={{ ...droite, fontWeight: 700 }}>{fmt(c.totalDebit)}</td>
             <td style={{ ...droite, fontWeight: 700 }}>{fmt(c.totalCredit)}</td>
             <td style={{ ...droite, fontWeight: 700 }}>{fmt(c.closing)}</td>
+            {avecLettrage(c) && <td style={cellule} />}
           </tr>
         </tbody>
       </table>
@@ -543,7 +552,7 @@ function GrandLivreTab() {
       periode: libellePeriode(periode),
       sections: comptesAffiches.map((c) => ({
         titre: `${c.code} — ${c.label}`,
-        colonnes: COLONNES_LIVRE,
+        colonnes: colonnesLivre(c),
         lignes: lignesLivre(c, Boolean(periode.from)),
       })),
     });
@@ -595,6 +604,11 @@ function GrandLivreTab() {
         <div>
           <TableCompte c={comptesAffiches[0]} avecOuverture={Boolean(periode.from)} />
           <p style={{ fontSize: 12.5, color: 'var(--encre-douce)' }}>Solde positif = débiteur, négatif = créditeur.</p>
+          {avecLettrage(comptesAffiches[0]) && (
+            <p style={{ fontSize: 12.5, color: 'var(--encre-douce)' }}>
+              Lettre : les lignes portant la même lettre se compensent (factures et règlements rapprochés du plus ancien au plus récent). Une ligne sans lettre est encore ouverte.
+            </p>
+          )}
         </div>
       )}
     </div>
@@ -1688,6 +1702,111 @@ function RapprochementTab() {
   );
 }
 
+// ---------- Balance âgée ----------
+// Ce que les clients (ou assureurs) nous doivent, et ce que nous devons aux fournisseurs, classé
+// par ancienneté. Les règlements sont imputés sur les plus anciennes factures d'abord.
+
+const TYPES_BALANCE_AGEE = [
+  ['client', 'Clients'],
+  ['assureur', 'Assureurs (tiers payant)'],
+  ['fournisseur', 'Fournisseurs'],
+];
+
+function BalanceAgeeTab() {
+  const entreprise = useEntreprise();
+  const [type, setType] = useState('client');
+  const [periode, setPeriode] = useState({ from: '', to: aujourdhui() });
+  const [ouvert, setOuvert] = useState({});
+  const [b, erreur] = useDonnees(() => api.getAgedBalance({ type, date: periode.to }), [type, periode.to]);
+
+  const sensClair = type === 'fournisseur' ? 'Nous devons' : 'Nous doit';
+  const labels = b?.trancheLabels || [];
+
+  function exporter() {
+    const colonnes = [{ label: 'Compte' }, ...labels.map((l) => ({ label: l, align: 'right' })), { label: 'Total', align: 'right' }, { label: 'Avance', align: 'right' }];
+    const detail = b.tiers.flatMap((t) => t.items.map((i) => [`${t.code} — ${t.label}`, dateFr(i.date), i.reference || i.label, fmt(i.restant), `${i.age} j`]));
+    exporterPdf({
+      entreprise, titre: `Balance âgée — ${b.titre}`, periode: `Au ${dateFr(b.date)}`,
+      sections: [
+        {
+          colonnes,
+          lignes: [
+            ...b.tiers.map((t) => [`${t.code} — ${t.label}`, ...t.tranches.map(fmt), fmt(t.total), t.avance ? fmt(t.avance) : '']),
+            { fort: true, cells: ['Totaux', ...b.totals.tranches.map(fmt), fmt(b.totals.total), b.totals.avance ? fmt(b.totals.avance) : ''] },
+          ],
+        },
+        ...(detail.length > 0 ? [{
+          titre: 'Détail des montants ouverts',
+          colonnes: [{ label: 'Compte' }, { label: 'Date' }, { label: 'Référence' }, { label: 'Reste dû', align: 'right' }, { label: 'Ancienneté', align: 'right' }],
+          lignes: detail,
+        }] : []),
+      ],
+    });
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
+        <Periode periode={periode} onChange={setPeriode} unSeulJour />
+        <BoutonExport disabled={!b || b.tiers.length === 0} onClick={exporter} />
+      </div>
+      <select className="champ" style={{ width: 'auto', marginBottom: 14 }} value={type} onChange={(e) => { setType(e.target.value); setOuvert({}); }}>
+        {TYPES_BALANCE_AGEE.map((t) => <option key={t[0]} value={t[0]}>{t[1]}</option>)}
+      </select>
+      <p style={{ margin: '0 0 12px', color: 'var(--encre-douce)', fontSize: 12.5 }}>
+        {sensClair} les montants ci-dessous, classés selon l'ancienneté de la facture à la date choisie. Les règlements sont imputés sur les plus anciennes factures d'abord ;
+        un règlement qui dépasse ce qui est dû apparaît comme avance.
+      </p>
+      {erreur && <div className="erreur">{erreur}</div>}
+      {!b && !erreur ? (
+        <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+      ) : b && b.tiers.length === 0 ? (
+        <p className="etat-vide">Rien à recevoir ni à payer à cette date.</p>
+      ) : b && (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={tableStyle}>
+            <thead>
+              <tr>
+                <th style={enteteTable}>Compte</th>
+                {labels.map((l) => <th key={l} style={{ ...enteteTable, textAlign: 'right' }}>{l}</th>)}
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Total</th>
+                <th style={{ ...enteteTable, textAlign: 'right' }}>Avance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {b.tiers.map((t) => (
+                <Fragment key={t.code}>
+                  <tr style={{ cursor: t.items.length ? 'pointer' : 'default' }} onClick={() => t.items.length && setOuvert((o) => ({ ...o, [t.code]: !o[t.code] }))}>
+                    <td style={cellule}>{t.items.length > 0 ? (ouvert[t.code] ? '▾ ' : '▸ ') : ''}{t.code} — {t.label}</td>
+                    {t.tranches.map((m, i) => <td key={i} style={droite}>{m ? fmt(m) : ''}</td>)}
+                    <td style={{ ...droite, fontWeight: 600 }}>{fmt(t.total)}</td>
+                    <td style={droite}>{t.avance ? fmt(t.avance) : ''}</td>
+                  </tr>
+                  {ouvert[t.code] && t.items.map((i, k) => (
+                    <tr key={k} style={{ background: 'rgba(128,128,128,0.06)' }}>
+                      <td style={{ ...cellule, paddingLeft: 28, color: 'var(--encre-douce)' }} colSpan={labels.length + 1}>
+                        {dateFr(i.date)} · {i.reference || i.label} · {i.age} j
+                      </td>
+                      <td style={droite}>{fmt(i.restant)}</td>
+                      <td style={cellule} />
+                    </tr>
+                  ))}
+                </Fragment>
+              ))}
+              <tr>
+                <td style={{ ...cellule, fontWeight: 700 }}>Totaux</td>
+                {b.totals.tranches.map((m, i) => <td key={i} style={{ ...droite, fontWeight: 700 }}>{fmt(m)}</td>)}
+                <td style={{ ...droite, fontWeight: 700 }}>{fmt(b.totals.total)}</td>
+                <td style={{ ...droite, fontWeight: 700 }}>{b.totals.avance ? fmt(b.totals.avance) : ''}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------- Impôts & cotisations ----------
 // Les impôts (TVA, IR/TRIMF, CFCE) se paient chaque mois. Les cotisations (CSS, IPRES)
 // suivent la périodicité choisie par le manager. Les montants sont calculés depuis les
@@ -2201,6 +2320,7 @@ const ONGLETS = [
   { id: 'financement', label: 'Capital et emprunts', composant: FinancementTab },
   { id: 'regularisations', label: 'Régularisations', composant: RegularisationsTab },
   { id: 'rapprochement', label: 'Rapprochement', composant: RapprochementTab },
+  { id: 'balanceagee', label: 'Balance âgée', composant: BalanceAgeeTab },
   { id: 'cloture', label: 'Clôture', composant: ClotureTab },
   { id: 'plan', label: 'Plan comptable', composant: PlanTab },
   { id: 'grandlivre', label: 'Grand livre', composant: GrandLivreTab },
