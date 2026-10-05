@@ -15,11 +15,19 @@ import {
 
 const TYPES = [
   { id: 'tva', label: 'TVA' },
-  { id: 'vrs', label: 'Retenues sur salaires' },
+  { id: 'ir', label: 'IR sur salaires' },
+  { id: 'trimf', label: 'TRIMF' },
+  { id: 'cfce', label: 'CFCE' },
   { id: 'brs', label: 'RAS Tiers et loyers' },
-  { id: 'cel', label: 'CEL (valeur ajoutée)' },
+  { id: 'cel', label: 'CEL valeur ajoutée' },
+  { id: 'cel_vl', label: 'CEL valeur locative' },
 ];
-const NOMS_TYPES = { tva: 'TVA', vrs: 'Retenues sur salaires', brs: 'RAS Tiers et loyers', cel: 'CEL sur la valeur ajoutée' };
+const NOMS_TYPES = {
+  tva: 'TVA', ir: 'IR RAS Salaires', trimf: 'TRIMF', cfce: 'CFCE', brs: 'RAS Tiers et loyers',
+  cel: 'CEL sur la valeur ajoutée', cel_vl: 'CEL sur la valeur locative', vrs: 'Retenues sur salaires',
+};
+// Déclarations annuelles (choix d'une année) ; les autres sont mensuelles.
+const TYPES_ANNUELS = ['cel', 'cel_vl'];
 const NOMS_MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 const libelleMois = (m) => (m && m.length === 7 ? `${NOMS_MOIS[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}` : m || '');
 
@@ -35,7 +43,7 @@ const valeurLigne = (l) => {
   if (l.type === 'ouinon') return l.value ? 'OUI' : 'NON';
   if (l.value === null || l.value === undefined) return '';
   if (l.type === 'nombre') return String(l.value);
-  return Math.round(l.value) === 0 ? '' : fmt(l.value);
+  return Math.round(l.value) === 0 && !l.afficherZero ? '' : fmt(l.value);
 };
 
 // Registre des sommes versées à des tiers (loyers, prestations) : sert de base à la déclaration BRS.
@@ -115,6 +123,10 @@ function DeclarationsTab() {
   const [annee, setAnnee] = useState(String(new Date().getFullYear()));
   const [reglagesCel, setReglagesCel] = useState({ ca: '', va: '', exonere: false, faibleMarge: false, telecom: false, portuaire: false });
   const [reglagesCelAppliques, setReglagesCelAppliques] = useState({});
+  const [reglagesVl, setReglagesVl] = useState({ loyer: '', mois: '', gratuit: '', percu: '', prepond: false, hotel: false });
+  const [reglagesVlAppliques, setReglagesVlAppliques] = useState({});
+  const [reglagesIr, setReglagesIr] = useState({ etrangers: '', salairesEtrangers: '' });
+  const [reglagesIrAppliques, setReglagesIrAppliques] = useState({});
   const [version, setVersion] = useState(0);
   const [depot, setDepot] = useState(false);
   const [dateDepot, setDateDepot] = useState(aujourdhui());
@@ -124,7 +136,15 @@ function DeclarationsTab() {
 
   const [donnees, erreur] = useDonnees(
     async () => {
-      const params = type === 'cel'
+      const params = type === 'cel_vl'
+        ? {
+          year: annee, loyer: reglagesVlAppliques.loyer || undefined, mois: reglagesVlAppliques.mois || undefined,
+          gratuit: reglagesVlAppliques.gratuit || undefined, percu: reglagesVlAppliques.percu || undefined,
+          prepond: reglagesVlAppliques.prepond ? '1' : undefined, hotel: reglagesVlAppliques.hotel ? '1' : undefined,
+        }
+        : type === 'ir'
+          ? { month: mois, etrangers: reglagesIrAppliques.etrangers || undefined, salairesEtrangers: reglagesIrAppliques.salairesEtrangers || undefined }
+        : type === 'cel'
         ? {
           year: annee,
           ca: reglagesCelAppliques.ca || undefined, va: reglagesCelAppliques.va || undefined,
@@ -139,7 +159,7 @@ function DeclarationsTab() {
       ]);
       return { declaration, depots, registre };
     },
-    [type, mois, annee, reglagesCelAppliques, version]
+    [type, mois, annee, reglagesCelAppliques, reglagesVlAppliques, reglagesIrAppliques, version]
   );
 
   useEffect(() => {
@@ -151,9 +171,16 @@ function DeclarationsTab() {
   useEffect(() => {
     setReglagesCelAppliques({});
     setReglagesCel({ ca: '', va: '', exonere: false, faibleMarge: false, telecom: false, portuaire: false });
+    setReglagesVlAppliques({});
+    setReglagesVl({ loyer: '', mois: '', gratuit: '', percu: '', prepond: false, hotel: false });
   }, [annee]);
 
-  const periode = type === 'cel' ? annee : mois;
+  useEffect(() => {
+    setReglagesIrAppliques({});
+    setReglagesIr({ etrangers: '', salairesEtrangers: '' });
+  }, [mois]);
+
+  const periode = TYPES_ANNUELS.includes(type) ? annee : mois;
   // Pendant un changement de déclaration, on garde l'ancien contenu à l'écran jusqu'à l'arrivée du nouveau.
   const d = donnees && donnees.declaration.kind === type ? donnees.declaration : null;
 
@@ -200,7 +227,7 @@ function DeclarationsTab() {
       </div>
 
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 16 }}>
-        {type === 'cel' ? (
+        {TYPES_ANNUELS.includes(type) ? (
           <div className="champ-groupe" style={{ margin: 0 }}>
             <label className="etiquette">Année d'imposition</label>
             <select className="champ" value={annee} onChange={(e) => setAnnee(e.target.value)}>
@@ -222,7 +249,7 @@ function DeclarationsTab() {
         <div style={{ marginBottom: 26 }}>
           <h3 style={{ fontSize: 16, marginBottom: 4 }}>{d.title.toUpperCase()}</h3>
           <p style={{ color: 'var(--encre-douce)', fontSize: 13, margin: '0 0 10px' }}>
-            Dépôt au plus tard le {dateFr(d.deadline)} · paiement au plus tard le {dateFr(d.deadlinePay)}.
+            Dépôt au plus tard le {dateFr(d.deadline)}{d.deadlinePay ? ` · paiement au plus tard le ${dateFr(d.deadlinePay)}` : ''}.
           </p>
           {d.provisoire && (
             <div className="erreur" style={{ marginBottom: 8 }}>
@@ -248,6 +275,62 @@ function DeclarationsTab() {
           </div>
 
           <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '10px 0 0' }}>{d.texte}</p>
+
+          {type === 'ir' && d.inputs && (
+            <div style={{ margin: '16px 0', padding: 12, border: '1px solid rgba(128,128,128,0.25)', borderRadius: 8 }}>
+              <p style={{ margin: '0 0 8px', fontSize: 13.5, fontWeight: 600 }}>Salariés de nationalité étrangère (lignes 20 et 50)</p>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div className="champ-groupe" style={{ margin: 0 }}>
+                  <label className="etiquette">Nombre d'étrangers</label>
+                  <input type="number" min="0" className="champ" placeholder="0" value={reglagesIr.etrangers} onChange={(e) => setReglagesIr({ ...reglagesIr, etrangers: e.target.value })} />
+                </div>
+                <div className="champ-groupe" style={{ margin: 0 }}>
+                  <label className="etiquette">Salaires versés aux étrangers</label>
+                  <input type="number" min="0" className="champ" placeholder="0" value={reglagesIr.salairesEtrangers} onChange={(e) => setReglagesIr({ ...reglagesIr, salairesEtrangers: e.target.value })} />
+                </div>
+                <button type="button" className="btn" onClick={() => setReglagesIrAppliques(reglagesIr)}>Recalculer</button>
+              </div>
+            </div>
+          )}
+
+          {type === 'cel_vl' && d.inputs && (
+            <div style={{ margin: '16px 0', padding: 12, border: '1px solid rgba(128,128,128,0.25)', borderRadius: 8 }}>
+              <p style={{ margin: '0 0 8px', fontSize: 13.5, fontWeight: 600 }}>
+                Loyer et locaux
+                {d.inputs.loyerDetecte > 0 && ` — loyer repris des charges : ${fmt(d.inputs.loyerDetecte)} par mois`}
+              </p>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div className="champ-groupe" style={{ margin: 0 }}>
+                  <label className="etiquette">Loyer mensuel à verser</label>
+                  <input type="number" min="0" className="champ" placeholder={String(d.inputs.loyerDetecte)} value={reglagesVl.loyer} onChange={(e) => setReglagesVl({ ...reglagesVl, loyer: e.target.value })} />
+                </div>
+                <div className="champ-groupe" style={{ margin: 0 }}>
+                  <label className="etiquette">Mois d'activité (ligne 90)</label>
+                  <input type="number" min="1" max="12" className="champ" placeholder="12" value={reglagesVl.mois} onChange={(e) => setReglagesVl({ ...reglagesVl, mois: e.target.value })} />
+                </div>
+                <div className="champ-groupe" style={{ margin: 0 }}>
+                  <label className="etiquette">Loyer estimé, locaux gratuits (50)</label>
+                  <input type="number" min="0" className="champ" value={reglagesVl.gratuit} onChange={(e) => setReglagesVl({ ...reglagesVl, gratuit: e.target.value })} />
+                </div>
+                <div className="champ-groupe" style={{ margin: 0 }}>
+                  <label className="etiquette">Loyer perçu, loueur professionnel (70)</label>
+                  <input type="number" min="0" className="champ" value={reglagesVl.percu} onChange={(e) => setReglagesVl({ ...reglagesVl, percu: e.target.value })} />
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', margin: '10px 0' }}>
+                {[['prepond', 'Société à prépondérance immobilière (30)'], ['hotel', 'Établissement hôtelier agréé (55)']].map(([cle, label]) => (
+                  <label key={cle} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={reglagesVl[cle]} onChange={(e) => setReglagesVl({ ...reglagesVl, [cle]: e.target.checked })} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              <p style={{ margin: '0 0 10px', fontSize: 12.5, color: 'var(--encre-douce)' }}>
+                Les valeurs des terrains, constructions et agencements (lignes 5, 10, 15) sont reprises de vos immobilisations au 31 décembre {Number(annee) - 1}.
+              </p>
+              <button type="button" className="btn" onClick={() => setReglagesVlAppliques(reglagesVl)}>Recalculer</button>
+            </div>
+          )}
 
           {type === 'cel' && (
             <div style={{ margin: '16px 0', padding: 12, border: '1px solid rgba(128,128,128,0.25)', borderRadius: 8 }}>

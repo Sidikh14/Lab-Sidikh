@@ -1611,7 +1611,7 @@ router.post('/fiscal-years/:year/reopen', async (req, res) => {
 // noir et blanc que la page affiche en aperçu (télécharger / imprimer). Sert au journal,
 // au grand livre, aux balances, au compte de résultat et au bilan.
 
-const nettoyerTexte = (v) => String(v ?? '').replace(/[\u202f\u00a0\u2009]/g, ' ').slice(0, 400);
+const nettoyerTexte = (v) => String(v ?? '').replace(/[\u202f\u00a0\u2009]/g, ' ').slice(0, 1500);
 
 router.post('/pdf', async (req, res) => {
   const { entreprise, titre, periode, sections } = req.body || {};
@@ -1773,7 +1773,9 @@ router.put('/tax-profile', async (req, res) => {
 // TVA, des retenues sur salaires et de la BRS sont provisoires (provisoire: true) tant que le
 // formulaire officiel correspondant n'a pas été fourni.
 
-const NOMS_DECL = { tva: 'Taxe sur la valeur ajoutée', vrs: 'Retenues sur salaires (IR, TRIMF, CFCE)', brs: 'RAS Tiers et loyers', cel: 'CEL sur la valeur ajoutée' };
+const NOMS_DECL = { tva: 'Taxe sur la valeur ajoutée', ir: 'IR RAS Salaires', trimf: 'TRIMF', cfce: 'CFCE', brs: 'RAS Tiers et loyers', cel: 'CEL sur la valeur ajoutée', cel_vl: 'CEL sur la valeur locative', vrs: 'Retenues sur salaires' };
+const TEXTE_SALAIRES = 'Déclaration des retenues à la source sur les salaires';
+const TEXTE_CEL_VL = "La présente déclaration doit être remplie, datée, signée et déposée au centre des services fiscaux compétent au plus tard le 31 janvier. Veuillez noter que, conformément aux dispositions du CGI, les informations contenues dans la présente déclaration sont susceptibles de vous être opposées dans le cadre d'une procédure de rappel de droit. Vous avez la faculté de notifier au service compétent les erreurs ou omissions relevées dans la déclaration dans les conditions fixées par ledit code. Les lignes 25, 40, 60, 65, 75, 80, 85 et 95 ci-dessous sont facultatives ; la ligne 90 est obligatoire. Pour de plus amples renseignements sur les lignes de cette déclaration et le mode de calcul de la taxe exigible, veuillez vous référer au Code général des impôts (CGI) ou télécharger la notice explicative sur le site de la DGID (www.impotsetdomaines.gouv.sn).";
 const MOIS_MOIS_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 const ANNEE_RE = /^\d{4}$/;
 const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
@@ -1782,14 +1784,20 @@ const dernierJour = (mois) => {
   const [a, m] = mois.split('-').map(Number);
   return `${mois}-${String(new Date(a, m, 0).getDate()).padStart(2, '0')}`;
 };
-// Le 15 du mois suivant ; s'il tombe un samedi ou un dimanche, l'échéance passe au lundi
-// (ex. le 15 décembre 2024, un dimanche, devient le 16). Les jours fériés ne sont pas pris en compte.
+// Une échéance qui tombe un samedi ou un dimanche passe au lundi (ex. le 15 décembre 2024, un
+// dimanche, devient le 16 ; le 31 janvier 2026, un samedi, devient le 2 février). Les jours fériés
+// ne sont pas pris en compte.
+function decalerWeekEnd(iso) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() + 2);
+  else if (d.getUTCDay() === 0) d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+// Le 15 du mois suivant.
 function limiteDepot(mois) {
   const [a, m] = mois.split('-').map(Number);
-  const d = new Date(Date.UTC(m === 12 ? a + 1 : a, m === 12 ? 0 : m, 15));
-  if (d.getUTCDay() === 6) d.setUTCDate(17);
-  else if (d.getUTCDay() === 0) d.setUTCDate(16);
-  return d.toISOString().slice(0, 10);
+  const suivant = m === 12 ? `${a + 1}-01` : `${a}-${String(m + 1).padStart(2, '0')}`;
+  return decalerWeekEnd(`${suivant}-15`);
 }
 const libelleOuiNon = (v) => (v ? 'OUI' : 'NON');
 
@@ -1797,7 +1805,7 @@ const libelleOuiNon = (v) => (v ? 'OUI' : 'NON');
 // Comme sur le portail, une ligne à zéro reste vide ; une ligne peut renvoyer à une annexe (colonne du milieu).
 const TEXTE_DGID = "Veuillez indiquer ci-dessous les renseignements demandés conformément au Code Général des Impôts. Vous devez également joindre les annexes requises sous peine des sanctions prévues par la loi. Les chèques bancaires ou postaux doivent être libellés à l'ordre du Chef du Bureau du Recouvrement. Les chèques bancaires doivent être barrés.";
 
-function construireDocument({ kind, profil, periodeLabel, debut, fin, limiteDepotIso, limitePaiementIso, dateSoumission, lignes, annexes = [], provisoire, alertes = [], titreAnnexe = 'Annexe fiscale' }) {
+function construireDocument({ kind, profil, periodeLabel, debut, fin, limiteDepotIso, limitePaiementIso, dateSoumission, lignes, annexes = [], provisoire, alertes = [], titreAnnexe = 'Annexe fiscale', texte = TEXTE_DGID, titrePdf }) {
   const titre = NOMS_DECL[kind];
   const adresse = profil.address || '';
   const entete = [
@@ -1807,7 +1815,7 @@ function construireDocument({ kind, profil, periodeLabel, debut, fin, limiteDepo
     ['ÉTABLISSEMENT', '', 'CENTRE DE PERCEPTION', ''],
     ['DÉBUT DE LA PÉRIODE', dateFr(debut), 'OBJET IMPOSABLE', ''],
     ['DATE LIMITE DE DÉPÔT', dateFr(limiteDepotIso), 'FIN DE LA PÉRIODE', dateFr(fin)],
-    ['DATE SOUMISSION', dateSoumission ? dateFr(dateSoumission) : '', 'DATE LIMITE DE PAIEMENT', dateFr(limitePaiementIso)],
+    ['DATE SOUMISSION', dateSoumission ? dateFr(dateSoumission) : '', 'DATE LIMITE DE PAIEMENT', limitePaiementIso ? dateFr(limitePaiementIso) : ''],
     ['ADRESSE DE CORRESPONDANCE', adresse, 'LOCALISATION', adresse],
   ];
   const avecAnnexe = lignes.some((l) => l.annexe);
@@ -1815,18 +1823,18 @@ function construireDocument({ kind, profil, periodeLabel, debut, fin, limiteDepo
     if (l.type === 'ouinon') return l.value ? 'OUI' : 'NON';
     if (l.value === null || l.value === undefined) return '';
     if (l.type === 'nombre') return String(l.value);
-    return Math.round(l.value) === 0 ? '' : fcfa(l.value);
+    return Math.round(l.value) === 0 && !l.afficherZero ? '' : fcfa(l.value);
   };
   const colonnesAnnexe = avecAnnexe
     ? [{ label: titreAnnexe }, { label: '' }, { label: 'Ligne', align: 'right' }, { label: 'Montant', align: 'right' }]
     : [{ label: titreAnnexe }, { label: 'Ligne', align: 'right' }, { label: 'Montant', align: 'right' }];
   const pdf = {
     entreprise: 'RÉPUBLIQUE DU SÉNÉGAL · Un Peuple – Un But – Une Foi',
-    titre: titre.toUpperCase(),
+    titre: (titrePdf || titre).toUpperCase(),
     periode: `DGID – Ministère des Finances et du Budget · Mon Espace Perso · Préparé par Amaterasu${provisoire ? ' · numéros de ligne provisoires' : ''}`,
     sections: [
       { colonnes: [{ label: 'CONTRIBUABLE ET RENSEIGNEMENTS FISCAUX' }, { label: '' }, { label: '' }, { label: '' }], lignes: entete },
-      { colonnes: [{ label: '' }], lignes: [[TEXTE_DGID]] },
+      { colonnes: [{ label: '' }], lignes: [[texte]] },
       {
         colonnes: colonnesAnnexe,
         lignes: lignes.map((l) => ({
@@ -1839,7 +1847,7 @@ function construireDocument({ kind, profil, periodeLabel, debut, fin, limiteDepo
   };
   return {
     kind, title: titre, period: periodeLabel, deadline: limiteDepotIso, deadlinePay: limitePaiementIso,
-    provisoire, alertes, header: entete, texte: TEXTE_DGID, lines: lignes, annexes, pdf,
+    provisoire, alertes, header: entete, texte, lines: lignes, annexes, pdf,
   };
 }
 
@@ -1969,52 +1977,81 @@ router.get('/declarations/tva', async (req, res) => {
   }
 });
 
-// GET /accounting/declarations/vrs?month=AAAA-MM — retenues sur salaires, un impôt par ligne.
-router.get('/declarations/vrs', async (req, res) => {
+// ----- Retenues sur salaires : trois déclarations séparées, comme sur le portail -----
+// IR RAS Salaires (lignes 10 à 100), TRIMF (ligne 110) et CFCE (ligne 120).
+async function lireSalairesMois(merchantId, mois) {
+  const r = await pool.query(
+    `SELECT u.full_name, COALESCE(p.gross_salary, 0) AS brut, COALESCE(p.irpp, 0) AS irpp, COALESCE(p.trimf, 0) AS trimf, COALESCE(p.cfce, 0) AS cfce
+     FROM payslips p JOIN users u ON u.id = p.user_id WHERE p.merchant_id = $1 AND p.month = $2 ORDER BY u.full_name`,
+    [merchantId, mois]
+  );
+  const salaries = r.rows.map((x) => ({ name: x.full_name, gross: Math.round(Number(x.brut)), ir: Math.round(Number(x.irpp)), trimf: Math.round(Number(x.trimf)), cfce: Math.round(Number(x.cfce)) }));
+  const tot = salaries.reduce((t, l) => ({ gross: t.gross + l.gross, ir: t.ir + l.ir, trimf: t.trimf + l.trimf, cfce: t.cfce + l.cfce }), { gross: 0, ir: 0, trimf: 0, cfce: 0 });
+  return { salaries, tot };
+}
+
+async function declarerSalaires(kind, req, res) {
   try {
     const mois = String(req.query.month || '');
     if (!MOIS_MOIS_RE.test(mois)) return res.status(400).json({ error: 'Mois invalide (AAAA-MM).' });
     const merchantId = req.user.merchantId;
     const profil = await lireProfilFiscal(pool, merchantId);
-    const r = await pool.query(
-      `SELECT u.full_name, COALESCE(p.gross_salary, 0) AS brut, COALESCE(p.irpp, 0) AS irpp, COALESCE(p.trimf, 0) AS trimf, COALESCE(p.cfce, 0) AS cfce
-       FROM payslips p JOIN users u ON u.id = p.user_id WHERE p.merchant_id = $1 AND p.month = $2 ORDER BY u.full_name`,
-      [merchantId, mois]
-    );
-    const salaries = r.rows.map((x) => ({ name: x.full_name, gross: arrondi(x.brut), ir: arrondi(x.irpp), trimf: arrondi(x.trimf), cfce: arrondi(x.cfce) }));
-    const tot = salaries.reduce((t, l) => ({ gross: t.gross + l.gross, ir: t.ir + l.ir, trimf: t.trimf + l.trimf, cfce: t.cfce + l.cfce }), { gross: 0, ir: 0, trimf: 0, cfce: 0 });
-    const aVerser = arrondi(tot.ir + tot.trimf + tot.cfce);
+    const { salaries, tot } = await lireSalairesMois(merchantId, mois);
     const alertes = [];
     alertesProfil(profil, alertes);
     if (salaries.length === 0) alertes.push('Aucun bulletin de paie pour ce mois : générez les bulletins dans le module Paie avant de déclarer.');
-    if (aVerser > 0 && aVerser < 20000) alertes.push('Montant inférieur à 20 000 FCFA : le versement peut se faire par trimestre, dans les 15 jours suivant le trimestre échu.');
-    const lignes = [
-      { ligne: 5, label: 'Nombre de salariés payés', value: salaries.length, type: 'nombre' },
-      { ligne: 10, label: 'Masse salariale brute du mois', value: arrondi(tot.gross) },
-      { ligne: 15, label: 'Impôt sur le revenu (IR) retenu sur salaires', value: arrondi(tot.ir) },
-      { ligne: 20, label: "Taxe représentative de l'impôt du minimum fiscal (TRIMF) retenue", value: arrondi(tot.trimf) },
-      { ligne: 25, label: "Contribution forfaitaire à la charge de l'employeur (CFCE)", value: arrondi(tot.cfce) },
-      { ligne: 30, label: 'Total à verser (lignes 15 + 20 + 25)', value: aVerser, fort: true },
-    ];
-    const annexes = [{
-      titre: 'État nominatif des salariés',
-      colonnes: [{ label: 'Salarié' }, { label: 'Salaire brut', align: 'right' }, { label: 'IR', align: 'right' }, { label: 'TRIMF', align: 'right' }, { label: 'CFCE', align: 'right' }],
-      lignes: [
-        ...salaries.map((l) => [l.name, fcfa(l.gross), fcfa(l.ir), fcfa(l.trimf), fcfa(l.cfce)]),
-        { fort: true, cells: ['Total', fcfa(tot.gross), fcfa(tot.ir), fcfa(tot.trimf), fcfa(tot.cfce)] },
-      ],
-    }];
-    const filed = await depotEnregistre(merchantId, 'vrs', mois);
+    let lignes;
+    let montant;
+    let annexes = [];
+    let inputs = null;
+    if (kind === 'ir') {
+      // La nationalité des salariés n'est pas suivie dans la paie : par défaut tous sont comptés comme sénégalais.
+      const total = salaries.length;
+      const etrangers = Math.min(total, Math.max(0, Math.round(Number(req.query.etrangers) || 0)));
+      const salairesEtr = Math.min(tot.gross, Math.max(0, Math.round(Number(req.query.salairesEtrangers) || 0)));
+      if (total > 0 && etrangers === 0) alertes.push('Tous les salariés sont comptés comme de nationalité sénégalaise (lignes 10 et 40). Ajustez ci-dessous si vous employez des étrangers.');
+      const L70 = tot.ir;
+      const L80 = 0;
+      montant = L70 - L80;
+      const z = { afficherZero: true };
+      lignes = [
+        { ligne: 10, label: 'Effectifs de nationalité sénégalaise rémunérés pour la période', value: total - etrangers, type: 'nombre' },
+        { ligne: 20, label: 'Effectifs de nationalité étrangère rémunérés durant la période', value: etrangers, type: 'nombre' },
+        { ligne: 30, label: "Nombre total d'employés rémunérés durant la période", value: total, type: 'nombre' },
+        { ligne: 40, label: 'Salaires versés aux employés de nationalité sénégalaise', value: tot.gross - salairesEtr, ...z },
+        { ligne: 50, label: 'Salaires versés aux employés de nationalité étrangère', value: salairesEtr, ...z },
+        { ligne: 60, label: 'Masse salariale totale pour la période', value: tot.gross, ...z },
+        { ligne: 70, label: "Montant de l'impôt sur le revenu retenu durant la période", value: L70, ...z },
+        { ligne: 80, label: 'Montant des retenues GTA imputables sur la période', value: L80, ...z },
+        { ligne: 100, label: "Montant de l'impôt sur le revenu dû durant la période", value: montant, fort: true, ...z },
+      ];
+      annexes = [{
+        titre: 'État nominatif des salariés (pour votre dossier)',
+        colonnes: [{ label: 'Salarié' }, { label: 'Salaire brut', align: 'right' }, { label: 'IR retenu', align: 'right' }],
+        lignes: [...salaries.map((l) => [l.name, fcfa(l.gross), fcfa(l.ir)]), { fort: true, cells: ['Total', fcfa(tot.gross), fcfa(tot.ir)] }],
+      }];
+      inputs = { etrangers, salairesEtrangers: salairesEtr, total };
+    } else if (kind === 'trimf') {
+      montant = tot.trimf;
+      lignes = [{ ligne: 110, label: 'TRIMF retenue durant la période', value: montant, fort: true, afficherZero: true }];
+    } else {
+      montant = tot.cfce;
+      lignes = [{ ligne: 120, label: 'CFCE exigible pour la période', value: montant, fort: true, afficherZero: true }];
+    }
+    const filed = await depotEnregistre(merchantId, kind, mois);
     const doc = construireDocument({
-      kind: 'vrs', profil, periodeLabel: libellePeriode(mois), debut: `${mois}-01`, fin: dernierJour(mois),
+      kind, profil, periodeLabel: libellePeriode(mois), debut: `${mois}-01`, fin: dernierJour(mois),
       limiteDepotIso: limiteDepot(mois), limitePaiementIso: limiteDepot(mois), dateSoumission: filed?.filed_on,
-      lignes, annexes, provisoire: true, alertes,
+      lignes, annexes, provisoire: false, alertes, texte: TEXTE_SALAIRES,
     });
-    res.json({ ...doc, month: mois, amountDue: aVerser, snapshot: { ...tot, aVerser }, filed });
+    res.json({ ...doc, month: mois, amountDue: montant, inputs, snapshot: { ...tot, montant }, filed });
   } catch (err) {
-    repondreErreur(res, err, 'Erreur lors de la préparation du versement des retenues sur salaires.');
+    repondreErreur(res, err, 'Erreur lors de la préparation de la déclaration des retenues sur salaires.');
   }
-});
+}
+router.get('/declarations/ir', (req, res) => declarerSalaires('ir', req, res));
+router.get('/declarations/trimf', (req, res) => declarerSalaires('trimf', req, res));
+router.get('/declarations/cfce', (req, res) => declarerSalaires('cfce', req, res));
 
 // ----- RAS Tiers et loyers (BRS) : retenue à la source de 5 % sur les sommes versées à des tiers -----
 // Le registre contient uniquement les versements soumis à la retenue : la retenue est de 5 % du montant brut.
@@ -2172,7 +2209,7 @@ router.get('/declarations/cel', async (req, res) => {
     const filed = await depotEnregistre(merchantId, 'cel', annee);
     const doc = construireDocument({
       kind: 'cel', profil, periodeLabel: annee, debut: `${annee}-01-01`, fin: `${annee}-12-31`,
-      limiteDepotIso: `${annee}-04-30`, limitePaiementIso: `${annee}-04-30`, dateSoumission: filed?.filed_on,
+      limiteDepotIso: decalerWeekEnd(`${annee}-04-30`), limitePaiementIso: decalerWeekEnd(`${annee}-04-30`), dateSoumission: filed?.filed_on,
       lignes, provisoire: false, alertes,
     });
     res.json({
@@ -2183,6 +2220,103 @@ router.get('/declarations/cel', async (req, res) => {
     });
   } catch (err) {
     repondreErreur(res, err, 'Erreur lors de la préparation de la CEL sur la valeur ajoutée.');
+  }
+});
+
+// ----- CEL sur la valeur locative : numéros de ligne du document officiel de la DGID -----
+// Déclarée avant le 31 janvier de l'année d'imposition. Le loyer annuel (ligne 45) est le loyer mensuel
+// à verser, repris des charges (dernier loyer comptabilisé en 622), multiplié par le nombre de mois d'activité.
+// GET /accounting/declarations/cel-vl?year=AAAA[&loyer=&mois=&terrains=&constructions=&agencements=&gratuit=&percu=&prepond=1&hotel=1]
+router.get('/declarations/cel-vl', async (req, res) => {
+  try {
+    const annee = String(req.query.year || '');
+    if (!ANNEE_RE.test(annee)) return res.status(400).json({ error: 'Année invalide (AAAA).' });
+    const merchantId = req.user.merchantId;
+    const profil = await lireProfilFiscal(pool, merchantId);
+    const n1 = Number(annee) - 1;
+    const rows = await agreger(merchantId, null, `${n1}-12-31`);
+    const brut = (prefixes) => Math.max(0, Math.round(rows.filter((r) => prefixes.some((p) => r.code.startsWith(p))).reduce((t, r) => t + r.debit - r.credit, 0)));
+    const terrainsCompta = brut(['22']);
+    const constructionsCompta = brut(['231', '232', '233']);
+    const agencementsCompta = brut(['234', '235', '238']);
+    // Loyer mensuel à verser : dernier mois où un loyer (compte 622) a été comptabilisé dans les charges.
+    const loy = await pool.query(
+      `SELECT to_char(e.entry_date, 'YYYY-MM') AS m, COALESCE(SUM(l.debit - l.credit), 0) AS montant
+       FROM accounting_lines l JOIN accounting_entries e ON e.id = l.entry_id JOIN accounting_accounts a ON a.id = l.account_id
+       WHERE l.merchant_id = $1 AND a.code LIKE '622%' AND e.entry_date >= $2::date AND e.entry_date <= $3::date
+       GROUP BY 1 HAVING COALESCE(SUM(l.debit - l.credit), 0) > 0 ORDER BY 1 DESC LIMIT 1`,
+      [merchantId, `${n1}-01-01`, `${annee}-12-31`]
+    );
+    const loyerDetecte = Math.round(Number(loy.rows[0]?.montant || 0));
+    const moisLoyer = loy.rows[0]?.m || null;
+    const nombre = (v, defaut) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? defaut : Math.max(0, Math.round(Number(v))));
+    const drapeau = (v) => v === '1' || v === 'true';
+    const mois = Math.min(12, Math.max(1, nombre(req.query.mois, 12)));
+    const loyerMensuel = nombre(req.query.loyer, loyerDetecte);
+    const prepond = drapeau(req.query.prepond);
+    const hotel = drapeau(req.query.hotel);
+    const L = {};
+    L[5] = nombre(req.query.terrains, terrainsCompta);
+    L[10] = nombre(req.query.constructions, constructionsCompta);
+    L[15] = nombre(req.query.agencements, agencementsCompta);
+    L[20] = L[5] + L[10] + L[15];
+    L[25] = Math.round(L[20] * 0.07);
+    L[35] = prepond ? Math.round(L[25] * 0.4) : null;
+    L[40] = prepond ? Math.round(L[35] * 0.2) : null;
+    L[45] = loyerMensuel * mois;
+    L[50] = nombre(req.query.gratuit, 0);
+    L[60] = hotel ? Math.round(L[25] * 0.5 * 0.2) : null;
+    L[65] = hotel ? Math.round((L[45] + L[50]) * 0.5 * 0.15) : null;
+    L[70] = nombre(req.query.percu, 0);
+    L[75] = L[70] > 0 ? Math.round(L[70] * 0.2) : null;
+    L[80] = !hotel && !prepond ? Math.round(L[25] * 0.2) : null;
+    L[85] = !hotel ? Math.round((L[45] + L[50]) * 0.15) : null;
+    L[90] = mois;
+    L[95] = (L[40] || 0) + (L[60] || 0) + (L[65] || 0) + (L[75] || 0) + (L[80] || 0) + (L[85] || 0);
+    const alertes = [];
+    alertesProfil(profil, alertes);
+    if (loyerDetecte > 0 && req.query.loyer === undefined) {
+      alertes.push(`Loyer mensuel repris des charges : ${fcfa(loyerDetecte)} FCFA (dernier loyer comptabilisé, ${libellePeriode(moisLoyer)}) × ${mois} mois = ${fcfa(L[45])} FCFA en ligne 45.`);
+    } else if (loyerDetecte === 0 && req.query.loyer === undefined) {
+      alertes.push("Aucun loyer comptabilisé dans les charges : enregistrez le loyer (nature « Loyer ») ou indiquez le loyer mensuel ci-dessous.");
+    }
+    if (L[75] !== null) alertes.push("Ligne 75 : le formulaire imprime « L75 x 20 % » ; j'applique 20 % au loyer perçu en ligne 70.");
+    alertes.push('Le portail calcule le montant définitif de la ligne 95 : vérifiez-le avant de déposer.');
+    const lignes = [
+      { ligne: 5, label: "Valeur brute des terrains imposables inscrits à l'actif du bilan", value: L[5] },
+      { ligne: 10, label: "Valeur brute des constructions imposables inscrites à l'actif du bilan", value: L[10] },
+      { ligne: 15, label: "Valeur brute des agencements et installations imposables inscrites à l'actif du bilan", value: L[15] },
+      { ligne: 20, label: 'Valeur brute totale des terrains, constructions, agencements et installations imposables (L5+L10+L15)', value: L[20] },
+      { ligne: 25, label: 'Valeur locative imposable des locaux inscrits au bilan (L20x7%)', value: L[25] },
+      { ligne: 30, label: 'Société à prépondérance immobilière ? OUI/NON', value: prepond, type: 'ouinon' },
+      { ligne: 35, label: "Valeur locative imposable des locaux inscrits à l'actif du bilan des sociétés à prépondérance immobilière (L25x40%)", value: L[35] },
+      { ligne: 40, label: 'CEL des sociétés à prépondérance immobilière (L35*20%)', value: L[40] },
+      { ligne: 45, label: "Loyer versé par l'exploitant locataire", value: L[45] },
+      { ligne: 50, label: 'Loyer estimé pour les locaux occupés à titre gratuit', value: L[50] },
+      { ligne: 55, label: "Etablissements hôteliers et d'hébergement touristique agréés ? OUI/NON", value: hotel, type: 'ouinon' },
+      { ligne: 60, label: "CEL terrains, constructions, installations et agencements inscrits au bilan des établissements hôteliers et d'hébergement touristique agréés ((L25*50%) x 20%)", value: L[60] },
+      { ligne: 65, label: "CEL locataire ou occupant à titre gratuit des établissements hôteliers et d'hébergement touristique agréés ((L45+L50) x 50%) x 15%)", value: L[65] },
+      { ligne: 70, label: 'Loyer perçu par le loueur professionnel', value: L[70] },
+      { ligne: 75, label: "CEL loueur professionnel (chambres meublées, fonds de commerce, sous-location d'immeubles non meublés)", value: L[75] },
+      { ligne: 80, label: "CEL terrains, constructions, installations et agencements inscrits au bilan (L25 x 20%)", value: L[80] },
+      { ligne: 85, label: 'CEL locataire ou occupant à titre gratuit (L45+L50) x 15%', value: L[85] },
+      { ligne: 90, label: "Nombre de mois d'activité", value: L[90], type: 'nombre' },
+      { ligne: 95, label: 'CEL totale à payer', value: L[95], fort: true, afficherZero: true },
+    ];
+    const filed = await depotEnregistre(merchantId, 'cel_vl', annee);
+    const doc = construireDocument({
+      kind: 'cel_vl', profil, periodeLabel: annee, debut: `${annee}-01-01`, fin: `${annee}-12-31`,
+      limiteDepotIso: decalerWeekEnd(`${annee}-01-31`), limitePaiementIso: null, dateSoumission: filed?.filed_on,
+      lignes, provisoire: false, alertes, texte: TEXTE_CEL_VL, titrePdf: 'CEL sur la valeur locative - Déclaration',
+    });
+    res.json({
+      ...doc, year: annee, amountDue: L[95],
+      inputs: { loyerMensuel, loyerDetecte, moisLoyer, mois, terrains: L[5], constructions: L[10], agencements: L[15], terrainsCompta, constructionsCompta, agencementsCompta, gratuit: L[50], percu: L[70], prepond, hotel },
+      snapshot: { loyerMensuel, mois, loyerAnnuel: L[45], total: L[95] },
+      filed,
+    });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la préparation de la CEL sur la valeur locative.');
   }
 });
 
@@ -2202,8 +2336,8 @@ router.get('/filings', async (req, res) => {
 // POST /accounting/filings {kind, period, filedOn, receiptNumber, amountDue, snapshot}
 router.post('/filings', async (req, res) => {
   const { kind, period, filedOn, receiptNumber, amountDue, snapshot } = req.body;
-  if (!['tva', 'vrs', 'brs', 'cel'].includes(kind)) return res.status(400).json({ error: 'Type de déclaration invalide.' });
-  const periodeOk = kind === 'cel' ? ANNEE_RE.test(String(period || '')) : MOIS_MOIS_RE.test(String(period || ''));
+  if (!['tva', 'ir', 'trimf', 'cfce', 'brs', 'cel', 'cel_vl', 'vrs'].includes(kind)) return res.status(400).json({ error: 'Type de déclaration invalide.' });
+  const periodeOk = ['cel', 'cel_vl'].includes(kind) ? ANNEE_RE.test(String(period || '')) : MOIS_MOIS_RE.test(String(period || ''));
   if (!periodeOk) return res.status(400).json({ error: 'Période invalide.' });
   if (!dateOk(filedOn) || filedOn > aujourdhui()) return res.status(400).json({ error: 'Date de dépôt invalide.' });
   const montant = arrondi(amountDue);
@@ -2219,7 +2353,7 @@ router.post('/filings', async (req, res) => {
     );
     await logActivity({
       merchantId: req.user.merchantId, userId: req.user.id, action: 'tax_filing',
-      description: `a enregistré le dépôt de « ${NOMS_DECL[kind]} » (${kind === 'cel' ? period : libellePeriode(period)})`,
+      description: `a enregistré le dépôt de « ${NOMS_DECL[kind]} » (${['cel', 'cel_vl'].includes(kind) ? period : libellePeriode(period)})`,
     });
     res.status(201).json({ ok: true });
   } catch (err) {
