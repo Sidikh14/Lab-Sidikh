@@ -1873,22 +1873,22 @@ function genererFactureA4(res, order, creditInfo) {
 
   // Titre "FACTURE" seul en haut de page, très grand, en gras sans-serif —
   // exactement comme sur la maquette envoyée par l'utilisateur.
-  doc.font('Helvetica-Bold').fontSize(40).fillColor(COULEURS.encre)
-    .text('FACTURE', 50, 45, { width: largeurContenu, align: 'right' });
-  doc.font('Helvetica').fontSize(13).fillColor(COULEURS.muted)
-    .text(order.order_number, 50, 92, { width: largeurContenu, align: 'right' });
+  doc.font('Helvetica-Bold').fontSize(24).fillColor(COULEURS.encre)
+    .text('FACTURE', 50, 45, { width: largeurContenu, align: 'right', characterSpacing: 1 });
+  doc.font('Helvetica').fontSize(11).fillColor(COULEURS.muted)
+    .text(order.order_number, 50, 78, { width: largeurContenu, align: 'right' });
 
   if (order.has_return) {
-    doc.font('Helvetica-Bold').fontSize(13).fillColor(COULEURS.brique || '#B84A3E')
-      .text('FACTURE RETOURNÉE', 50, 112, { width: largeurContenu, align: 'right', characterSpacing: 0.5 });
+    doc.font('Helvetica-Bold').fontSize(10).fillColor(COULEURS.brique || '#B84A3E')
+      .text('FACTURE RETOURNÉE', 50, 98, { width: largeurContenu, align: 'right', characterSpacing: 0.5 });
   }
 
   // Les deux blocs (émetteur à gauche, client à droite) démarrent tous les
   // deux SOUS le titre, avec un espace net entre les deux zones.
   let yG = 160;
-  doc.font('Helvetica-Bold').fontSize(15).fillColor(COULEURS.encre)
+  doc.font('Helvetica-Bold').fontSize(13).fillColor(COULEURS.encre)
     .text(order.business_name || 'Commerce', 50, yG, { width: 260 });
-  yG += 24;
+  yG += 22;
   doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
   [merchant.address, merchant.ninea && `NINEA ${merchant.ninea}`, merchant.rccm && `RCCM ${merchant.rccm}`]
     .filter(Boolean)
@@ -1901,7 +1901,7 @@ function genererFactureA4(res, order, creditInfo) {
   };
   doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
   droite(`Date d'émission : ${new Date(order.validated_at || order.created_at).toLocaleDateString('fr-FR')}`, { hauteur: 18 });
-  doc.font('Helvetica-Bold').fontSize(13).fillColor(COULEURS.encre);
+  doc.font('Helvetica-Bold').fontSize(11).fillColor(COULEURS.encre);
   droite(order.client_name, { hauteur: 17 });
   doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
   if (order.client_phone) droite(order.client_phone);
@@ -1929,8 +1929,8 @@ function genererFactureA4(res, order, creditInfo) {
   }
 
   // Grand titre de section, gras sans-serif, comme sur la maquette.
-  doc.font('Helvetica-Bold').fontSize(28).fillColor(COULEURS.encre).text('Description', 50, y);
-  y += 42;
+  doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.muted).text('DESCRIPTION', 50, y, { characterSpacing: 0.8 });
+  y += 20;
   traitSeparateur(doc, y);
   y += 22;
 
@@ -1943,39 +1943,40 @@ function genererFactureA4(res, order, creditInfo) {
       ? `${item.packaging_label} · ${Math.round(quantiteAffichee)} × ${formatMontant(prixUnitaire)} ${order.currency}`
       : `${Math.round(quantiteAffichee)} × ${formatMontant(prixUnitaire)} ${order.currency}`;
 
-    doc.font('Helvetica').fontSize(13).fillColor(COULEURS.encre)
+    doc.font('Helvetica').fontSize(10.5).fillColor(COULEURS.encre)
       .text(item.product_name, 50, y, { width: 320 });
-    doc.font('Helvetica').fontSize(13).fillColor(COULEURS.encre)
+    doc.font('Helvetica').fontSize(10.5).fillColor(COULEURS.encre)
       .text(`${formatMontant(item.line_total)} ${order.currency}`, 350, y, { width: 195, align: 'right' });
-    doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted).text(sousLigne, 50, y + 17, { width: 320 });
+    doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted).text(sousLigne, 50, y + 15, { width: 320 });
 
     if (Number(item.quantite_reliquat) > 0) {
       contientReliquat = true;
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(COULEURS.brique || '#B84A3E')
-        .text(`En attente de réapprovisionnement : ${item.quantite_reliquat} unité(s)`, 50, y + 29, { width: 320 });
+      doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.brique || '#B84A3E')
+        .text(`En attente de réapprovisionnement : ${item.quantite_reliquat} unité(s)`, 50, y + 27, { width: 320 });
       y += 12;
     }
 
-    y += 42;
+    y += 38;
   });
 
   traitSeparateur(doc, y);
-  y += 24;
+  y += 20;
 
   // Bloc des totaux, aligné à droite, en gras — même esprit que la maquette
   // (libellé directement collé à sa valeur, hiérarchie par la taille).
   const xLabel = 280, wLabel = 165, xValeur = 445, wValeur = 100;
   const ligneTotal = (label, valeur, { grand = false, discret = false } = {}) => {
-    const taille = grand ? 20 : 12.5;
+    const taille = grand ? 14 : 10.5;
     const xLbl = grand ? 260 : xLabel;
     const wLbl = grand ? 115 : wLabel;
     const xVal = grand ? 380 : xValeur;
     const wVal = grand ? 165 : wValeur;
-    doc.font('Helvetica-Bold').fontSize(taille).fillColor(discret ? COULEURS.muted : COULEURS.encre)
+    // Gras réservé au total à payer ; les autres lignes restent en texte normal.
+    doc.font(grand ? 'Helvetica-Bold' : 'Helvetica').fontSize(taille).fillColor(discret ? COULEURS.muted : COULEURS.encre)
       .text(label, xLbl, y, { width: wLbl, align: 'right' });
-    doc.font('Helvetica-Bold').fontSize(taille).fillColor(discret ? COULEURS.muted : COULEURS.encre)
+    doc.font(grand ? 'Helvetica-Bold' : 'Helvetica').fontSize(taille).fillColor(discret ? COULEURS.muted : COULEURS.encre)
       .text(`${formatMontant(valeur)} ${order.currency}`, xVal, y, { width: wVal, align: 'right' });
-    y += grand ? 30 : 20;
+    y += grand ? 26 : 18;
   };
 
   ligneTotal('Sous total :', order.subtotal_amount);

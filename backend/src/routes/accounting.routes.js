@@ -8,6 +8,7 @@ const { requireModule } = require('../middleware/modules');
 const { requireOwnerModule } = require('../middleware/ownerModules');
 const { logActivity } = require('../utils/activityLog');
 const { initialiserComptabilite } = require('../utils/accountingSetup');
+const { dessinerEtatPdf, dessinerPiedsDePage } = require('../utils/pdfEtat');
 
 const router = express.Router();
 router.use(authenticate);
@@ -1664,82 +1665,15 @@ router.post('/pdf', async (req, res) => {
   if (nbLignes > 30000) return res.status(400).json({ error: 'Trop de lignes pour un seul PDF : réduisez la période.' });
 
   const maxColonnes = Math.max(...sections.map((x) => x.colonnes.length));
-  const doc = new PDFDocument({ size: 'A4', layout: maxColonnes >= 6 ? 'landscape' : 'portrait', margin: 36, bufferPages: true });
+  const doc = new PDFDocument({ size: 'A4', layout: maxColonnes >= 6 ? 'landscape' : 'portrait', margin: 40, bufferPages: true });
   doc.on('error', (e) => console.error('pdfkit (comptabilité) :', e));
   const nomFichier = nettoyerTexte(titre || 'etat').normalize('NFD').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '-').toLowerCase() || 'etat';
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${nomFichier}.pdf"`);
   doc.pipe(res);
 
-  const gauche = doc.page.margins.left;
-  const largeur = doc.page.width - gauche - doc.page.margins.right;
-  const bas = () => doc.page.height - doc.page.margins.bottom - 18;
-
-  doc.font('Helvetica-Bold').fontSize(13).fillColor('#000').text(nettoyerTexte(entreprise), gauche, doc.y, { width: largeur });
-  doc.font('Helvetica-Bold').fontSize(16).text(nettoyerTexte(titre), { width: largeur });
-  if (periode) doc.font('Helvetica').fontSize(10).text(nettoyerTexte(periode), { width: largeur });
-  doc.moveDown(0.6);
-
-  for (const sec of sections) {
-    const n = sec.colonnes.length;
-    // Largeurs : proportionnelles au contenu (bornées), les montants restent compacts.
-    const poids = sec.colonnes.map((c, i) => {
-      const longueur = Math.max(String(c.label || '').length, ...sec.lignes.slice(0, 300).map((l) => {
-        const cells = Array.isArray(l) ? l : l?.cells || [];
-        return nettoyerTexte(cells[i]).length;
-      }));
-      return Math.min(Math.max(longueur, 6), c.align === 'right' ? 16 : 44);
-    });
-    const total = poids.reduce((a, b) => a + b, 0);
-    const largeurs = poids.map((w) => (w / total) * largeur);
-    const x = (i) => gauche + largeurs.slice(0, i).reduce((a, b) => a + b, 0);
-
-    const dessinerEntete = () => {
-      const y = doc.y;
-      doc.font('Helvetica-Bold').fontSize(8.5);
-      const h = Math.max(...sec.colonnes.map((c, i) => doc.heightOfString(nettoyerTexte(c.label), { width: largeurs[i] - 6 }))) + 6;
-      sec.colonnes.forEach((c, i) => doc.text(nettoyerTexte(c.label), x(i) + 3, y + 3, { width: largeurs[i] - 6, align: c.align === 'right' ? 'right' : 'left' }));
-      doc.moveTo(gauche, y + h).lineTo(gauche + largeur, y + h).lineWidth(0.8).strokeColor('#000').stroke();
-      doc.y = y + h + 2;
-    };
-
-    if (doc.y + 60 > bas()) doc.addPage();
-    if (sec.titre) doc.font('Helvetica-Bold').fontSize(11).fillColor('#000').text(nettoyerTexte(sec.titre), gauche, doc.y, { width: largeur });
-    dessinerEntete();
-
-    for (const ligne of sec.lignes) {
-      const fort = !Array.isArray(ligne) && ligne?.fort === true;
-      const cells = Array.isArray(ligne) ? ligne : ligne?.cells || [];
-      doc.font(fort ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5);
-      const h = Math.max(...sec.colonnes.map((c, i) => doc.heightOfString(nettoyerTexte(cells[i]), { width: largeurs[i] - 6 }))) + 4;
-      if (doc.y + h > bas()) {
-        doc.addPage();
-        dessinerEntete();
-        doc.font(fort ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5);
-      }
-      const y = doc.y;
-      sec.colonnes.forEach((c, i) => {
-        doc.text(nettoyerTexte(cells[i]), x(i) + 3, y + 2, { width: largeurs[i] - 6, align: c.align === 'right' ? 'right' : 'left' });
-      });
-      if (fort) doc.moveTo(gauche, y + h - 1).lineTo(gauche + largeur, y + h - 1).lineWidth(0.4).strokeColor('#000').stroke();
-      doc.y = y + h;
-    }
-    doc.moveDown(0.8);
-  }
-
-  const pages = doc.bufferedPageRange();
-  for (let i = 0; i < pages.count; i += 1) {
-    doc.switchToPage(pages.start + i);
-    doc.font('Helvetica').fontSize(8).fillColor('#000');
-    // Le pied de page s'écrit dans la marge basse : on l'annule le temps de l'écrire,
-    // sinon pdfkit ajoute une page blanche après chaque page.
-    const margeBasse = doc.page.margins.bottom;
-    doc.page.margins.bottom = 0;
-    const piedY = doc.page.height - margeBasse + 6;
-    doc.text(`Page ${i + 1} / ${pages.count}`, gauche, piedY, { width: largeur, align: 'right', lineBreak: false });
-    doc.text(`Édité le ${new Date().toLocaleDateString('fr-FR')}`, gauche, piedY, { width: largeur, align: 'left', lineBreak: false });
-    doc.page.margins.bottom = margeBasse;
-  }
+  dessinerEtatPdf(doc, { entreprise, titre, periode, sections }, nettoyerTexte);
+  dessinerPiedsDePage(doc);
   doc.end();
 });
 
@@ -1869,8 +1803,8 @@ function construireDocument({ kind, profil, periodeLabel, debut, fin, limiteDepo
     titre: (titrePdf || titre).toUpperCase(),
     periode: `DGID – Ministère des Finances et du Budget · Mon Espace Perso · Préparé par Amaterasu${provisoire ? ' · numéros de ligne provisoires' : ''}`,
     sections: [
-      { colonnes: [{ label: 'CONTRIBUABLE ET RENSEIGNEMENTS FISCAUX' }, { label: '' }, { label: '' }, { label: '' }], lignes: entete },
-      { colonnes: [{ label: '' }], lignes: [[texte]] },
+      { paires: true, colonnes: [{ label: 'CONTRIBUABLE ET RENSEIGNEMENTS FISCAUX' }, { label: '' }, { label: '' }, { label: '' }], lignes: entete },
+      { texte: true, colonnes: [{ label: '' }], lignes: [[texte]] },
       {
         colonnes: colonnesAnnexe,
         lignes: lignes.map((l) => ({

@@ -3,7 +3,7 @@
 // journal d'activité, bulletins de paie…).
 //
 // Style : NOIR ET BLANC uniquement, sobre et lisible.
-//  - fond blanc, texte noir EN GRAS (TEXTE_GRAS) pour une lecture facile ;
+//  - fond blanc, texte noir normal (le gras est réservé aux titres, en-têtes et totaux ; voir TEXTE_GRAS) ;
 //  - en-tête : titre en grand, filet noir épais dessous ;
 //  - tableaux : en-tête gris clair à texte noir et filet noir, lignes
 //    alternées en gris très clair ;
@@ -24,14 +24,14 @@ const fs = require('fs');
 const path = require('path');
 
 const NOIR = '#000000';
-const GRIS = '#222222'; // libellés, texte secondaire (foncé : reste bien lisible)
+const GRIS = '#333333'; // libellés, texte secondaire (foncé : reste bien lisible)
 const GRIS_CLAIR = '#444444'; // légendes, informations légales
-const TRAIT = '#777777'; // filets de séparation
+const TRAIT = '#9a9a9a'; // filets de séparation
 const FOND_ALTERNE = '#f2f2f2'; // lignes alternées des tableaux
 const FOND_ENTETE_TABLEAU = '#e4e4e4'; // en-tête des tableaux
 const BLANC = '#ffffff';
 
-const TEXTE_GRAS = true;
+const TEXTE_GRAS = false;
 const ECHELLE_TEXTE = 1;
 
 const DOSSIER_POLICES = path.join(__dirname, 'fonts');
@@ -122,7 +122,7 @@ function dessinerEntete(doc, { businessName, titre, sousTitre, merchant }) {
       .text(parts.join('  ·  '), largeurPage * 0.45, 41, { width: largeurPage * 0.55 - 50, height: 12, align: 'right', ellipsis: true });
   }
 
-  doc.moveTo(50, 122).lineTo(largeurPage - 50, 122).strokeColor(NOIR).lineWidth(2.5).stroke();
+  doc.moveTo(50, 122).lineTo(largeurPage - 50, 122).strokeColor(NOIR).lineWidth(1.5).stroke();
 
   if (merchant) activerPiedDePageAuto(doc, merchant);
 
@@ -145,7 +145,7 @@ function dessinerPiedDePage(doc, merchant) {
   if (lignes.length === 0) return;
 
   const y = doc.page.height - 60;
-  doc.moveTo(50, y).lineTo(doc.page.width - 50, y).strokeColor(NOIR).lineWidth(1.25).stroke();
+  doc.moveTo(50, y).lineTo(doc.page.width - 50, y).strokeColor(TRAIT).lineWidth(0.75).stroke();
   doc.fillColor(GRIS).font('Helvetica').fontSize(8.5)
     // `height` + `ellipsis` empêchent pdfkit de faire déborder ce texte sur
     // une nouvelle page (ce qui déclencherait un addPage() automatique, donc
@@ -179,7 +179,7 @@ function dessinerEnteteTableau(doc, y, colonnes) {
   colonnes.forEach((col) => {
     doc.text(col.texte.toUpperCase(), col.x, y, { width: col.largeur, align: col.aligner || 'left', characterSpacing: 0.6, lineBreak: false });
   });
-  doc.moveTo(50, y + 17).lineTo(largeurPage - 50, y + 17).strokeColor(NOIR).lineWidth(1.25).stroke();
+  doc.moveTo(50, y + 17).lineTo(largeurPage - 50, y + 17).strokeColor(NOIR).lineWidth(0.8).stroke();
   doc.fillColor(NOIR).font('Helvetica');
   return y + 28;
 }
