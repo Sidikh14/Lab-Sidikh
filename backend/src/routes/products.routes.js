@@ -813,8 +813,8 @@ router.post('/:id/stock-movement', async (req, res) => {
 
     if (avanceFinale) {
       await client.query(
-        `INSERT INTO supplier_payments (merchant_id, supplier_id, user_id, amount, payment_method, notes)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO supplier_payments (merchant_id, supplier_id, user_id, amount, payment_method, notes, warehouse_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
           req.user.merchantId,
           supplierId,
@@ -822,6 +822,7 @@ router.post('/:id/stock-movement', async (req, res) => {
           avanceFinale,
           avanceCashMethodFinal,
           "Avance versée à la création de l'entrée de stock",
+          warehouseId,
         ]
       );
     }
@@ -1244,8 +1245,8 @@ router.post('/purchases', async (req, res) => {
 
     if (avanceFinale) {
       await client.query(
-        `INSERT INTO supplier_payments (merchant_id, supplier_id, user_id, amount, payment_method, notes)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
+        `INSERT INTO supplier_payments (merchant_id, supplier_id, user_id, amount, payment_method, notes, warehouse_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
           req.user.merchantId,
           supplierId,
@@ -1253,6 +1254,7 @@ router.post('/purchases', async (req, res) => {
           avanceFinale,
           avanceCashMethodFinal,
           "Avance versée à la création de l'achat groupé",
+          warehouseId,
         ]
       );
     }

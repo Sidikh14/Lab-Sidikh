@@ -1066,9 +1066,6 @@ export function OrdersPage() {
     return acc;
   }, {});
   const ordersFiltres = filtreStatut === 'tous' ? ordersRecherche : ordersRecherche.filter((o) => o.status === filtreStatut);
-  const chiffreAffairesHistorique = ordersFiltres
-    .filter((o) => o.status !== 'annulee')
-    .reduce((somme, o) => somme + (Number(o.total_amount) || 0), 0);
   const montantTotalRembourse = retours.reduce((somme, r) => somme + (Number(r.refund_amount) || 0), 0);
   const nbEnAttenteHistorique = ordersFiltres.filter((o) => o.status === 'en_attente').length;
 
@@ -1375,12 +1372,6 @@ export function OrdersPage() {
             <div className="hv-kpi">
               <p className="hv-kpi-label">Ventes</p>
               <p className="hv-kpi-valeur">{ordersFiltres.length}</p>
-            </div>
-            <div className="hv-kpi hv-kpi--accent">
-              <p className="hv-kpi-label">Chiffre d'affaires</p>
-              <p className="hv-kpi-valeur">
-                {Math.round(chiffreAffairesHistorique).toLocaleString('fr-FR')} <small>FCFA</small>
-              </p>
             </div>
             <div className="hv-kpi">
               <p className="hv-kpi-label">En attente d'encaissement</p>
