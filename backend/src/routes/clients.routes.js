@@ -125,7 +125,7 @@ router.get('/:id', async (req, res) => {
 // POST /clients/:id/credit-payments — enregistrer un règlement de créance
 // (partiel ou total). Accessible au caissier, au manager et au gérant.
 router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
-  const { amount, note, paymentMethod } = req.body;
+  const { amount, note, paymentMethod, warehouseId: warehouseIdInput } = req.body;
 
   if (typeof amount !== 'number' || amount <= 0) {
     return res.status(400).json({ error: 'Le montant du règlement doit être un nombre positif.' });
@@ -146,10 +146,24 @@ router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier')
       return res.status(400).json({ error: 'Le montant du règlement dépasse la créance restante.' });
     }
 
+    // Caisse qui encaisse : le manager choisit la boutique ; les autres rôles encaissent dans la leur.
+    // Sans boutique rattachée, le règlement n'apparaîtrait dans aucune caisse.
+    const boutiqueId = req.user.role === 'manager' ? warehouseIdInput : req.user.warehouseId;
+    if (!boutiqueId) {
+      return res.status(400).json({
+        error: req.user.role === 'manager' ? 'Choisissez la boutique dont la caisse encaisse ce règlement.' : "Vous n'êtes assigné à aucune boutique.",
+      });
+    }
+    const boutique = await pool.query(
+      `SELECT id FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+      [boutiqueId, req.user.merchantId]
+    );
+    if (boutique.rows.length === 0) return res.status(404).json({ error: 'Boutique introuvable.' });
+
     const result = await pool.query(
-      `INSERT INTO credit_payments (merchant_id, client_id, amount, payment_method, recorded_by, note)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [req.user.merchantId, req.params.id, amount, paymentMethod, req.user.id, note || null]
+      `INSERT INTO credit_payments (merchant_id, client_id, amount, payment_method, recorded_by, note, warehouse_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [req.user.merchantId, req.params.id, amount, paymentMethod, req.user.id, note || null, boutiqueId]
     );
 
     await logActivity({

@@ -10,7 +10,7 @@ import {
 } from './ComptabilitePage';
 
 // Module Fiscalité : déclarations de la DGID préparées à partir de la comptabilité et de la paie,
-// paiement des impôts et cotisations, profil du contribuable.
+// paiement des impôts (les cotisations CSS et IPRES se gèrent dans la page Paie), profil du contribuable.
 // Visible seulement si l'owner a activé la fiscalité (et la comptabilité sur laquelle elle s'appuie).
 
 const TYPES = [
@@ -574,7 +574,7 @@ export function FiscalitePage() {
 
   const onglets = [
     { id: 'declarations', label: 'Déclarations' },
-    { id: 'impots', label: 'Impôts & cotisations' },
+    { id: 'impots', label: 'Impôts' },
     { id: 'profil', label: 'Profil fiscal' },
   ];
 
@@ -585,7 +585,7 @@ export function FiscalitePage() {
         <div>
           <h1>Fiscalité</h1>
           <p style={{ color: 'var(--encre-douce)', fontSize: 13, margin: '4px 0 0' }}>
-            Déclarations DGID · impôts et cotisations · calculés depuis la comptabilité et la paie · montants en FCFA
+            Déclarations DGID · impôts · calculés depuis la comptabilité et la paie · montants en FCFA
           </p>
         </div>
       </div>

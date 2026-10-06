@@ -23,12 +23,13 @@
 const fs = require('fs');
 const path = require('path');
 
-const NOIR = '#000000';
-const GRIS = '#333333'; // libellés, texte secondaire (foncé : reste bien lisible)
-const GRIS_CLAIR = '#444444'; // légendes, informations légales
-const TRAIT = '#9a9a9a'; // filets de séparation
-const FOND_ALTERNE = '#f2f2f2'; // lignes alternées des tableaux
-const FOND_ENTETE_TABLEAU = '#e4e4e4'; // en-tête des tableaux
+const NOIR = '#111827';
+const ACCENT = '#1F3A5F'; // bleu foncé du filet de titre (même modèle que les déclarations)
+const GRIS = '#4B5563'; // libellés, texte secondaire (foncé : reste bien lisible)
+const GRIS_CLAIR = '#6B7280'; // légendes, informations légales
+const TRAIT = '#D1D5DB'; // filets de séparation
+const FOND_ALTERNE = '#FAFAFB'; // lignes alternées des tableaux
+const FOND_ENTETE_TABLEAU = '#F3F4F6'; // en-tête des tableaux
 const BLANC = '#ffffff';
 
 const TEXTE_GRAS = false;
@@ -99,35 +100,37 @@ function formatMontant(valeur) {
 // noir épais dessous.
 // `merchant` est optionnel : { ninea, rccm, address, ... } — permet aussi
 // d'activer le pied de page automatique sur les pages suivantes.
-// Retourne l'ordonnée à laquelle le contenu peut commencer (toujours 142).
+// Retourne l'ordonnée à laquelle le contenu peut commencer (toujours 122).
 function dessinerEntete(doc, { businessName, titre, sousTitre, merchant }) {
   enregistrerPolices(doc);
   const largeurPage = doc.page.width;
   const xTexte = 50;
 
-  doc.fillColor(NOIR).font('Helvetica-Bold').fontSize(9.5)
-    .text((businessName || 'Commerce').toUpperCase(), xTexte, 40, { characterSpacing: 1.5, width: largeurPage * 0.5, lineBreak: false });
+  // Nom du commerce : petit, en capitales, gris.
+  doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(8)
+    .text((businessName || 'Commerce').toUpperCase(), xTexte, 40, { characterSpacing: 0.5, width: largeurPage * 0.5, lineBreak: false });
 
-  doc.fillColor(NOIR).font('Titre').fontSize(26)
-    .text(titre || '', xTexte, 58, { width: largeurPage - 100, height: 36, ellipsis: true });
+  // Titre du document : seul élément en gras de l'en-tête.
+  doc.fillColor(NOIR).font('Titre').fontSize(16)
+    .text(titre || '', xTexte, 56, { width: largeurPage - 100, height: 22, ellipsis: true });
 
   if (sousTitre) {
-    doc.fillColor(GRIS).font('Helvetica').fontSize(10.5)
-      .text(sousTitre, xTexte, 94, { width: largeurPage - 100, height: 16, ellipsis: true });
+    doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(8.5)
+      .text(sousTitre, xTexte, 80, { width: largeurPage - 100, height: 14, ellipsis: true });
   }
 
   if (merchant && (merchant.ninea || merchant.rccm || merchant.address)) {
     const parts = [merchant.address, merchant.ninea && `NINEA ${merchant.ninea}`, merchant.rccm && `RCCM ${merchant.rccm}`].filter(Boolean);
-    doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(8)
+    doc.fillColor(GRIS_CLAIR).font('Helvetica').fontSize(7.5)
       .text(parts.join('  ·  '), largeurPage * 0.45, 41, { width: largeurPage * 0.55 - 50, height: 12, align: 'right', ellipsis: true });
   }
 
-  doc.moveTo(50, 122).lineTo(largeurPage - 50, 122).strokeColor(NOIR).lineWidth(1.5).stroke();
+  doc.moveTo(50, 102).lineTo(largeurPage - 50, 102).strokeColor(ACCENT).lineWidth(1.2).stroke();
 
   if (merchant) activerPiedDePageAuto(doc, merchant);
 
   doc.fillColor(NOIR).font('Helvetica');
-  return 142;
+  return 122;
 }
 
 // Pied de page : coordonnées bancaires / Mobile Money et conditions de
@@ -145,7 +148,7 @@ function dessinerPiedDePage(doc, merchant) {
   if (lignes.length === 0) return;
 
   const y = doc.page.height - 60;
-  doc.moveTo(50, y).lineTo(doc.page.width - 50, y).strokeColor(TRAIT).lineWidth(0.75).stroke();
+  doc.moveTo(50, y).lineTo(doc.page.width - 50, y).strokeColor(TRAIT).lineWidth(0.6).stroke();
   doc.fillColor(GRIS).font('Helvetica').fontSize(8.5)
     // `height` + `ellipsis` empêchent pdfkit de faire déborder ce texte sur
     // une nouvelle page (ce qui déclencherait un addPage() automatique, donc
@@ -175,11 +178,11 @@ function activerPiedDePageAuto(doc, merchant) {
 function dessinerEnteteTableau(doc, y, colonnes) {
   const largeurPage = doc.page.width;
   doc.rect(50, y - 7, largeurPage - 100, 24).fill(FOND_ENTETE_TABLEAU);
-  doc.fillColor(NOIR).fontSize(8.5).font('Helvetica-Bold');
+  doc.fillColor(NOIR).fontSize(7.5).font('Helvetica-Bold');
   colonnes.forEach((col) => {
-    doc.text(col.texte.toUpperCase(), col.x, y, { width: col.largeur, align: col.aligner || 'left', characterSpacing: 0.6, lineBreak: false });
+    doc.text(col.texte.toUpperCase(), col.x, y, { width: col.largeur, align: col.aligner || 'left', characterSpacing: 0.4, lineBreak: false });
   });
-  doc.moveTo(50, y + 17).lineTo(largeurPage - 50, y + 17).strokeColor(NOIR).lineWidth(0.8).stroke();
+  doc.moveTo(50, y + 17).lineTo(largeurPage - 50, y + 17).strokeColor(TRAIT).lineWidth(0.6).stroke();
   doc.fillColor(NOIR).font('Helvetica');
   return y + 28;
 }
@@ -190,7 +193,7 @@ function traitSeparateur(doc, y) {
 }
 
 module.exports = {
-  COULEURS: { encre: NOIR, muted: GRIS, mutedClair: GRIS_CLAIR, bordure: TRAIT, fondAlterne: FOND_ALTERNE, fondEntete: FOND_ENTETE_TABLEAU, accent: NOIR },
+  COULEURS: { encre: NOIR, muted: GRIS, mutedClair: GRIS_CLAIR, bordure: TRAIT, fondAlterne: FOND_ALTERNE, fondEntete: FOND_ENTETE_TABLEAU, accent: ACCENT },
   formatMontant,
   dessinerEntete,
   dessinerEnteteTableau,

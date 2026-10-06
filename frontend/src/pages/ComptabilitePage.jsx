@@ -1956,7 +1956,11 @@ function EcheancesPeriode({ periodes, cleChoisie, onChoisir, onPayer }) {
   );
 }
 
-export function ImpotsTab() {
+// mode « impots » (page Fiscalité) : TVA, IR/TRIMF, CFCE et impôt sur les résultats.
+// mode « cotisations » (page Paie) : cotisations sociales CSS et IPRES.
+const KINDS_COTISATIONS = ['css', 'ipres'];
+export function ImpotsTab({ mode = 'impots' }) {
+  const modeCotisations = mode === 'cotisations';
   const [version, setVersion] = useState(0);
   const [modale, setModale] = useState(null);
   const [cleImpots, setCleImpots] = useState('');
@@ -2000,32 +2004,43 @@ export function ImpotsTab() {
   if (erreur) return <div className="erreur">{erreur}</div>;
   if (!donnees) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
   const { dues, paiements } = donnees;
-  const impotSociete = dues.dettes.find((d) => d.type === 'is');
+  const impotSociete = modeCotisations ? null : dues.dettes.find((d) => d.type === 'is');
+  const paiementsAffiches = paiements.filter((p) => KINDS_COTISATIONS.includes(p.kind) === modeCotisations);
 
   return (
     <div>
       <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0 }}>
-        Montants calculés automatiquement depuis les ventes, les achats et les bulletins de paie.
-        Enregistrez un paiement pour solder la période : l'écriture (et la sortie de caisse) se crée toute seule.
+        {modeCotisations
+          ? 'Cotisations CSS et IPRES calculées automatiquement depuis les bulletins de paie.'
+          : 'Montants calculés automatiquement depuis les ventes, les achats et les bulletins de paie.'}
+        {' '}Enregistrez un paiement pour solder la période : l'écriture (et la sortie de caisse) se crée toute seule.
       </p>
       {erreurAction && <div className="erreur">{erreurAction}</div>}
 
-      <h3 style={{ fontSize: 15 }}>Impôts — chaque mois</h3>
-      <EcheancesPeriode
-        periodes={dues.impots} cleChoisie={cleImpots} onChoisir={setCleImpots}
-        onPayer={(ligne, periode) => setModale({ ligne, periode })}
-      />
+      {!modeCotisations && (
+        <>
+          <h3 style={{ fontSize: 15 }}>Impôts — chaque mois</h3>
+          <EcheancesPeriode
+            periodes={dues.impots} cleChoisie={cleImpots} onChoisir={setCleImpots}
+            onPayer={(ligne, periode) => setModale({ ligne, periode })}
+          />
+        </>
+      )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
-        <h3 style={{ fontSize: 15, margin: 0 }}>Cotisations sociales</h3>
-        <select className="champ" style={{ maxWidth: 190 }} value={dues.frequency} onChange={(e) => changerFrequence(e.target.value)} title="Périodicité de paiement des cotisations (CSS, IPRES)">
-          {FREQUENCES_COTISATIONS.map((f) => <option key={f[0]} value={f[0]}>{f[1]}</option>)}
-        </select>
-      </div>
-      <EcheancesPeriode
-        periodes={dues.cotisations} cleChoisie={cleCotisations} onChoisir={setCleCotisations}
-        onPayer={(ligne, periode) => setModale({ ligne, periode })}
-      />
+      {modeCotisations && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 6 }}>
+            <h3 style={{ fontSize: 15, margin: 0 }}>Cotisations sociales (CSS, IPRES)</h3>
+            <select className="champ" style={{ maxWidth: 190 }} value={dues.frequency} onChange={(e) => changerFrequence(e.target.value)} title="Périodicité de paiement des cotisations (CSS, IPRES)">
+              {FREQUENCES_COTISATIONS.map((f) => <option key={f[0]} value={f[0]}>{f[1]}</option>)}
+            </select>
+          </div>
+          <EcheancesPeriode
+            periodes={dues.cotisations} cleChoisie={cleCotisations} onChoisir={setCleCotisations}
+            onPayer={(ligne, periode) => setModale({ ligne, periode })}
+          />
+        </>
+      )}
 
       {impotSociete && (
         <div style={{ marginBottom: 26 }}>
@@ -2040,7 +2055,7 @@ export function ImpotsTab() {
       )}
 
       <h3 style={{ fontSize: 15 }}>Paiements effectués</h3>
-      {paiements.length === 0 ? (
+      {paiementsAffiches.length === 0 ? (
         <p className="etat-vide">Aucun paiement enregistré.</p>
       ) : (
         <div style={{ overflowX: 'auto' }}>
@@ -2056,7 +2071,7 @@ export function ImpotsTab() {
               </tr>
             </thead>
             <tbody>
-              {paiements.map((p) => (
+              {paiementsAffiches.map((p) => (
                 <tr key={p.id} style={{ opacity: p.cancelled ? 0.5 : 1 }}>
                   <td style={cellule}>{dateFr(p.payment_date)}</td>
                   <td style={cellule}>

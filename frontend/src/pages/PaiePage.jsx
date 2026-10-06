@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useModulesAccess } from '../hooks/useModulesAccess';
 import { StylesModernes } from '../components/StylesModernes';
 import { PageModuleNonActive } from '../components/ModuleNonActive';
+import { ImpotsTab } from './ComptabilitePage';
 
 const TYPES_RETENUE = [
   { value: 'avance', label: 'Avance sur salaire', court: 'Avance' },
@@ -865,8 +866,10 @@ function ReglagesPaieTab() {
 // l'owner a activé le module Paie pour ce commerçant.
 export function PaiePage() {
   const { user } = useAuth();
-  const { loaded, payroll } = useModulesAccess();
+  const { loaded, payroll, accounting, fiscalite } = useModulesAccess();
   const [onglet, setOnglet] = useState('salaires');
+  // Le paiement des cotisations s'appuie sur la comptabilité et le module Fiscalité (activés par l'owner).
+  const cotisationsDisponibles = Boolean(accounting && fiscalite);
 
   if (user?.role !== 'manager') return <Navigate to="/" replace />;
   if (!loaded) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
@@ -886,10 +889,16 @@ export function PaiePage() {
         <button className={onglet === 'reglages-paie' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('reglages-paie')}>
           Réglages paie
         </button>
+        {cotisationsDisponibles && (
+          <button className={onglet === 'cotisations' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('cotisations')}>
+            Cotisations CSS / IPRES
+          </button>
+        )}
       </div>
 
       {onglet === 'salaires' && <SalairesTab />}
       {onglet === 'reglages-paie' && <ReglagesPaieTab />}
+      {onglet === 'cotisations' && cotisationsDisponibles && <ImpotsTab mode="cotisations" />}
     </>
   );
 }

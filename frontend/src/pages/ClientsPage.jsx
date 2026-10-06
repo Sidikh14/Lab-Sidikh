@@ -86,7 +86,22 @@ const FILTRES_CREANCE = [
 ];
 
 function ClientsTab() {
-  const { merchant } = useAuth();
+  const { merchant, user } = useAuth();
+  const estManager = user?.role === 'manager';
+  // Le règlement d'une créance entre dans la caisse d'une boutique : le manager (rattaché à aucune)
+  // choisit laquelle encaisse ; les autres rôles encaissent dans leur propre boutique.
+  const [boutiques, setBoutiques] = useState([]);
+  const [boutiqueEncaissement, setBoutiqueEncaissement] = useState(() => localStorage.getItem('boutiqueActiveId') || '');
+  useEffect(() => {
+    if (!estManager) return;
+    api.getWarehouses()
+      .then((liste) => {
+        const actives = liste.filter((w) => w.is_active !== false);
+        setBoutiques(actives);
+        setBoutiqueEncaissement((avant) => (avant && actives.some((w) => w.id === avant) ? avant : actives[0]?.id || ''));
+      })
+      .catch(() => setBoutiques([]));
+  }, [estManager]);
   const estPharmacie = merchant?.sector === 'pharmacie';
   // Vocabulaire selon le secteur (sectorConfig.libelleClient : Patient en pharmacie).
   const mot = getSecteurConfig(merchant?.sector).libelleClient.toLowerCase();
@@ -259,6 +274,10 @@ function ClientsTab() {
       setDetailErreur('Le montant du règlement doit être un nombre positif.');
       return;
     }
+    if (estManager && !boutiqueEncaissement) {
+      setDetailErreur('Choisissez la boutique dont la caisse encaisse ce règlement.');
+      return;
+    }
     setReglementEnCours(true);
     setDetailErreur('');
     try {
@@ -266,6 +285,7 @@ function ClientsTab() {
         amount: montant,
         paymentMethod: moyenReglement,
         note: noteReglement || undefined,
+        ...(estManager ? { warehouseId: boutiqueEncaissement } : {}),
       });
       setVueReglement(false);
       setMontantReglement('');
@@ -486,6 +506,21 @@ function ClientsTab() {
                 </p>
                 {detailErreur && <div className="erreur">{detailErreur}</div>}
                 <form onSubmit={handleEnregistrerReglement}>
+                  {estManager && (
+                    <div className="champ-groupe">
+                      <label className="etiquette" htmlFor="r-boutique">Encaissé dans la caisse de</label>
+                      <select
+                        id="r-boutique"
+                        className="champ"
+                        value={boutiqueEncaissement}
+                        onChange={(e) => setBoutiqueEncaissement(e.target.value)}
+                      >
+                        {boutiques.map((b) => (
+                          <option key={b.id} value={b.id}>{b.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className="champ-groupe">
                     <label className="etiquette" htmlFor="r-montant">Montant réglé (FCFA)</label>
                     <input
