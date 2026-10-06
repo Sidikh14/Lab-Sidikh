@@ -216,14 +216,16 @@ export function CaissePage() {
       return;
     }
     // Loyer ou prestation : le bénéficiaire alimente automatiquement le registre BRS (retenue de 5 %).
-    const retenue = Boolean(nature?.brs) && !nouvelleSortie.sansRetenue;
+    // Sans nature de charge (comptabilité non activée), un motif contenant « loyer » compte comme un loyer.
+    const natureBrs = nature?.brs || (!nature && /loyer/i.test(detail) ? 'loyer' : null);
+    const retenue = Boolean(natureBrs) && !nouvelleSortie.sansRetenue;
     const beneficiaire = nouvelleSortie.brsBeneficiaryName.trim();
-    if (retenue && brsActif && !beneficiaire) {
+    if (retenue && !beneficiaire) {
       setErreur('Indiquez le bénéficiaire (loyer ou prestation soumis à la retenue de 5 %), ou cochez « Pas de retenue ».');
       return;
     }
     const brs = retenue && beneficiaire
-      ? { brsBeneficiaryName: beneficiaire, brsBeneficiaryRef: nouvelleSortie.brsBeneficiaryRef.trim() || undefined }
+      ? { brsNature: natureBrs, brsBeneficiaryName: beneficiaire, brsBeneficiaryRef: nouvelleSortie.brsBeneficiaryRef.trim() || undefined }
       : {};
     setEnregistrementSortie(true);
     try {
@@ -252,6 +254,7 @@ export function CaissePage() {
         brsBeneficiaryName: undefined,
         brsBeneficiaryRef: undefined,
         sansRetenue: undefined,
+        brsNature: undefined,
         ...brs,
       });
       setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui(), chargeAccount: '', brsBeneficiaryName: '', brsBeneficiaryRef: '', sansRetenue: false });
@@ -561,10 +564,10 @@ export function CaissePage() {
                   </select>
                 </div>
               )}
-              {natures.find((n) => n.code === nouvelleSortie.chargeAccount)?.brs && (
+              {(natures.find((n) => n.code === nouvelleSortie.chargeAccount)?.brs || (!nouvelleSortie.chargeAccount && /loyer/i.test(nouvelleSortie.reason))) && (
                 <div className="champ-groupe">
                   <label className="etiquette" htmlFor="s-brs-nom">
-                    {natures.find((n) => n.code === nouvelleSortie.chargeAccount).brs === 'loyer' ? 'Bailleur' : 'Prestataire'} (retenue à la source de 5 %)
+                    {(natures.find((n) => n.code === nouvelleSortie.chargeAccount)?.brs || 'loyer') === 'loyer' ? 'Bailleur' : 'Prestataire'} (retenue à la source de 5 %)
                   </label>
                   <input
                     id="s-brs-nom"

@@ -387,7 +387,7 @@ router.get('/closings', requireRole('manager', 'gerant'), async (req, res) => {
 
 // POST /cash/expenses — enregistrer une sortie de caisse manuelle
 router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
-  const { paymentMethod, amount, reason, expenseDate, warehouseId: warehouseIdInput, chargeAccount, brsBeneficiaryName, brsBeneficiaryRef } = req.body;
+  const { paymentMethod, amount, reason, expenseDate, warehouseId: warehouseIdInput, chargeAccount, brsBeneficiaryName, brsBeneficiaryRef, brsNature } = req.body;
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
   }
@@ -428,7 +428,7 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
     }
 
     const dateSortie = expenseDate || new Date().toISOString().slice(0, 10);
-    const natureBrs = compteCharge ? NATURES_BRS[compteCharge] : null;
+    const natureBrs = (compteCharge && NATURES_BRS[compteCharge]) || (['loyer', 'prestation'].includes(brsNature) ? brsNature : null);
     const beneficiaire = String(brsBeneficiaryName || '').trim().slice(0, 200);
 
     // La sortie de caisse et la ligne BRS sont créées ensemble ou pas du tout.

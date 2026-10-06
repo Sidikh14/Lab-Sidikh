@@ -130,6 +130,21 @@ export function SuppliersPage() {
 }
 
 function FournisseursTab() {
+  const { user } = useAuth();
+  const estManager = user.role === 'manager';
+  // Le manager n'est rattaché à aucune boutique : il choisit celle dont la caisse paie le fournisseur.
+  const [boutiques, setBoutiques] = useState([]);
+  const [boutiqueReglement, setBoutiqueReglement] = useState(() => localStorage.getItem('boutiqueActiveId') || '');
+  useEffect(() => {
+    if (!estManager) return;
+    api.getWarehouses()
+      .then((liste) => {
+        const actives = liste.filter((w) => w.is_active);
+        setBoutiques(actives);
+        setBoutiqueReglement((avant) => (avant && actives.some((w) => w.id === avant) ? avant : actives[0]?.id || ''));
+      })
+      .catch(() => setBoutiques([]));
+  }, [estManager]);
   const [suppliers, setSuppliers] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
@@ -216,9 +231,18 @@ function FournisseursTab() {
       setErreur('Montant de règlement invalide.');
       return;
     }
+    const parCaisse = moyenReglement !== 'virement';
+    if (estManager && parCaisse && !boutiqueReglement) {
+      setErreur('Choisissez la boutique dont la caisse effectue le règlement.');
+      return;
+    }
     setEnregistrementReglement(true);
     try {
-      await api.createSupplierPayment(fournisseurDette.id, { amount: Number(montantReglement), paymentMethod: moyenReglement });
+      await api.createSupplierPayment(fournisseurDette.id, {
+        amount: Number(montantReglement),
+        paymentMethod: moyenReglement,
+        warehouseId: estManager && parCaisse ? boutiqueReglement : undefined,
+      });
       const detail = await api.getSupplier(fournisseurDette.id);
       setDetailFournisseur(detail);
       setMontantReglement('');
@@ -471,6 +495,21 @@ function FournisseursTab() {
                       <option value="virement">Virement</option>
                     </select>
                   </div>
+                  {estManager && moyenReglement !== 'virement' && (
+                    <div className="champ-groupe">
+                      <label className="etiquette" htmlFor="fr-boutique">Payé depuis la caisse de</label>
+                      <select
+                        id="fr-boutique"
+                        className="champ"
+                        value={boutiqueReglement}
+                        onChange={(e) => setBoutiqueReglement(e.target.value)}
+                      >
+                        {boutiques.map((w) => (
+                          <option key={w.id} value={w.id}>{w.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   <div className="actions-modale">
                     <button type="button" className="btn" onClick={() => { setFournisseurDette(null); setDetailFournisseur(null); }}>
                       Fermer
