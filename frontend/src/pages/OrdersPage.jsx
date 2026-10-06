@@ -328,6 +328,9 @@ export function OrdersPage() {
   const [panier, setPanier] = useState([]);
   const [clientId, setClientId] = useState('');
   const [tvaApplicable, setTvaApplicable] = useState(false);
+  // Type d'opération pour la déclaration de TVA : normale, exportation ou suspension de TVA (sans TVA), précompte.
+  const [tvaRegime, setTvaRegime] = useState('normal');
+  const [precompte, setPrecompte] = useState(false);
   const [prescriptionId, setPrescriptionId] = useState('');
   const [ordonnanceModaleOuverte, setOrdonnanceModaleOuverte] = useState(false);
   const [nouvelleOrdonnance, setNouvelleOrdonnance] = useState({ patientName: '', patientPhone: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerId: '', insurerMemberNumber: '', coverageRate: '' });
@@ -588,6 +591,8 @@ export function OrdersPage() {
       setPanier(construirePanierDepuisCommande(detail, products));
       setClientId(detail.client_id ? String(detail.client_id) : '');
       setTvaApplicable(Boolean(detail.tva_applicable));
+      setTvaRegime(detail.tva_regime || 'normal');
+      setPrecompte(Number(detail.precompte_amount) > 0);
       setCommandeEnEdition(detail);
       setOnglet('caisse');
     } catch (err) {
@@ -601,6 +606,8 @@ export function OrdersPage() {
     setPanier([]);
     setClientId('');
     setTvaApplicable(false);
+    setTvaRegime('normal');
+    setPrecompte(false);
     setCommandeEnEdition(null);
     setOnglet('historique');
   }
@@ -874,9 +881,9 @@ export function OrdersPage() {
 
   const apercuCaisse = useMemo(() => {
     const sousTotal = lignesPanier.reduce((sum, l) => sum + l.option.price * l.quantity, 0);
-    const tva = tvaApplicable ? Math.round(sousTotal * 0.18) : 0;
+    const tva = tvaApplicable && tvaRegime === 'normal' ? Math.round(sousTotal * 0.18) : 0;
     return { sousTotal, tva, total: sousTotal + tva };
-  }, [lignesPanier, tvaApplicable]);
+  }, [lignesPanier, tvaApplicable, tvaRegime]);
 
   const necessiteOrdonnance = estPharmacie && lignesPanier.some((l) => l.produit.requires_prescription);
 
@@ -977,6 +984,8 @@ export function OrdersPage() {
       clientId: clientId || null,
       items: panier.map((l) => ({ productId: l.productId, quantity: l.quantity, unitId: l.unitId || undefined, authorizeOutOfStock: l.authorizeOutOfStock || undefined })),
       tvaApplicable,
+      tvaRegime,
+      precompte: tvaRegime === 'normal' ? precompte : false,
       warehouseId: estManager ? warehouseId : undefined,
       prescriptionId: prescriptionId || undefined,
     };
@@ -986,6 +995,8 @@ export function OrdersPage() {
         setPanier([]);
         setClientId('');
         setTvaApplicable(false);
+        setTvaRegime('normal');
+        setPrecompte(false);
         setPrescriptionId('');
         setCommandeEnEdition(null);
         setOnglet('historique');
@@ -1000,6 +1011,8 @@ export function OrdersPage() {
         setPanier([]);
         setClientId('');
         setTvaApplicable(false);
+        setTvaRegime('normal');
+        setPrecompte(false);
         setPrescriptionId('');
         if (!commande.offline) charger();
         if (commande.offline) {
@@ -1294,6 +1307,22 @@ export function OrdersPage() {
               <input type="checkbox" checked={tvaApplicable} onChange={(e) => setTvaApplicable(e.target.checked)} />
               Vente avec TVA (18 %)
             </label>
+
+            <div className="champ-groupe" style={{ margin: '0 0 12px' }}>
+              <label className="etiquette" htmlFor="v-regime">Type d'opération (déclaration de TVA)</label>
+              <select id="v-regime" className="champ" value={tvaRegime} onChange={(e) => setTvaRegime(e.target.value)}>
+                <option value="normal">Vente normale</option>
+                <option value="export">Exportation (sans TVA)</option>
+                <option value="suspension">Suspension de TVA</option>
+              </select>
+              {tvaRegime === 'normal' && (
+                <label className="case-a-cocher" style={{ marginTop: 8 }}>
+                  <input type="checkbox" checked={precompte} onChange={(e) => setPrecompte(e.target.checked)} />
+                  Le client retient le précompte de TVA
+                </label>
+              )}
+              <p className="aide" style={{ marginTop: 6 }}>Les produits exonérés se règlent dans leur fiche (TVA non applicable) ; la TVA de la vente est calculée produit par produit.</p>
+            </div>
 
             <div className="ticket-totaux">
               <div className="ticket-total-ligne">

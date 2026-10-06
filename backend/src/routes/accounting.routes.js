@@ -51,6 +51,9 @@ function accesCaisse(req, res, next) {
 
 // Natures de charges proposées dans le formulaire de sortie de caisse
 // (nom affiché, compte SYSCOHADA de classe 6).
+// Natures soumises à la retenue à la source de 5 % (RAS Tiers et loyers) : compte -> nature BRS.
+const NATURES_BRS = { '622': 'loyer', '632': 'prestation', '624': 'prestation', '612': 'prestation', '618': 'prestation', '627': 'prestation' };
+
 const NATURES_CHARGES = [
   ['Loyer', '622'],
   ['Électricité / Eau', '605'],
@@ -75,9 +78,16 @@ router.get('/caisse/natures', accesCaisse, async (req, res) => {
       [req.user.merchantId, NATURES_CHARGES.map((n) => n[1])]
     );
     const presents = new Set(comptes.rows.map((r) => r.code));
+    // Le registre BRS n'est utile que si le module Fiscalité est activé pour ce commerçant.
+    let brsActif = false;
+    try {
+      const f = await pool.query('SELECT fiscalite_enabled FROM merchants WHERE id = $1', [req.user.merchantId]);
+      brsActif = f.rows[0]?.fiscalite_enabled === true;
+    } catch (e) { /* colonne absente : on propose le champ de façon facultative */ }
     res.json({
       enabled: true,
-      natures: NATURES_CHARGES.filter((n) => presents.has(n[1])).map(([label, code]) => ({ label, code })),
+      brsActif,
+      natures: NATURES_CHARGES.filter((n) => presents.has(n[1])).map(([label, code]) => ({ label, code, brs: NATURES_BRS[code] || null })),
     });
   } catch (err) {
     repondreErreur(res, err, 'Erreur lors du chargement des natures de charges.');
@@ -98,6 +108,17 @@ async function debutComptabilite(db, merchantId) {
   );
   if (m.rows[0]?.accounting_enabled !== true) throw erreurMetier(400, "Le module comptabilité n'est pas activé.");
   return m.rows[0].debut;
+}
+
+// Ligne du registre BRS issue d'une facture de charge (créée au versement : virement immédiat
+// ou règlement de la facture « à payer plus tard »).
+async function enregistrerBrsFacture(client, merchantId, userId, factureId, { nom, ref, nature, date, montant, libelle }) {
+  await client.query(
+    `INSERT INTO accounting_brs_entries (merchant_id, beneficiary_name, beneficiary_ref, nature, paid_on, gross_ht, note, created_by, charge_bill_id)
+     VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9)
+     ON CONFLICT (charge_bill_id) WHERE charge_bill_id IS NOT NULL DO NOTHING`,
+    [merchantId, nom, ref || null, nature, date, montant, String(libelle || '').slice(0, 200), userId, factureId]
+  );
 }
 
 router.get('/caisse/factures', accesCaisse, async (req, res) => {
@@ -121,7 +142,7 @@ router.get('/caisse/factures', accesCaisse, async (req, res) => {
 });
 
 router.post('/caisse/factures', accesCaisse, async (req, res) => {
-  const { chargeAccount, detail, paymentMethod } = req.body;
+  const { chargeAccount, detail, paymentMethod, brsBeneficiaryName, brsBeneficiaryRef } = req.body;
   const montant = arrondi(req.body.amount);
   const date = req.body.billDate || aujourdhui();
   const nature = NATURES_CHARGES.find((n) => n[1] === String(chargeAccount));
@@ -139,12 +160,21 @@ router.post('/caisse/factures', accesCaisse, async (req, res) => {
     if (date < debut) throw erreurMetier(400, `Cette date est antérieure au début de la comptabilité (${debut}).`);
     await verifierExerciceOuvert(client, merchantId, date);
     await assurerCompte(client, merchantId, nature[1], nature[0]);
-    await client.query(
-      `INSERT INTO accounting_charge_bills (merchant_id, nature_account, label, amount, bill_date, warehouse_id, paid_at, paid_method, created_by)
-       VALUES ($1, $2, $3, $4, $5::date, $6, $7::date, $8, $9)`,
+    const natureBrs = NATURES_BRS[nature[1]] || null;
+    const beneficiaire = natureBrs ? String(brsBeneficiaryName || '').trim().slice(0, 200) : '';
+    const refBeneficiaire = beneficiaire && brsBeneficiaryRef ? String(brsBeneficiaryRef).trim().slice(0, 40) : null;
+    const facture = await client.query(
+      `INSERT INTO accounting_charge_bills (merchant_id, nature_account, label, amount, bill_date, warehouse_id, paid_at, paid_method, created_by,
+                                            brs_nature, brs_beneficiary_name, brs_beneficiary_ref)
+       VALUES ($1, $2, $3, $4, $5::date, $6, $7::date, $8, $9, $10, $11, $12) RETURNING id`,
       [merchantId, nature[1], libelle, montant, date, UUID_RE.test(String(req.body.warehouseId || '')) ? req.body.warehouseId : null,
-        paymentMethod === 'virement' ? date : null, paymentMethod === 'virement' ? 'virement' : null, req.user.id]
+        paymentMethod === 'virement' ? date : null, paymentMethod === 'virement' ? 'virement' : null, req.user.id,
+        beneficiaire ? natureBrs : null, beneficiaire || null, refBeneficiaire]
     );
+    // Virement : la somme est versée tout de suite, la retenue est donc due ce mois-ci.
+    if (paymentMethod === 'virement' && beneficiaire) {
+      await enregistrerBrsFacture(client, merchantId, req.user.id, facture.rows[0].id, { nom: beneficiaire, ref: refBeneficiaire, nature: natureBrs, date, montant, libelle });
+    }
     await client.query('COMMIT');
     ETAT_SYNCHRO.delete(merchantId);
     res.status(201).json({ ok: true });
@@ -170,7 +200,7 @@ router.post('/caisse/factures/:id/payer', accesCaisse, async (req, res) => {
     await verrouiller(client, merchantId);
     await debutComptabilite(client, merchantId);
     const f = await client.query(
-      `SELECT id, label, amount, to_char(bill_date, 'YYYY-MM-DD') AS d FROM accounting_charge_bills
+      `SELECT id, label, amount, to_char(bill_date, 'YYYY-MM-DD') AS d, brs_nature, brs_beneficiary_name, brs_beneficiary_ref FROM accounting_charge_bills
        WHERE id = $1 AND merchant_id = $2 AND paid_at IS NULL FOR UPDATE`,
       [req.params.id, merchantId]
     );
@@ -192,6 +222,12 @@ router.post('/caisse/factures/:id/payer', accesCaisse, async (req, res) => {
       `UPDATE accounting_charge_bills SET paid_at = $2::date, paid_method = $3, paid_cash_expense_id = $4 WHERE id = $1`,
       [facture.id, date, paymentMethod, depenseId]
     );
+    if (facture.brs_nature && facture.brs_beneficiary_name) {
+      await enregistrerBrsFacture(client, merchantId, req.user.id, facture.id, {
+        nom: facture.brs_beneficiary_name, ref: facture.brs_beneficiary_ref, nature: facture.brs_nature,
+        date, montant: Number(facture.amount), libelle: facture.label,
+      });
+    }
     await client.query('COMMIT');
     ETAT_SYNCHRO.delete(merchantId);
     res.json({ ok: true });
@@ -1889,25 +1925,63 @@ router.get('/declarations/tva', async (req, res) => {
     const t = chaineTva(facturee, deduc, mois)[mois] || { collectee: 0, deductible: 0, creditReporte: 0, creditUtilise: 0, creditAReporter: 0, du: 0 };
     const baseImposable = arrondi(t.collectee / 0.18);
     const exonere = Math.max(0, arrondi(chiffreHt - baseImposable));
+    // Opérations typées du mois : exportations, suspensions, précompte (ventes) et importations (achats).
+    const jourVente = SQL_JOUR_TZ('COALESCE(o.validated_at, o.delivered_at, o.created_at)');
+    const ventesTypees = await pool.query(
+      `SELECT o.order_seq, o.tva_regime, COALESCE(c.full_name, 'Client de passage') AS client,
+              ${jourVente} AS d, (COALESCE(o.total_amount, 0) - COALESCE(o.tva_amount, 0)) AS ht, COALESCE(o.precompte_amount, 0) AS precompte
+       FROM orders o LEFT JOIN clients c ON c.id = o.client_id
+       WHERE o.merchant_id = $1 AND o.status IN ('validee', 'livree')
+         AND (o.tva_regime <> 'normal' OR COALESCE(o.precompte_amount, 0) > 0)
+         AND ${jourVente} LIKE $2
+       ORDER BY ${jourVente}, o.order_seq`,
+      [merchantId, `${mois}-%`]
+    );
+    const exportations = ventesTypees.rows.filter((x) => x.tva_regime === 'export');
+    const suspensions = ventesTypees.rows.filter((x) => x.tva_regime === 'suspension');
+    const precomptees = ventesTypees.rows.filter((x) => Number(x.precompte) > 0);
+    const sommeHt = (rows) => arrondi(rows.reduce((u, x) => u + Number(x.ht), 0));
+    const jourAchat = `COALESCE(m.movement_date, (m.created_at AT TIME ZONE 'UTC')::date)`;
+    const importsRes = await pool.query(
+      `SELECT to_char(${jourAchat}, 'YYYY-MM-DD') AS d, MAX(s.name) AS fournisseur, m.customs_declaration AS dum, m.invoice_number AS facture,
+              COALESCE(SUM(m.customs_value), 0) AS valeur, COALESCE(SUM(m.customs_duties), 0) AS droits, COALESCE(SUM(m.tva_amount), 0) AS tva
+       FROM stock_movements m LEFT JOIN suppliers s ON s.id = m.supplier_id
+       WHERE m.merchant_id = $1 AND m.movement_type = 'entree' AND m.transfer_id IS NULL AND m.purchase_kind = 'import' AND COALESCE(m.total_cost, 0) > 0
+         AND to_char(${jourAchat}, 'YYYY-MM') = $2
+       GROUP BY m.supplier_id, m.customs_declaration, m.invoice_number, ${jourAchat}
+       ORDER BY 1`,
+      [merchantId, mois]
+    );
+    const montantImports = arrondi(importsRes.rows.reduce((u, x) => u + Number(x.valeur), 0));
+    const tvaImports = arrondi(importsRes.rows.reduce((u, x) => u + Number(x.tva), 0));
     const neant = chiffreHt === 0 && t.collectee === 0;
     const alertes = [];
     alertesProfil(profil, alertes);
     if (profil.regime === 'cgu') alertes.push('Régime CGU : le redevable de la CGU ne facture pas la TVA. Vérifiez votre régime dans le profil fiscal.');
     if (neant) alertes.push('Aucune opération ce mois : déclaration « NÉANT ».');
-    alertes.push("Annexes non générées : exportations, exonérations, suspensions, précompte et importations (à joindre si elles vous concernent).");
+    alertes.push("Annexe des exonérations non détaillée : seul le total (ligne 15) est calculé. Les autres annexes sont générées à partir des types saisis sur les ventes et les achats.");
+    if (importsRes.rows.some((x) => !x.dum)) alertes.push("Une importation du mois n'a pas de numéro de déclaration en douane : complétez-le avant de joindre l'annexe.");
 
     // Lignes du formulaire « Taxe sur la valeur ajoutée » de la DGID (numéros et formules officiels).
     const L = {};
     L[5] = Math.round(chiffreHt);
-    L[15] = Math.round(exonere);
+    L[10] = Math.round(sommeHt(exportations));
+    L[20] = Math.round(sommeHt(suspensions));
+    // L'exonéré est le reste des opérations non taxées, une fois retirées les exportations et les suspensions.
+    L[15] = Math.max(0, Math.round(exonere) - L[10] - L[20]);
     L[25] = (L[10] || 0) + L[15] + (L[20] || 0);
     L[35] = L[5] - L[25];
     L[45] = L[35] - (L[40] || 0);
+    L[65] = Math.round(sommeHt(precomptees));
+    L[70] = Math.round(precomptees.reduce((u, x) => u + Number(x.precompte), 0));
+    L[80] = Math.round(montantImports);
+    L[85] = Math.round(tvaImports);
     L[50] = Math.round((L[40] || 0) * 0.1);
     L[55] = Math.round(L[45] * 0.18);
     L[60] = L[50] + L[55];
     L[76] = (L[70] || 0) + (L[75] || 0);
-    L[90] = Math.round(t.deductible);
+    // La TVA d'importation est déjà comptée dans la TVA déductible du grand livre : on la sépare des achats locaux.
+    L[90] = Math.max(0, Math.round(t.deductible) - L[85]);
     L[91] = (L[85] || 0) + L[90];
     L[92] = L[76] + L[91];
     L[100] = Math.round(t.creditReporte);
@@ -1957,14 +2031,36 @@ router.get('/declarations/tva', async (req, res) => {
        ORDER BY 1`,
       [merchantId, mois]
     );
-    const annexes = achats.rows.length === 0 ? [] : [{
+    const annexesOps = [];
+    const annexeVentes = (titre, rows, avecPrecompte) => rows.length === 0 ? [] : [{
+      titre,
+      colonnes: [{ label: 'Date' }, { label: 'Vente' }, { label: 'Client' }, { label: 'Montant HT', align: 'right' }, ...(avecPrecompte ? [{ label: 'Précompte', align: 'right' }] : [])],
+      lignes: [
+        ...rows.map((x) => [dateFr(x.d), x.order_seq ? `V${x.order_seq}` : '—', x.client, fcfa(x.ht), ...(avecPrecompte ? [fcfa(x.precompte)] : [])]),
+        { fort: true, cells: ['Total', '', '', fcfa(sommeHt(rows)), ...(avecPrecompte ? [fcfa(rows.reduce((u, x) => u + Number(x.precompte), 0))] : [])] },
+      ],
+    }];
+    annexesOps.push(...annexeVentes('Annexe EXPORTATIONS', exportations, false));
+    annexesOps.push(...annexeVentes('Annexe SUSPENSIONS', suspensions, false));
+    annexesOps.push(...annexeVentes('Annexe TVA PRECOMPTEE', precomptees, true));
+    if (importsRes.rows.length > 0) {
+      annexesOps.push({
+        titre: 'Annexe IMPORTATIONS',
+        colonnes: [{ label: 'Date' }, { label: 'Fournisseur' }, { label: 'N° déclaration' }, { label: 'Valeur en douane', align: 'right' }, { label: 'Droits', align: 'right' }, { label: 'TVA', align: 'right' }],
+        lignes: [
+          ...importsRes.rows.map((x) => [dateFr(x.d), x.fournisseur || '—', x.dum || '—', fcfa(x.valeur), fcfa(x.droits), fcfa(x.tva)]),
+          { fort: true, cells: ['Total', '', '', fcfa(montantImports), fcfa(importsRes.rows.reduce((u, x) => u + Number(x.droits), 0)), fcfa(tvaImports)] },
+        ],
+      });
+    }
+    const annexes = achats.rows.length === 0 ? [...annexesOps] : [{
       titre: 'Annexe ACHATS LOCAUX',
       colonnes: [{ label: 'Date' }, { label: 'Fournisseur' }, { label: 'N° facture' }, { label: 'Montant HT', align: 'right' }, { label: 'TVA', align: 'right' }],
       lignes: [
         ...achats.rows.map((x) => [dateFr(x.d), x.fournisseur || '—', x.facture || '—', fcfa(Number(x.total) - Number(x.tva)), fcfa(x.tva)]),
         { fort: true, cells: ['Total', '', '', fcfa(achats.rows.reduce((u, x) => u + Number(x.total) - Number(x.tva), 0)), fcfa(achats.rows.reduce((u, x) => u + Number(x.tva), 0))] },
       ],
-    }];
+    }, ...annexesOps];
     const filed = await depotEnregistre(merchantId, 'tva', mois);
     const doc = construireDocument({
       kind: 'tva', profil, periodeLabel: libellePeriode(mois), debut: `${mois}-01`, fin: dernierJour(mois),
@@ -2062,7 +2158,8 @@ router.get('/brs-entries', async (req, res) => {
   if (!MOIS_MOIS_RE.test(mois)) return res.status(400).json({ error: 'Mois invalide (AAAA-MM).' });
   try {
     const r = await pool.query(
-      `SELECT id, beneficiary_name, beneficiary_ref, nature, to_char(paid_on, 'YYYY-MM-DD') AS paid_on, gross_ht, note
+      `SELECT id, beneficiary_name, beneficiary_ref, nature, to_char(paid_on, 'YYYY-MM-DD') AS paid_on, gross_ht, note,
+              (cash_expense_id IS NOT NULL OR charge_bill_id IS NOT NULL) AS auto
        FROM accounting_brs_entries WHERE merchant_id = $1 AND to_char(paid_on, 'YYYY-MM') = $2 ORDER BY paid_on, beneficiary_name`,
       [req.user.merchantId, mois]
     );

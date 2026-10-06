@@ -593,6 +593,21 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
 // POST /products/:id/stock-movement
 // Entrée (réapprovisionnement, avec fournisseur/date facultatifs), sortie ou
 // ajustement. Accessible à tous les rôles (un vendeur enregistre ses ventes).
+// Importation (entrée de stock dédouanée) : numéro de déclaration en douane, valeur en douane et droits.
+// La TVA à l'importation est le montant de TVA de l'achat (tvaAmount) : elle est déductible et alimente
+// l'annexe « Importations » de la déclaration de TVA.
+function lireImportation(body, { total, tva }) {
+  if (body.purchaseKind !== 'import') return { kind: 'local', declaration: null, value: null, duties: null };
+  const declaration = String(body.customsDeclaration || '').trim().slice(0, 60);
+  if (!declaration) throw { status: 400, message: "Le numéro de déclaration en douane est requis pour une importation." };
+  const duties = body.customsDuties === undefined || body.customsDuties === null || body.customsDuties === '' ? 0 : Number(body.customsDuties);
+  if (!Number.isFinite(duties) || duties < 0) throw { status: 400, message: 'Le montant des droits de douane est invalide.' };
+  let value = body.customsValue === undefined || body.customsValue === null || body.customsValue === '' ? null : Number(body.customsValue);
+  if (value !== null && (!Number.isFinite(value) || value < 0)) throw { status: 400, message: 'La valeur en douane est invalide.' };
+  if (value === null) value = Math.max(0, Math.round((Number(total) || 0) - (Number(tva) || 0) - duties));
+  return { kind: 'import', declaration, value, duties };
+}
+
 // Une entrée peut être au comptant ou à crédit ; le crédit exige un
 // fournisseur enregistré (pour pouvoir suivre la dette) et un montant total.
 router.post('/:id/stock-movement', async (req, res) => {
@@ -666,6 +681,16 @@ router.post('/:id/stock-movement', async (req, res) => {
     if (!Number.isFinite(tvaFinale) || tvaFinale < 0 || tvaFinale > coutFinal) {
       return res.status(400).json({ error: "Le montant de TVA est invalide (il ne peut dépasser le montant de l'achat)." });
     }
+  }
+
+  let importation;
+  try {
+    if (req.body.purchaseKind === 'import' && (movementType !== 'entree' || !coutFinal)) {
+      throw { status: 400, message: "Une importation se saisit sur une entrée de stock avec montant d'achat." };
+    }
+    importation = lireImportation(req.body, { total: coutFinal, tva: tvaFinale });
+  } catch (e) {
+    return res.status(e.status || 400).json({ error: e.message });
   }
 
   const client = await pool.connect();
@@ -762,8 +787,9 @@ router.post('/:id/stock-movement', async (req, res) => {
     }
 
     await client.query(
-      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, cash_method, warehouse_id, tva_amount)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, cash_method, warehouse_id, tva_amount,
+                                    purchase_kind, customs_declaration, customs_value, customs_duties)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
       [
         req.user.merchantId,
         product.id,
@@ -778,6 +804,10 @@ router.post('/:id/stock-movement', async (req, res) => {
         cashMethodFinal,
         warehouseId,
         tvaFinale,
+        importation.kind,
+        importation.declaration,
+        importation.value,
+        importation.duties,
       ]
     );
 
@@ -902,6 +932,19 @@ async function calculerAchat(db, merchantId, items, discountType, discountValue,
   return { lignes, manquants, sousTotal, remise, htNet, tva, total: arrondi2(htNet + tva) };
 }
 
+// Achat importé : le fournisseur étranger ne facture pas de TVA sénégalaise. Le total payé est la valeur
+// des marchandises (HT après réduction) + les droits de douane + la TVA acquittée en douane. La TVA à
+// l'importation est celle saisie, sinon 18 % de (valeur + droits). Les droits entrent dans le coût du stock.
+function ajusterAchatImportation(body, achat) {
+  if (body.purchaseKind !== 'import') return { total: achat.total, tva: achat.tva, duties: 0 };
+  const duties = body.customsDuties === undefined || body.customsDuties === null || body.customsDuties === '' ? 0 : Number(body.customsDuties);
+  if (!Number.isFinite(duties) || duties < 0) throw { status: 400, message: 'Le montant des droits de douane est invalide.' };
+  const base = achat.htNet + duties;
+  let vat = body.importVat === undefined || body.importVat === null || body.importVat === '' ? Math.round((base * TAUX_TVA) / 100) : Number(body.importVat);
+  if (!Number.isFinite(vat) || vat < 0) throw { status: 400, message: "La TVA à l'importation est invalide." };
+  return { total: Math.round(base + vat), tva: Math.round(vat), duties };
+}
+
 // POST /products/purchases/preview — aperçu des montants (rien n'est enregistré).
 router.post('/purchases/preview', async (req, res) => {
   const { items, discountType, discountValue } = req.body;
@@ -915,9 +958,11 @@ router.post('/purchases/preview', async (req, res) => {
   }
   try {
     const a = await calculerAchat(pool, req.user.merchantId, items, discountType, discountValue, true);
+    const imp = ajusterAchatImportation(req.body, a);
     res.json({
       taxRate: TAUX_TVA,
-      subtotal: a.sousTotal, discount: a.remise, ht: a.htNet, tva: a.tva, total: a.total,
+      subtotal: a.sousTotal, discount: a.remise, ht: a.htNet, tva: imp.tva, total: imp.total,
+      import: req.body.purchaseKind === 'import', duties: imp.duties,
       missingCost: a.manquants,
     });
   } catch (err) {
@@ -993,8 +1038,21 @@ router.post('/purchases', async (req, res) => {
 
     // Montants calculés automatiquement depuis le prix d'achat des produits.
     const achat = await calculerAchat(client, req.user.merchantId, items, discountType, discountValue);
-    const coutFinal = achat.total;
-    const tvaTotale = achat.tva;
+    let imp;
+    try {
+      imp = ajusterAchatImportation(req.body, achat);
+    } catch (e) {
+      return res.status(e.status || 400).json({ error: e.message });
+    }
+    const coutFinal = imp.total;
+    const tvaTotale = imp.tva;
+    let importation;
+    try {
+      // Valeur en douane par défaut : valeur des marchandises (HT après réduction).
+      importation = lireImportation({ ...req.body, customsValue: req.body.customsValue === undefined || req.body.customsValue === '' ? achat.htNet : req.body.customsValue, customsDuties: imp.duties }, { total: coutFinal, tva: tvaTotale });
+    } catch (e) {
+      return res.status(e.status || 400).json({ error: e.message });
+    }
     if (avanceDemandee) {
       if (Number(advanceAmount) > coutFinal) {
         return res.status(400).json({ error: "L'avance ne peut pas dépasser le montant total de l'achat." });
@@ -1085,8 +1143,9 @@ router.post('/purchases', async (req, res) => {
       }
 
       const mouvement = await client.query(
-        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, invoice_number, cash_method, warehouse_id, tva_amount, discount_amount)
-         VALUES ($1, $2, $3, 'entree', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
+        `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, supplier_id, movement_date, payment_method, total_cost, invoice_number, cash_method, warehouse_id, tva_amount, discount_amount,
+                                      purchase_kind, customs_declaration, customs_value, customs_duties)
+         VALUES ($1, $2, $3, 'entree', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18) RETURNING id`,
         [
           req.user.merchantId,
           product.id,
@@ -1102,6 +1161,10 @@ router.post('/purchases', async (req, res) => {
           warehouseId,
           index === 0 ? tvaTotale : 0,
           index === 0 ? achat.remise : 0,
+          importation.kind,
+          index === 0 ? importation.declaration : null,
+          index === 0 ? importation.value : null,
+          index === 0 ? importation.duties : null,
         ]
       );
       mouvementsCrees.push(mouvement.rows[0].id);

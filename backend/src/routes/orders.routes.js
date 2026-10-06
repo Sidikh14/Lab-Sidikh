@@ -18,7 +18,16 @@ const TVA_RATE = 18; // Taux de TVA appliqué aux produits soumis à la TVA (%)
 // ignoré. Un produit sans valeur (null/undefined) est considéré taxable,
 // comme le défaut en base.
 // Arrondi en FCFA entiers : on arrondit le montant de TVA lui-même.
-function calculerTvaCommande({ resolvedItems }) {
+const REGIMES_TVA = ['normal', 'export', 'suspension'];
+// Type d'opération de la vente : « normal » (TVA selon chaque produit), « export » (exportation) ou
+// « suspension » (affaire en suspension de TVA). Les deux derniers ne portent aucune TVA.
+function lireRegimeTva(valeur, parDefaut = 'normal') {
+  if (valeur === undefined || valeur === null || valeur === '') return parDefaut;
+  if (!REGIMES_TVA.includes(valeur)) throw { status: 400, message: "Type d'opération invalide (normal, exportation ou suspension de TVA)." };
+  return valeur;
+}
+function calculerTvaCommande({ resolvedItems, regime = 'normal' }) {
+  if (regime !== 'normal') return { tvaAmount: 0, tvaApplicable: false };
   const baseTaxable = resolvedItems.reduce(
     (somme, r) => (r.product.tva_applicable === false ? somme : somme + r.lineTotal),
     0
@@ -298,7 +307,7 @@ async function verifierOrdonnanceRenouvelable(dbClient, merchantId, prescription
 //   disponible est insuffisant (vente en rupture autorisée). Le stock ne
 //   descend jamais sous zéro : il est simplement ramené à 0.
 router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), async (req, res) => {
-  const { clientId, items, notes, tvaApplicable, clientOrderId, warehouseId: warehouseIdInput, prescriptionId } = req.body;
+  const { clientId, items, notes, tvaApplicable, clientOrderId, warehouseId: warehouseIdInput, prescriptionId, tvaRegime, precompte } = req.body;
   // items attendu : [{ productId, quantity, unitId, customPrice, authorizeOutOfStock }, ...]
   // quantity = nombre de conditionnements vendus (ex: 2 cartons) ; unitId
   // facultatif = référence vers product_units (sinon vente au détail).
@@ -443,12 +452,15 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
 
     // Arrondi en FCFA entiers (pas de centimes) : on arrondit le montant de
     // TVA lui-même, pas un ratio intermédiaire, pour éviter les décimales.
-    const { tvaAmount, tvaApplicable: tvaEffective } = calculerTvaCommande({ resolvedItems });
+    const regime = lireRegimeTva(tvaRegime);
+    const { tvaAmount, tvaApplicable: tvaEffective } = calculerTvaCommande({ resolvedItems, regime });
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
+    // Précompte de TVA : le client retient la TVA de la vente et la verse lui-même au Trésor.
+    const precompteMontant = precompte === true && regime === 'normal' ? tvaAmount : 0;
 
     const orderResult = await client.query(
-      `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes, stock_override, client_order_id, warehouse_id, prescription_id)
-       VALUES ($1, $2, $3, 'en_attente', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `INSERT INTO orders (merchant_id, client_id, created_by, status, subtotal_amount, tva_applicable, tva_rate, tva_amount, total_amount, notes, stock_override, client_order_id, warehouse_id, prescription_id, tva_regime, precompte_amount)
+       VALUES ($1, $2, $3, 'en_attente', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -464,6 +476,8 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
         clientOrderId || null,
         warehouseId,
         prescriptionId || null,
+        regime,
+        precompteMontant,
       ]
     );
     const order = orderResult.rows[0];
@@ -1213,7 +1227,7 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
 // au statut 'en_attente' — assigned_cashier_id n'est pas touché, donc elle
 // reste rattachée au même caissier que precedemment.
 router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), async (req, res) => {
-  const { clientId, items, notes, tvaApplicable, prescriptionId } = req.body;
+  const { clientId, items, notes, tvaApplicable, prescriptionId, tvaRegime, precompte } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ error: 'La commande doit contenir au moins un article.' });
@@ -1391,8 +1405,10 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       await verifierOrdonnanceRenouvelable(client, req.user.merchantId, prescriptionId, resolvedItems, order.id);
     }
 
-    const { tvaAmount, tvaApplicable: tvaEffective } = calculerTvaCommande({ resolvedItems });
+    const regime = lireRegimeTva(tvaRegime, order.tva_regime || 'normal');
+    const { tvaAmount, tvaApplicable: tvaEffective } = calculerTvaCommande({ resolvedItems, regime });
     const totalAmount = Math.round(subtotalAmount + tvaAmount);
+    const precompteMontant = (precompte === undefined ? Number(order.precompte_amount) > 0 : precompte === true) && regime === 'normal' ? tvaAmount : 0;
     const alertesStock = [];
     const reservationsCreees = [];
 
@@ -1506,10 +1522,12 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
          status = 'en_attente',
          returned_reason = NULL,
          stock_override = stock_override OR $8,
-         prescription_id = COALESCE($9, prescription_id)
+         prescription_id = COALESCE($9, prescription_id),
+         tva_regime = $10,
+         precompte_amount = $11
        WHERE id = $7
        RETURNING *`,
-      [clientId || null, notes || null, tvaEffective, tvaAmount, subtotalAmount, totalAmount, order.id, stockOverrideUtilise, prescriptionId || null]
+      [clientId || null, notes || null, tvaEffective, tvaAmount, subtotalAmount, totalAmount, order.id, stockOverrideUtilise, prescriptionId || null, regime, precompteMontant]
     );
     const orderMisAJour = updateResult.rows[0];
 

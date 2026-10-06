@@ -170,13 +170,21 @@ export function CaissePage() {
     reason: '',
     expenseDate: dateAujourdHui(),
     chargeAccount: '',
+    brsBeneficiaryName: '',
+    brsBeneficiaryRef: '',
+    sansRetenue: false,
   });
   // Natures de charges (loyer, électricité…) : proposées seulement si le module
   // comptabilité est activé pour ce commerçant.
   const [natures, setNatures] = useState([]);
+  // Module Fiscalité actif : le bénéficiaire est alors exigé pour les loyers et prestations (retenue BRS de 5 %).
+  const [brsActif, setBrsActif] = useState(false);
   useEffect(() => {
     api.getCaisseNatures()
-      .then((d) => setNatures(d?.enabled ? d.natures || [] : []))
+      .then((d) => {
+        setNatures(d?.enabled ? d.natures || [] : []);
+        setBrsActif(Boolean(d?.enabled && d?.brsActif));
+      })
       .catch(() => setNatures([]));
   }, []);
   const [sorties, setSorties] = useState([]);
@@ -207,6 +215,16 @@ export function CaissePage() {
       setErreur(nature ? 'Le montant est requis.' : 'Montant et motif sont requis.');
       return;
     }
+    // Loyer ou prestation : le bénéficiaire alimente automatiquement le registre BRS (retenue de 5 %).
+    const retenue = Boolean(nature?.brs) && !nouvelleSortie.sansRetenue;
+    const beneficiaire = nouvelleSortie.brsBeneficiaryName.trim();
+    if (retenue && brsActif && !beneficiaire) {
+      setErreur('Indiquez le bénéficiaire (loyer ou prestation soumis à la retenue de 5 %), ou cochez « Pas de retenue ».');
+      return;
+    }
+    const brs = retenue && beneficiaire
+      ? { brsBeneficiaryName: beneficiaire, brsBeneficiaryRef: nouvelleSortie.brsBeneficiaryRef.trim() || undefined }
+      : {};
     setEnregistrementSortie(true);
     try {
       if (nature && HORS_CAISSE.includes(nouvelleSortie.paymentMethod)) {
@@ -218,8 +236,9 @@ export function CaissePage() {
           billDate: nouvelleSortie.expenseDate,
           paymentMethod: nouvelleSortie.paymentMethod,
           warehouseId: activeWarehouseId,
+          ...brs,
         });
-        setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui(), chargeAccount: '' });
+        setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui(), chargeAccount: '', brsBeneficiaryName: '', brsBeneficiaryRef: '', sansRetenue: false });
         setRefreshKey((k) => k + 1);
         return;
       }
@@ -230,8 +249,12 @@ export function CaissePage() {
         chargeAccount: nature ? nature.code : undefined,
         amount: Number(nouvelleSortie.amount),
         warehouseId: activeWarehouseId,
+        brsBeneficiaryName: undefined,
+        brsBeneficiaryRef: undefined,
+        sansRetenue: undefined,
+        ...brs,
       });
-      setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui(), chargeAccount: '' });
+      setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui(), chargeAccount: '', brsBeneficiaryName: '', brsBeneficiaryRef: '', sansRetenue: false });
       chargerSorties();
     } catch (err) {
       setErreur(err.message);
@@ -536,6 +559,38 @@ export function CaissePage() {
                       <option key={n.code} value={n.code}>{n.label}</option>
                     ))}
                   </select>
+                </div>
+              )}
+              {natures.find((n) => n.code === nouvelleSortie.chargeAccount)?.brs && (
+                <div className="champ-groupe">
+                  <label className="etiquette" htmlFor="s-brs-nom">
+                    {natures.find((n) => n.code === nouvelleSortie.chargeAccount).brs === 'loyer' ? 'Bailleur' : 'Prestataire'} (retenue à la source de 5 %)
+                  </label>
+                  <input
+                    id="s-brs-nom"
+                    className="champ"
+                    value={nouvelleSortie.brsBeneficiaryName}
+                    disabled={nouvelleSortie.sansRetenue}
+                    onChange={(e) => setNouvelleSortie({ ...nouvelleSortie, brsBeneficiaryName: e.target.value })}
+                    placeholder="Nom du bénéficiaire"
+                  />
+                  <input
+                    className="champ"
+                    style={{ marginTop: 8 }}
+                    value={nouvelleSortie.brsBeneficiaryRef}
+                    disabled={nouvelleSortie.sansRetenue}
+                    onChange={(e) => setNouvelleSortie({ ...nouvelleSortie, brsBeneficiaryRef: e.target.value })}
+                    placeholder="NINEA (facultatif)"
+                  />
+                  <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={nouvelleSortie.sansRetenue}
+                      onChange={(e) => setNouvelleSortie({ ...nouvelleSortie, sansRetenue: e.target.checked })}
+                    />
+                    Pas de retenue (bénéficiaire non concerné)
+                  </label>
+                  <p className="aide" style={{ marginTop: 6 }}>Le montant est ajouté automatiquement au registre BRS de la page Fiscalité.</p>
                 </div>
               )}
               <button type="submit" className="btn btn-principal" disabled={enregistrementSortie}>

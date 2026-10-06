@@ -171,6 +171,10 @@ export function StockPage() {
     avecAvance: false,
     advanceAmount: '',
     advanceCashMethod: 'especes',
+    importation: false,
+    customsDeclaration: '',
+    customsDuties: '',
+    importVat: '',
   };
   const [entreeStock, setEntreeStock] = useState(entreeStockVide);
   const [enregistrementEntree, setEnregistrementEntree] = useState(false);
@@ -196,6 +200,9 @@ export function StockPage() {
           })),
           discountType: remiseActive ? entreeStock.remiseType : undefined,
           discountValue: remiseActive ? Number(entreeStock.remiseValeur) : undefined,
+          purchaseKind: entreeStock.importation ? 'import' : undefined,
+          customsDuties: entreeStock.importation && entreeStock.customsDuties !== '' ? Number(entreeStock.customsDuties) : undefined,
+          importVat: entreeStock.importation && entreeStock.importVat !== '' ? Number(entreeStock.importVat) : undefined,
         });
         setApercuAchat(r);
         setErreurApercu('');
@@ -205,7 +212,7 @@ export function StockPage() {
       }
     }, 350);
     return () => clearTimeout(minuteur);
-  }, [modaleEntreeOuverte, entreeStock.items, entreeStock.avecRemise, entreeStock.remiseType, entreeStock.remiseValeur]);
+  }, [modaleEntreeOuverte, entreeStock.items, entreeStock.avecRemise, entreeStock.remiseType, entreeStock.remiseValeur, entreeStock.importation, entreeStock.customsDuties, entreeStock.importVat]);
   function ajouterLigneEntree() {
     setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '', unitCost: '', lotNumber: '', expiryDate: '' }] }));
   }
@@ -679,6 +686,10 @@ export function StockPage() {
         return;
       }
     }
+    if (entreeStock.importation && !entreeStock.customsDeclaration.trim()) {
+      setErreur('Importation : indiquez le numéro de déclaration en douane.');
+      return;
+    }
     setEnregistrementEntree(true);
     try {
       const resultat = await api.recordStockPurchase({
@@ -698,6 +709,10 @@ export function StockPage() {
         cashMethod: entreeStock.paymentMethod === 'comptant' ? entreeStock.cashMethod : undefined,
         advanceAmount: entreeStock.paymentMethod === 'a_credit' && entreeStock.avecAvance ? Number(entreeStock.advanceAmount) : undefined,
         advanceCashMethod: entreeStock.paymentMethod === 'a_credit' && entreeStock.avecAvance ? entreeStock.advanceCashMethod : undefined,
+        purchaseKind: entreeStock.importation ? 'import' : undefined,
+        customsDeclaration: entreeStock.importation ? entreeStock.customsDeclaration.trim() : undefined,
+        customsDuties: entreeStock.importation && entreeStock.customsDuties !== '' ? Number(entreeStock.customsDuties) : undefined,
+        importVat: entreeStock.importation && entreeStock.importVat !== '' ? Number(entreeStock.importVat) : undefined,
         warehouseId: estManager ? warehouseId : undefined,
       });
       setModaleEntreeOuverte(false);
@@ -1788,7 +1803,10 @@ export function StockPage() {
                     {apercuAchat.discount > 0 && (
                       <div>Réduction commerciale : − {Math.round(apercuAchat.discount).toLocaleString('fr-FR')} FCFA</div>
                     )}
-                    <div>TVA ({apercuAchat.taxRate} %) : {Math.round(apercuAchat.tva).toLocaleString('fr-FR')} FCFA</div>
+                    {apercuAchat.import && apercuAchat.duties > 0 && (
+                      <div>Droits de douane : {Math.round(apercuAchat.duties).toLocaleString('fr-FR')} FCFA</div>
+                    )}
+                    <div>{apercuAchat.import ? "TVA à l'importation" : `TVA (${apercuAchat.taxRate} %)`} : {Math.round(apercuAchat.tva).toLocaleString('fr-FR')} FCFA</div>
                     <div style={{ fontWeight: 600 }}>Total à payer : {Math.round(apercuAchat.total).toLocaleString('fr-FR')} FCFA</div>
                   </div>
                 ) : (
@@ -1858,6 +1876,48 @@ export function StockPage() {
                   </div>
                 </>
               )}
+              <div className="champ-groupe">
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={entreeStock.importation}
+                    onChange={(e) => setEntreeStock({ ...entreeStock, importation: e.target.checked })}
+                  />
+                  Importation (marchandise dédouanée)
+                </label>
+                {entreeStock.importation && (
+                  <div style={{ marginTop: 8 }}>
+                    <label className="etiquette" htmlFor="e-dum">N° de déclaration en douane</label>
+                    <input
+                      id="e-dum"
+                      className="champ"
+                      value={entreeStock.customsDeclaration}
+                      onChange={(e) => setEntreeStock({ ...entreeStock, customsDeclaration: e.target.value })}
+                      placeholder="Ex : C 12345 / 2026"
+                    />
+                    <label className="etiquette" htmlFor="e-droits" style={{ marginTop: 8 }}>Droits et taxes de douane, hors TVA (FCFA)</label>
+                    <input
+                      id="e-droits"
+                      type="number"
+                      min="0"
+                      className="champ"
+                      value={entreeStock.customsDuties}
+                      onChange={(e) => setEntreeStock({ ...entreeStock, customsDuties: e.target.value })}
+                    />
+                    <label className="etiquette" htmlFor="e-tva-imp" style={{ marginTop: 8 }}>TVA acquittée en douane (FCFA)</label>
+                    <input
+                      id="e-tva-imp"
+                      type="number"
+                      min="0"
+                      className="champ"
+                      value={entreeStock.importVat}
+                      onChange={(e) => setEntreeStock({ ...entreeStock, importVat: e.target.value })}
+                      placeholder="Laisser vide : 18 % de (valeur + droits)"
+                    />
+                    <p className="aide" style={{ marginTop: 6 }}>Cette TVA est déductible et alimente l'annexe Importations de la déclaration de TVA.</p>
+                  </div>
+                )}
+              </div>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="e-facture">N° de facture fournisseur (facultatif)</label>
                 <input

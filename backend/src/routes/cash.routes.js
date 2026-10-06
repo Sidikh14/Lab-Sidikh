@@ -10,6 +10,18 @@ const { MOYENS_PAIEMENT, LABEL_METHODE, calculerMouvements, getSoldeActuel } = r
 const router = express.Router();
 router.use(authenticate);
 
+// Natures de charge soumises à la retenue à la source de 5 % (RAS Tiers et loyers) :
+// compte de classe 6 -> nature dans le registre BRS. Une sortie de caisse sur l'une de
+// ces natures, avec un bénéficiaire, crée automatiquement la ligne du registre BRS.
+const NATURES_BRS = {
+  '622': 'loyer',
+  '632': 'prestation', // honoraires / comptabilité
+  '624': 'prestation', // entretien et réparations
+  '612': 'prestation', // livraison
+  '618': 'prestation', // transport
+  '627': 'prestation', // publicité
+};
+
 // Même logique que products/orders : manager choisit toujours explicitement
 // la boutique, les autres rôles utilisent la leur (assignée via
 // req.user.warehouseId), sans jamais faire confiance à un warehouseId
@@ -375,7 +387,7 @@ router.get('/closings', requireRole('manager', 'gerant'), async (req, res) => {
 
 // POST /cash/expenses — enregistrer une sortie de caisse manuelle
 router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
-  const { paymentMethod, amount, reason, expenseDate, warehouseId: warehouseIdInput, chargeAccount } = req.body;
+  const { paymentMethod, amount, reason, expenseDate, warehouseId: warehouseIdInput, chargeAccount, brsBeneficiaryName, brsBeneficiaryRef } = req.body;
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
   }
@@ -415,11 +427,35 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
       });
     }
 
-    const result = await pool.query(
-      `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id, charge_account)
-       VALUES ($1, $2, $3, $4, $5, $6, 'sortie', $7, $8) RETURNING *`,
-      [req.user.merchantId, req.user.id, paymentMethod, Number(amount), reason, expenseDate || new Date().toISOString().slice(0, 10), warehouseId, compteCharge]
-    );
+    const dateSortie = expenseDate || new Date().toISOString().slice(0, 10);
+    const natureBrs = compteCharge ? NATURES_BRS[compteCharge] : null;
+    const beneficiaire = String(brsBeneficiaryName || '').trim().slice(0, 200);
+
+    // La sortie de caisse et la ligne BRS sont créées ensemble ou pas du tout.
+    const client = await pool.connect();
+    let result;
+    try {
+      await client.query('BEGIN');
+      result = await client.query(
+        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id, charge_account)
+         VALUES ($1, $2, $3, $4, $5, $6, 'sortie', $7, $8) RETURNING *`,
+        [req.user.merchantId, req.user.id, paymentMethod, Number(amount), reason, dateSortie, warehouseId, compteCharge]
+      );
+      if (natureBrs && beneficiaire) {
+        await client.query(
+          `INSERT INTO accounting_brs_entries (merchant_id, beneficiary_name, beneficiary_ref, nature, paid_on, gross_ht, note, created_by, cash_expense_id)
+           VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9)`,
+          [req.user.merchantId, beneficiaire, brsBeneficiaryRef ? String(brsBeneficiaryRef).trim().slice(0, 40) : null, natureBrs,
+            dateSortie, Number(amount), `Sortie de caisse : ${String(reason).slice(0, 150)}`, req.user.id, result.rows[0].id]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
 
     await logActivity({
       merchantId: req.user.merchantId,
