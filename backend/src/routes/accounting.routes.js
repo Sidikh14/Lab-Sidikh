@@ -53,6 +53,10 @@ function accesCaisse(req, res, next) {
 // Natures de charges proposées dans le formulaire de sortie de caisse
 // (nom affiché, compte SYSCOHADA de classe 6).
 // Natures soumises à la retenue à la source de 5 % (RAS Tiers et loyers) : compte -> nature BRS.
+const TAUX_BRS = 0.05;
+// Retenue due sur une base HT (en FCFA entiers).
+const retenueBrs = (base) => Math.max(0, Math.round(Number(base) * TAUX_BRS));
+const COMPTE_BRS = ['4478', 'État, retenues à la source (BRS)'];
 const NATURES_BRS = { '622': 'loyer', '632': 'prestation', '624': 'prestation', '612': 'prestation', '618': 'prestation', '627': 'prestation' };
 
 const NATURES_CHARGES = [
@@ -168,17 +172,20 @@ router.post('/caisse/factures', accesCaisse, async (req, res) => {
     const natureBrs = NATURES_BRS[nature[1]] || null;
     const beneficiaire = natureBrs ? String(brsBeneficiaryName || '').trim().slice(0, 200) : '';
     const refBeneficiaire = beneficiaire && brsBeneficiaryRef ? String(brsBeneficiaryRef).trim().slice(0, 40) : null;
+    const baseBrs = arrondi(montant - tva);
+    const retenue = beneficiaire && paymentMethod === 'virement' ? retenueBrs(baseBrs) : 0;
+    if (beneficiaire) await assurerCompte(client, merchantId, COMPTE_BRS[0], COMPTE_BRS[1]);
     const facture = await client.query(
       `INSERT INTO accounting_charge_bills (merchant_id, nature_account, label, amount, bill_date, warehouse_id, paid_at, paid_method, created_by,
-                                            brs_nature, brs_beneficiary_name, brs_beneficiary_ref, tva_amount)
-       VALUES ($1, $2, $3, $4, $5::date, $6, $7::date, $8, $9, $10, $11, $12, $13) RETURNING id`,
+                                            brs_nature, brs_beneficiary_name, brs_beneficiary_ref, tva_amount, brs_retenue)
+       VALUES ($1, $2, $3, $4, $5::date, $6, $7::date, $8, $9, $10, $11, $12, $13, $14) RETURNING id`,
       [merchantId, nature[1], libelle, montant, date, UUID_RE.test(String(req.body.warehouseId || '')) ? req.body.warehouseId : null,
         paymentMethod === 'virement' ? date : null, paymentMethod === 'virement' ? 'virement' : null, req.user.id,
-        beneficiaire ? natureBrs : null, beneficiaire || null, refBeneficiaire, tva]
+        beneficiaire ? natureBrs : null, beneficiaire || null, refBeneficiaire, tva, retenue]
     );
     // Virement : la somme est versée tout de suite, la retenue est donc due ce mois-ci.
     if (paymentMethod === 'virement' && beneficiaire) {
-      await enregistrerBrsFacture(client, merchantId, req.user.id, facture.rows[0].id, { nom: beneficiaire, ref: refBeneficiaire, nature: natureBrs, date, montant, libelle });
+      await enregistrerBrsFacture(client, merchantId, req.user.id, facture.rows[0].id, { nom: beneficiaire, ref: refBeneficiaire, nature: natureBrs, date, montant: baseBrs, libelle });
     }
     await client.query('COMMIT');
     ETAT_SYNCHRO.delete(merchantId);
@@ -205,7 +212,7 @@ router.post('/caisse/factures/:id/payer', accesCaisse, async (req, res) => {
     await verrouiller(client, merchantId);
     await debutComptabilite(client, merchantId);
     const f = await client.query(
-      `SELECT id, label, amount, to_char(bill_date, 'YYYY-MM-DD') AS d, brs_nature, brs_beneficiary_name, brs_beneficiary_ref FROM accounting_charge_bills
+      `SELECT id, label, amount, COALESCE(tva_amount, 0) AS tva, to_char(bill_date, 'YYYY-MM-DD') AS d, brs_nature, brs_beneficiary_name, brs_beneficiary_ref FROM accounting_charge_bills
        WHERE id = $1 AND merchant_id = $2 AND paid_at IS NULL FOR UPDATE`,
       [req.params.id, merchantId]
     );
@@ -213,24 +220,29 @@ router.post('/caisse/factures/:id/payer', accesCaisse, async (req, res) => {
     const facture = f.rows[0];
     if (date < facture.d) throw erreurMetier(400, 'Le règlement ne peut pas précéder la facture.');
     await verifierExerciceOuvert(client, merchantId, date);
+    const baseBrs = arrondi(Number(facture.amount) - Number(facture.tva));
+    const avecBrs = Boolean(facture.brs_nature && facture.brs_beneficiary_name);
+    const retenue = avecBrs ? retenueBrs(baseBrs) : 0;
+    const sortieNette = arrondi(Number(facture.amount) - retenue);
+    if (avecBrs) await assurerCompte(client, merchantId, COMPTE_BRS[0], COMPTE_BRS[1]);
     let depenseId = null;
     if (paymentMethod !== 'virement') {
-      await verifierCaisse(req, client, merchantId, warehouseId, paymentMethod, Number(facture.amount));
+      await verifierCaisse(req, client, merchantId, warehouseId, paymentMethod, sortieNette);
       const d = await client.query(
         `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id)
          VALUES ($1, $2, $3, $4, $5, $6::date, 'sortie', $7) RETURNING id`,
-        [merchantId, req.user.id, paymentMethod, Number(facture.amount), `${MOTIF_REGLEMENT}${facture.label}`, date, warehouseId]
+        [merchantId, req.user.id, paymentMethod, sortieNette, `${MOTIF_REGLEMENT}${facture.label}`, date, warehouseId]
       );
       depenseId = d.rows[0].id;
     }
     await client.query(
-      `UPDATE accounting_charge_bills SET paid_at = $2::date, paid_method = $3, paid_cash_expense_id = $4 WHERE id = $1`,
-      [facture.id, date, paymentMethod, depenseId]
+      `UPDATE accounting_charge_bills SET paid_at = $2::date, paid_method = $3, paid_cash_expense_id = $4, brs_retenue = $5 WHERE id = $1`,
+      [facture.id, date, paymentMethod, depenseId, retenue]
     );
     if (facture.brs_nature && facture.brs_beneficiary_name) {
       await enregistrerBrsFacture(client, merchantId, req.user.id, facture.id, {
         nom: facture.brs_beneficiary_name, ref: facture.brs_beneficiary_ref, nature: facture.brs_nature,
-        date, montant: Number(facture.amount), libelle: facture.label,
+        date, montant: baseBrs, libelle: facture.label,
       });
     }
     await client.query('COMMIT');
@@ -1018,6 +1030,7 @@ const DETTES_ETAT = {
   retenues: { code: '447', label: 'IR et TRIMF sur salaires',  nomCompte: 'État, impôts retenus sur salaires' },
   css:      { code: '431', label: 'Cotisations CSS',           nomCompte: 'Sécurité sociale' },
   ipres:    { code: '432', label: 'Cotisations IPRES',         nomCompte: 'Caisse de retraite' },
+  brs:      { code: COMPTE_BRS[0], label: 'RAS Tiers et loyers (BRS)', nomCompte: COMPTE_BRS[1] },
   cfce:     { code: '442', label: 'CFCE',                      nomCompte: 'État, impôts et taxes' },
   is:       { code: '441', label: 'Impôt sur les résultats',   nomCompte: 'État, impôts sur les bénéfices' },
 };
@@ -1046,7 +1059,7 @@ async function assurerCompte(client, merchantId, code, label) {
 // ou semestrielle. Une période s'écrit AAAA-MM, AAAA-T1..T4 ou AAAA-S1..S2.
 
 const FREQUENCES = ['monthly', 'quarterly', 'semiannual'];
-const IMPOTS_MENSUELS = ['tva', 'retenues', 'cfce'];
+const IMPOTS_MENSUELS = ['tva', 'retenues', 'brs', 'cfce'];
 const COTISATIONS_ETAT = ['css', 'ipres'];
 const PERIODE_ETAT_RE = /^\d{4}-(0[1-9]|1[0-2]|T[1-4]|S[1-2])$/;
 const NOMS_MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
@@ -1189,12 +1202,12 @@ router.get('/state-dues', async (req, res) => {
     const mouvements = await pool.query(
       `SELECT to_char(e.entry_date, 'YYYY-MM') AS m, a.code, COALESCE(SUM(l.debit), 0) AS d, COALESCE(SUM(l.credit), 0) AS c
        FROM accounting_lines l JOIN accounting_entries e ON e.id = l.entry_id JOIN accounting_accounts a ON a.id = l.account_id
-       WHERE l.merchant_id = $1 AND a.code IN ('443', '445', '447', '442', '431', '432')
+       WHERE l.merchant_id = $1 AND a.code IN ('443', '445', '447', '4478', '442', '431', '432')
          AND e.entry_date <= $2::date AND e.source_type <> 'paiement_etat'
        GROUP BY 1, 2`,
       [merchantId, date]
     );
-    const acc = { collectee: {}, deductible: {}, retenues: {}, cfce: {}, css: {}, ipres: {} };
+    const acc = { collectee: {}, deductible: {}, retenues: {}, brs: {}, cfce: {}, css: {}, ipres: {} };
     const ajouter = (famille, m, v) => { acc[famille][m] = arrondi((acc[famille][m] || 0) + v); };
     for (const r of mouvements.rows) {
       const d = Number(r.d);
@@ -1202,6 +1215,7 @@ router.get('/state-dues', async (req, res) => {
       if (r.code === '443') ajouter('collectee', r.m, c - d);
       else if (r.code === '445') ajouter('deductible', r.m, d - c);
       else if (r.code === '447') ajouter('retenues', r.m, c - d);
+      else if (r.code === '4478') ajouter('brs', r.m, c - d);
       else if (r.code === '442') ajouter('cfce', r.m, c - d);
       else if (r.code === '431') ajouter('css', r.m, c - d);
       else if (r.code === '432') ajouter('ipres', r.m, c - d);
@@ -1919,7 +1933,7 @@ router.get('/declarations/tva', async (req, res) => {
     L[60] = L[50] + L[55];
     L[76] = (L[70] || 0) + (L[75] || 0);
     // La TVA d'importation est déjà comptée dans la TVA déductible du grand livre : on la sépare des achats locaux.
-    L[90] = Math.max(0, Math.round(t.deductible) - L[85]);
+    L[90] = Math.max(0, Math.round(t.deductible) - L[85] - L[70]);
     L[91] = (L[85] || 0) + L[90];
     L[92] = L[76] + L[91];
     L[100] = Math.round(t.creditReporte);
@@ -2089,7 +2103,6 @@ router.get('/declarations/cfce', (req, res) => declarerSalaires('cfce', req, res
 
 // ----- RAS Tiers et loyers (BRS) : retenue à la source de 5 % sur les sommes versées à des tiers -----
 // Le registre contient uniquement les versements soumis à la retenue : la retenue est de 5 % du montant brut.
-const TAUX_BRS = 0.05;
 
 router.get('/brs-entries', async (req, res) => {
   const mois = String(req.query.month || '');
@@ -2699,7 +2712,7 @@ const REGLES_DEPENSES = [
 
 async function lireCaisse(client, merchantId, debut, ctx) {
   const r = await client.query(
-    `SELECT id::text AS id, movement_type, payment_method, amount, COALESCE(reason, '') AS reason, charge_account, COALESCE(tva_amount, 0) AS tva,
+    `SELECT id::text AS id, movement_type, payment_method, amount, COALESCE(reason, '') AS reason, charge_account, COALESCE(tva_amount, 0) AS tva, COALESCE(brs_retenue, 0) AS retenue,
             to_char(expense_date, 'YYYY-MM-DD') AS d
      FROM cash_expenses
      WHERE merchant_id = $1 AND COALESCE(amount, 0) > 0
@@ -2748,11 +2761,15 @@ async function lireCaisse(client, merchantId, debut, ctx) {
       const [compte, j] = tresorerie(mode === 'cheque' ? 'virement' : mode);
       journal = j;
       if (!regle && !compteCharge) nonClassees.push(row.reason);
-      const tva = Math.min(arrondi(row.tva), montant);
-      lignes = [ligne(compteCharge || (regle ? regle[1] : '658'), arrondi(montant - tva), 0)];
+      // Retenue à la source : la caisse a sorti le net, la charge est enregistrée pour son montant brut.
+      const retenue = arrondi(row.retenue);
+      const brut = arrondi(montant + retenue);
+      const tva = Math.min(arrondi(row.tva), brut);
+      lignes = [ligne(compteCharge || (regle ? regle[1] : '658'), arrondi(brut - tva), 0)];
       if (tva > 0) lignes.push(ligne('445', tva, 0));
       lignes.push(ligne(compte, 0, montant));
-      sigCharge = `${compteCharge ? `|${compteCharge}` : ''}${tva > 0 ? `|v${tva}` : ''}`;
+      if (retenue > 0) lignes.push(ligne(COMPTE_BRS[0], 0, retenue));
+      sigCharge = `${compteCharge ? `|${compteCharge}` : ''}${tva > 0 ? `|v${tva}` : ''}${retenue > 0 ? `|r${retenue}` : ''}`;
       nom = `Sortie de caisse : ${row.reason}`.slice(0, 120);
     }
     out.push({
@@ -2911,7 +2928,7 @@ async function lireVentes(client, merchantId, debut, ctx) {
     `SELECT o.id::text AS id, o.order_seq, o.client_id::text AS client_id,
             (SELECT cl.insurer_id::text FROM clients cl WHERE cl.id = o.client_id) AS insurer_id,
             o.payment_method::text AS pm,
-            COALESCE(o.total_amount, 0) AS total, COALESCE(o.tva_amount, 0) AS tva,
+            COALESCE(o.total_amount, 0) AS total, COALESCE(o.tva_amount, 0) AS tva, COALESCE(o.precompte_amount, 0) AS precompte,
             ${SQL_JOUR_TZ('COALESCE(o.validated_at, o.delivered_at, o.created_at)')} AS d,
             COALESCE((SELECT SUM(oi.quantity * COALESCE(oi.unit_cost, 0)) FROM order_items oi WHERE oi.order_id = o.id), 0) AS cogs,
             COALESCE((SELECT SUM(CASE WHEN oi.quantity > 0 THEN LEAST(pr.quantity, oi.quantity) / oi.quantity * oi.line_total ELSE 0 END)
@@ -2942,6 +2959,13 @@ async function lireVentes(client, merchantId, debut, ctx) {
     } else {
       lignes.push(ligne(tresorerie(modeNormalise(row.pm))[0], total, 0));
     }
+    // Précompte de TVA : le client public verse cette part directement à l'État. Elle n'entre pas en
+    // trésorerie ; elle devient une TVA récupérable (445) qui vient en déduction de la TVA à reverser.
+    const precompte = row.pm === 'tiers_payant' || !lignes.length ? 0 : Math.min(arrondi(row.precompte), tva, lignes[0].debit - 0.01);
+    if (precompte > 0) {
+      lignes[0] = ligne(lignes[0].compte, arrondi(lignes[0].debit - precompte), 0);
+      lignes.push(ligne('445', precompte, 0));
+    }
     // Reliquat (D8) : la part de la vente dont la marchandise n'est pas encore livrée au client
     // n'est pas du chiffre d'affaires : elle reste en acompte client (419) jusqu'à la livraison.
     const differe = Math.min(arrondi(row.differe), ht);
@@ -2956,7 +2980,7 @@ async function lireVentes(client, merchantId, debut, ctx) {
       sourceId: row.id, date: row.d, journal: 'VT', reference: row.order_seq ? `V${row.order_seq}` : null,
       label: `Vente${row.order_seq ? ` n°${row.order_seq}` : ''}`,
       // La signature ne change que s'il y a un reliquat non livré : les ventes existantes ne sont pas réécrites.
-      sig: `${total}|${tva}|${row.pm}|${cogs}|${row.copay}|${row.d}|${row.client_id}|${row.insurer_id}|t3${differe > 0 ? `|d${differe}` : ''}`,
+      sig: `${total}|${tva}|${row.pm}|${cogs}|${row.copay}|${row.d}|${row.client_id}|${row.insurer_id}|t3${differe > 0 ? `|d${differe}` : ''}${precompte > 0 ? `|p${precompte}` : ''}`,
       lignes,
     });
   }
@@ -3309,7 +3333,7 @@ async function lireFacturesCharges(client, merchantId, debut) {
 
 async function lireReglementsCharges(client, merchantId, debut) {
   const r = await client.query(
-    `SELECT id::text AS id, label, amount, paid_method, to_char(paid_at, 'YYYY-MM-DD') AS d
+    `SELECT id::text AS id, label, amount, COALESCE(brs_retenue, 0) AS retenue, paid_method, to_char(paid_at, 'YYYY-MM-DD') AS d
      FROM accounting_charge_bills
      WHERE merchant_id = $1 AND paid_at IS NOT NULL AND paid_at >= $2::date AND bill_date >= $2::date ORDER BY paid_at`,
     [merchantId, debut]
@@ -3317,11 +3341,14 @@ async function lireReglementsCharges(client, merchantId, debut) {
   return r.rows.map((row) => {
     const montant = arrondi(row.amount);
     const [compte, journal] = tresorerie(row.paid_method);
+    const retenue = Math.min(arrondi(row.retenue), montant);
+    const lignes = [ligne('401', montant, 0), ligne(compte, 0, arrondi(montant - retenue))];
+    if (retenue > 0) lignes.push(ligne(COMPTE_BRS[0], 0, retenue));
     return {
       sourceId: row.id, date: row.d, journal, reference: 'REGL',
       label: `Règlement de facture : ${row.label}`.slice(0, 120),
-      sig: `${montant}|${row.paid_method}|${row.d}|${row.label}|t1`,
-      lignes: [ligne('401', montant, 0), ligne(compte, 0, montant)],
+      sig: `${montant}|${row.paid_method}|${row.d}|${row.label}|t1${retenue > 0 ? `|r${retenue}` : ''}`,
+      lignes,
     };
   });
 }
@@ -3553,6 +3580,7 @@ async function synchroniserMaintenant(merchantId, userId) {
     if (!PLAN_VERIFIE.has(merchantId)) {
       await initialiserComptabilite(client, merchantId);
       await assurerCompte(client, merchantId, '445', 'État, TVA récupérable sur achats');
+      await assurerCompte(client, merchantId, COMPTE_BRS[0], COMPTE_BRS[1]);
       await assurerCompte(client, merchantId, '441', 'État, impôts sur les bénéfices');
       await assurerCompte(client, merchantId, '891', 'Impôts sur les bénéfices');
       for (const [code, nom] of COMPTES_IMMO_COMMUNS) await assurerCompte(client, merchantId, code, nom);

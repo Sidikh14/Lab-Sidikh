@@ -426,18 +426,22 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
       return res.status(400).json({ error: 'Choisissez la nature de la charge pour déclarer la TVA.' });
     }
 
-    // Même règle que pour un achat de stock au comptant : une sortie
-    // manuelle ne doit jamais rendre une caisse négative.
-    const soldeActuel = await getSoldeActuel(req, warehouseId, paymentMethod);
-    if (soldeActuel < Number(amount)) {
-      return res.status(400).json({
-        error: `Solde insuffisant sur ${LABEL_METHODE[paymentMethod]} (solde actuel : ${Math.round(soldeActuel).toLocaleString('fr-FR')} FCFA, sortie : ${Math.round(Number(amount)).toLocaleString('fr-FR')} FCFA).`,
-      });
-    }
-
     const dateSortie = expenseDate || new Date().toISOString().slice(0, 10);
     const natureBrs = (compteCharge && NATURES_BRS[compteCharge]) || (['loyer', 'prestation'].includes(brsNature) ? brsNature : null);
     const beneficiaire = String(brsBeneficiaryName || '').trim().slice(0, 200);
+    // Retenue à la source de 5 % sur la base HT : le montant saisi est le brut, la caisse ne sort que le net.
+    const baseBrs = Number(amount) - tvaSortie;
+    const retenue = natureBrs && beneficiaire ? Math.round(baseBrs * 0.05) : 0;
+    const sortieNette = Number(amount) - retenue;
+
+    // Même règle que pour un achat de stock au comptant : une sortie
+    // manuelle ne doit jamais rendre une caisse négative.
+    const soldeActuel = await getSoldeActuel(req, warehouseId, paymentMethod);
+    if (soldeActuel < sortieNette) {
+      return res.status(400).json({
+        error: `Solde insuffisant sur ${LABEL_METHODE[paymentMethod]} (solde actuel : ${Math.round(soldeActuel).toLocaleString('fr-FR')} FCFA, sortie : ${Math.round(sortieNette).toLocaleString('fr-FR')} FCFA).`,
+      });
+    }
 
     // La sortie de caisse et la ligne BRS sont créées ensemble ou pas du tout.
     const client = await pool.connect();
@@ -445,16 +449,16 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
     try {
       await client.query('BEGIN');
       result = await client.query(
-        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id, charge_account, tva_amount)
-         VALUES ($1, $2, $3, $4, $5, $6, 'sortie', $7, $8, $9) RETURNING *`,
-        [req.user.merchantId, req.user.id, paymentMethod, Number(amount), reason, dateSortie, warehouseId, compteCharge, tvaSortie]
+        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id, charge_account, tva_amount, brs_retenue)
+         VALUES ($1, $2, $3, $4, $5, $6, 'sortie', $7, $8, $9, $10) RETURNING *`,
+        [req.user.merchantId, req.user.id, paymentMethod, sortieNette, reason, dateSortie, warehouseId, compteCharge, tvaSortie, retenue]
       );
       if (natureBrs && beneficiaire) {
         await client.query(
           `INSERT INTO accounting_brs_entries (merchant_id, beneficiary_name, beneficiary_ref, nature, paid_on, gross_ht, note, created_by, cash_expense_id)
            VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, $9)`,
           [req.user.merchantId, beneficiaire, brsBeneficiaryRef ? String(brsBeneficiaryRef).trim().slice(0, 40) : null, natureBrs,
-            dateSortie, Number(amount), `Sortie de caisse : ${String(reason).slice(0, 150)}`, req.user.id, result.rows[0].id]
+            dateSortie, baseBrs, `Sortie de caisse : ${String(reason).slice(0, 150)}`, req.user.id, result.rows[0].id]
         );
       }
       await client.query('COMMIT');
@@ -469,7 +473,7 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'cash_expense',
-      description: `a enregistré une sortie de caisse de ${Math.round(Number(amount)).toLocaleString('fr-FR')} FCFA (${LABEL_METHODE[paymentMethod]}) : ${reason}`,
+      description: `a enregistré une sortie de caisse de ${Math.round(sortieNette).toLocaleString('fr-FR')} FCFA (${LABEL_METHODE[paymentMethod]}) : ${reason}`,
     });
 
     res.status(201).json(result.rows[0]);
