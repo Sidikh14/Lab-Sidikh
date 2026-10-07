@@ -7,9 +7,27 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+// Cherche accounting_routes.js dans le dossier parent, puis dans ses sous-dossiers (routes/, src/routes/...).
+function trouverRoutes() {
+  const racine = path.join(__dirname, '..');
+  const aVisiter = [racine];
+  while (aVisiter.length) {
+    const dossier = aVisiter.shift();
+    for (const e of fs.readdirSync(dossier, { withFileTypes: true })) {
+      if (e.isFile() && /^accounting([._-]?routes?)?\.js$/i.test(e.name)) {
+        const chemin = path.join(dossier, e.name);
+        console.log(`# Fichier testé : ${chemin}`);
+        return chemin;
+      }
+      if (e.isDirectory() && !['node_modules', '.git', 'tests', 'dist', 'build'].includes(e.name)) aVisiter.push(path.join(dossier, e.name));
+    }
+  }
+  throw new Error(`Fichier de routes comptables introuvable sous ${racine} (attendu : accounting_routes.js, accounting.routes.js, accounting-routes.js ou accounting.js). Dites-moi son nom exact.`);
+}
+
 function charger() {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'accounting_routes.js'), 'utf8')
-    + '\nglobalThis.__T = { lireFacturesCharges, lireReglementsCharges, lireCaisse, lireVentes, retenueBrs, ligne };';
+  const src = fs.readFileSync(trouverRoutes(), 'utf8')
+    + '\nglobalThis.__T = { lireFacturesCharges, lireReglementsCharges, lireCaisse, lireVentes, lireAchats, lireRetours, lirePertes, retenueBrs, ligne };';
   const routeur = new Proxy({}, { get: () => () => {} });
   const faux = {
     express: Object.assign(() => ({}), { Router: () => routeur, raw: () => () => {}, json: () => () => {}, urlencoded: () => () => {} }),
@@ -118,4 +136,76 @@ test('précompte supérieur à la TVA : plafonné à la TVA', async () => {
   const [e] = await T.lireVentes(clientAvec([vente({ precompte: '50000' })]), 'm', '2026-01-01', ctx);
   equilibre(e);
   assert.equal(montantSur(e, '445', 'debit'), 18000);
+});
+
+// ---------- Couverture historique demandée par le plan (R3) ----------
+const achat = (extra) => ({ id: 'a1', total: '118000', tva: '18000', pm: 'especes', cm: null, inv: 'F-12', d: '2026-10-02', supplier: 'Fournisseur X', supplier_id: 'f1', ...extra });
+
+test('achat comptant : stock + TVA déductible, trésorerie créditée du TTC', async () => {
+  const [e] = await T.lireAchats(clientAvec([achat()]), 'm', '2026-01-01', ctx);
+  equilibre(e);
+  assert.equal(montantSur(e, '601', 'debit'), 100000);
+  assert.equal(montantSur(e, '445', 'debit'), 18000);
+  const credits = e.lignes.filter((l) => l.credit > 0 && l.compte !== '6031');
+  assert.equal(credits.length, 1);
+  assert.equal(credits[0].credit, 118000);
+  assert.notEqual(credits[0].compte, '411001');
+});
+
+test('achat à crédit : dette fournisseur du TTC', async () => {
+  const ctxF = { avertissements: [], tiers: { obtenir: async (type) => (type === 'fournisseur' ? '401777' : '411001') } };
+  const [e] = await T.lireAchats(clientAvec([achat({ pm: 'a_credit' })]), 'm', '2026-01-01', ctxF);
+  equilibre(e);
+  assert.equal(montantSur(e, '401777', 'credit'), 118000);
+});
+
+test('achat : un transfert entre dépôts n\'est jamais lu comme un achat', async () => {
+  const requetes = [];
+  await T.lireAchats({ query: async (sql) => { requetes.push(sql); return { rows: sql.includes('COUNT') ? [{ n: '0' }] : [] }; } }, 'm', '2026-01-01', ctx);
+  assert.ok(requetes.length >= 1);
+  for (const sql of requetes) assert.match(sql, /transfer_id IS NULL/);
+});
+
+test('retour client remboursé en espèces : annule 701 et TVA, remet le stock', async () => {
+  const [e] = await T.lireRetours(clientAvec([{ id: 'r1', client_id: 'c1', refund: '59000', refund_method: 'especes', quantity: '1', d: '2026-10-04', order_seq: 7, o_total: '118000', o_tva: '18000', cost: '30000' }]), 'm', '2026-01-01', ctx);
+  equilibre(e);
+  assert.equal(montantSur(e, '701', 'debit'), 50000);
+  assert.equal(montantSur(e, '443', 'debit'), 9000);
+  assert.equal(montantSur(e, '311', 'debit'), 30000);
+  assert.equal(montantSur(e, '6031', 'credit'), 30000);
+});
+
+test('retour remboursé à crédit : le client est crédité', async () => {
+  const [e] = await T.lireRetours(clientAvec([{ id: 'r1', client_id: 'c1', refund: '59000', refund_method: 'credit', quantity: '1', d: '2026-10-04', order_seq: 7, o_total: '118000', o_tva: '18000', cost: null }]), 'm', '2026-01-01', ctx);
+  equilibre(e);
+  assert.equal(montantSur(e, '411001', 'credit'), 59000);
+});
+
+test('perte de stock : 6581 / 311 à la valeur du coût', async () => {
+  const [e] = await T.lirePertes(clientAvec([{ id: 'p1', quantity: '4', reason: 'casse', produit: 'Verre', cout: '2500', d: '2026-10-06' }]), 'm', '2026-01-01', { avertissements: [] });
+  equilibre(e);
+  assert.equal(montantSur(e, '6581', 'debit'), 10000);
+  assert.equal(montantSur(e, '311', 'credit'), 10000);
+});
+
+test('perte sans prix de revient : pas d\'écriture, un avertissement', async () => {
+  const c = { avertissements: [] };
+  const sortie_ = await T.lirePertes(clientAvec([{ id: 'p1', quantity: '4', reason: null, produit: 'Verre', cout: '0', d: '2026-10-06' }]), 'm', '2026-01-01', c);
+  assert.equal(sortie_.length, 0);
+  assert.equal(c.avertissements.length, 1);
+});
+
+test('vente avec reliquat non livré : le différé reste en acompte 419, hors chiffre d\'affaires', async () => {
+  const [e] = await T.lireVentes(clientAvec([vente({ differe: '30000' })]), 'm', '2026-01-01', ctx);
+  equilibre(e);
+  assert.equal(montantSur(e, '419', 'credit'), 30000);
+  assert.equal(montantSur(e, '701', 'credit'), 70000);
+  assert.equal(montantSur(e, '443', 'credit'), 18000);
+});
+
+test('vente avec coût de revient : 6031 / 311 équilibrés', async () => {
+  const [e] = await T.lireVentes(clientAvec([vente({ cogs: '40000' })]), 'm', '2026-01-01', ctx);
+  equilibre(e);
+  assert.equal(montantSur(e, '6031', 'debit'), 40000);
+  assert.equal(montantSur(e, '311', 'credit'), 40000);
 });
