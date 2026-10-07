@@ -158,6 +158,10 @@ export function StockPage() {
   const [augmentationGlobale, setAugmentationGlobale] = useState('');
   const [enregistrementPrix, setEnregistrementPrix] = useState(false);
   const [modaleEntreeOuverte, setModaleEntreeOuverte] = useState(false);
+  // Déclaration d'une perte (casse, péremption, vol…) : sort du stock et devient une charge en comptabilité.
+  const [produitPerte, setProduitPerte] = useState(null);
+  const [perte, setPerte] = useState({ quantite: '', motif: 'casse', note: '' });
+  const [enregistrementPerte, setEnregistrementPerte] = useState(false);
   const entreeStockVide = {
     items: [{ productId: '', quantity: '', unitCost: '', lotNumber: '', expiryDate: '' }],
     supplierId: '',
@@ -560,6 +564,33 @@ export function StockPage() {
       setErreur(err.message);
     } finally {
       setDestructionLotEnCours(null);
+    }
+  }
+
+  async function handleDeclarerPerte(e) {
+    e.preventDefault();
+    const quantite = Number(String(perte.quantite).replace(',', '.'));
+    if (!(quantite > 0)) {
+      setErreur('Indiquez la quantité perdue.');
+      return;
+    }
+    setErreur('');
+    setEnregistrementPerte(true);
+    try {
+      const r = await api.declareStockLoss(produitPerte.id, {
+        quantity: quantite,
+        reason: perte.motif,
+        note: perte.note || undefined,
+        warehouseId: estManager ? warehouseId : undefined,
+      });
+      setProduitPerte(null);
+      setPerte({ quantite: '', motif: 'casse', note: '' });
+      if (r.missingCost) setErreur("Perte enregistrée, mais ce produit n'a pas de prix de revient : renseignez-le pour qu'elle soit comptabilisée.");
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnregistrementPerte(false);
     }
   }
 
@@ -1004,6 +1035,13 @@ export function StockPage() {
                           <IconModifier />
                           Modifier
                         </button>
+                        <button
+                          className="btn"
+                          style={{ fontSize: 13, padding: '4px 10px', marginLeft: 6 }}
+                          onClick={() => { setProduitPerte(p); setErreur(''); }}
+                        >
+                          Déclarer une perte
+                        </button>
                       </td>
                     )}
                   </tr>
@@ -1037,6 +1075,13 @@ export function StockPage() {
                       >
                         <IconModifier />
                         Modifier
+                      </button>
+                      <button
+                        className="btn"
+                        style={{ flex: 1, justifyContent: 'center', fontSize: 13 }}
+                        onClick={() => { setProduitPerte(p); setErreur(''); }}
+                      >
+                        Perte
                       </button>
                     </div>
                   )}
@@ -1563,6 +1608,53 @@ export function StockPage() {
               <div className="actions-modale">
                 <button type="button" className="btn" onClick={() => setModaleOuverte(false)}>Annuler</button>
                 <button type="submit" className="btn btn-principal">Ajouter</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {produitPerte && (
+        <div className="modale-fond" onClick={() => setProduitPerte(null)}>
+          <div className="modale" style={{ width: 460 }} onClick={(e) => e.stopPropagation()}>
+            <h2>Déclarer une perte</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 14 }}>
+              {produitPerte.name} — en stock : {produitPerte.is_weighted ? Number(produitPerte.quantity_in_stock).toFixed(1) : Math.round(Number(produitPerte.quantity_in_stock))}
+              . La perte sort du stock et devient une charge en comptabilité, valorisée au prix de revient.
+            </p>
+            <form onSubmit={handleDeclarerPerte}>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="perte-qte">Quantité perdue{produitPerte.is_weighted ? ' (kg)' : ''}</label>
+                <input
+                  id="perte-qte"
+                  type="number"
+                  min="0"
+                  step={produitPerte.is_weighted ? '0.001' : '1'}
+                  className="champ"
+                  value={perte.quantite}
+                  onChange={(e) => setPerte({ ...perte, quantite: e.target.value })}
+                  autoFocus
+                />
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="perte-motif">Motif</label>
+                <select id="perte-motif" className="champ" value={perte.motif} onChange={(e) => setPerte({ ...perte, motif: e.target.value })}>
+                  <option value="casse">Casse</option>
+                  <option value="peremption">Péremption</option>
+                  <option value="vol">Vol / démarque</option>
+                  <option value="autre">Autre</option>
+                </select>
+              </div>
+              <div className="champ-groupe">
+                <label className="etiquette" htmlFor="perte-note">Précision (facultatif)</label>
+                <input id="perte-note" className="champ" value={perte.note} onChange={(e) => setPerte({ ...perte, note: e.target.value })} />
+              </div>
+              {erreur && <div className="erreur">{erreur}</div>}
+              <div className="actions-modale">
+                <button type="button" className="btn" onClick={() => setProduitPerte(null)}>Annuler</button>
+                <button type="submit" className="btn btn-principal" disabled={enregistrementPerte}>
+                  {enregistrementPerte ? 'Enregistrement…' : 'Enregistrer la perte'}
+                </button>
               </div>
             </form>
           </div>

@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useModulesAccess } from '../hooks/useModulesAccess';
 import { PageModuleNonActive } from '../components/ModuleNonActive';
+import { BarreSections, GrilleKpi, BarresComparaison } from '../components/SectionsUi';
 import {
   ImpotsTab, ApercuPdf, exporterPdf, useDonnees,
   fmt, dateFr, aujourdhui, tableStyle, cellule, droite, enteteTable, boutonPetit,
@@ -563,16 +564,74 @@ function ProfilTab() {
   );
 }
 
+// Prochaine date limite de dépôt des déclarations mensuelles : le 15 du mois en cours, ou du mois suivant si passée.
+function prochaineEcheance() {
+  const auj = new Date();
+  const d = new Date(auj.getFullYear(), auj.getMonth(), 15);
+  if (auj.getDate() > 15) d.setMonth(d.getMonth() + 1);
+  const jours = Math.ceil((d - new Date(auj.getFullYear(), auj.getMonth(), auj.getDate())) / 86400000);
+  return { date: d.toLocaleDateString('fr-FR'), jours };
+}
+
+// Vue d'ensemble : ce que l'on doit à l'État, la prochaine échéance, le BRS et les déclarations du mois.
+function VueEnsembleFiscalite() {
+  const mois = moisPrecedent();
+  const [d, erreur] = useDonnees(async () => {
+    const [dues, brs, depots] = await Promise.all([
+      api.getAccountingStateDues(),
+      api.getBrsEntries(mois).catch(() => []),
+      api.getTaxFilings().catch(() => []),
+    ]);
+    return { dues, brs, depots };
+  }, []);
+
+  if (erreur) return <div className="erreur">{erreur}</div>;
+  if (!d) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
+
+  // Les cotisations (CSS, IPRES) se suivent dans la page Paie : ici seulement les impôts.
+  const impots = (d.dues.dettes || []).filter((x) => !['css', 'ipres'].includes(x.type));
+  const aPayer = impots.filter((x) => Number(x.du) > 0);
+  const totalDu = aPayer.reduce((t, x) => t + Number(x.du), 0);
+  const brsTotal = (d.brs || []).reduce((t, x) => t + Number(x.gross_ht || 0), 0);
+  const echeance = prochaineEcheance();
+  const nbDepots = Array.isArray(d.depots) ? d.depots.length : 0;
+
+  return (
+    <div>
+      <GrilleKpi cartes={[
+        { label: "Dû à l'État (impôts)", valeur: fmt(totalDu), unite: 'FCFA', detail: aPayer.length > 0 ? `${aPayer.length} impôt(s) à payer` : 'Rien à payer', ton: totalDu > 0 ? 'alerte' : undefined },
+        { label: 'Prochaine échéance', valeur: echeance.date, detail: echeance.jours === 0 ? "C'est aujourd'hui" : `dans ${echeance.jours} jour(s)`, ton: echeance.jours <= 3 ? 'alerte' : undefined },
+        { label: `BRS — ${libelleMois(mois)}`, valeur: String((d.brs || []).length), unite: 'versement(s)', detail: `Base : ${fmt(brsTotal)} FCFA` },
+        { label: 'Déclarations déposées', valeur: String(nbDepots), detail: 'enregistrées avec leur récépissé' },
+      ]} />
+
+      {aPayer.length > 0 ? (
+        <BarresComparaison
+          titre="Ce que vous devez, par impôt"
+          lignes={aPayer.map((x) => ({ label: x.label, valeur: Number(x.du), texte: `${fmt(x.du)} FCFA` }))}
+        />
+      ) : (
+        <p style={{ color: 'var(--encre-douce)', fontSize: 13.5 }}>Aucun impôt à payer pour le moment.</p>
+      )}
+      <p style={{ color: 'var(--encre-douce)', fontSize: 12.5 }}>
+        Les déclarations du mois précédent se préparent dans l'onglet « Déclarations » ; le paiement se fait dans « Impôts ».
+        La date limite indiquée est celle des déclarations mensuelles (le 15).
+      </p>
+    </div>
+  );
+}
+
 export function FiscalitePage() {
   const { user } = useAuth();
   const { loaded, accounting, fiscalite } = useModulesAccess();
-  const [onglet, setOnglet] = useState('declarations');
+  const [onglet, setOnglet] = useState('vue');
 
   if (user?.role !== 'manager') return <Navigate to="/" replace />;
   if (!loaded) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
   if (!accounting || !fiscalite) return <PageModuleNonActive nom="Fiscalité" />;
 
   const onglets = [
+    { id: 'vue', label: "Vue d'ensemble" },
     { id: 'declarations', label: 'Déclarations' },
     { id: 'impots', label: 'Impôts' },
     { id: 'profil', label: 'Profil fiscal' },
@@ -589,13 +648,8 @@ export function FiscalitePage() {
           </p>
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
-        {onglets.map((o) => (
-          <button key={o.id} type="button" className={`btn ${o.id === onglet ? 'btn-principal' : ''}`} onClick={() => setOnglet(o.id)}>
-            {o.label}
-          </button>
-        ))}
-      </div>
+      <BarreSections sections={onglets} actif={onglet} onChoisir={setOnglet} />
+      {onglet === 'vue' && <VueEnsembleFiscalite />}
       {onglet === 'declarations' && <DeclarationsTab />}
       {onglet === 'impots' && <ImpotsTab />}
       {onglet === 'profil' && <ProfilTab />}

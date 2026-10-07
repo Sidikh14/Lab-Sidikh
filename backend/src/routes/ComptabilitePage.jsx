@@ -4,7 +4,6 @@ import { PageModuleNonActive } from '../components/ModuleNonActive';
 import { api } from '../api/client';
 import { useAccountingAccess } from '../hooks/useAccountingAccess';
 import { useAuth } from '../context/AuthContext';
-import { BarreSections, GrilleKpi, BarresComparaison } from '../components/SectionsUi';
 
 // Module comptabilité (SYSCOHADA). Affiché uniquement si l'owner a donné
 // l'accès au commerçant : sinon la page redirige vers l'accueil et le lien
@@ -2608,71 +2607,9 @@ function OuvertureTab() {
   );
 }
 
-// ---------- Vue d'ensemble (mini tableau de bord) ----------
-function VueEnsembleCompta() {
-  const [d, erreur] = useDonnees(async () => {
-    const periode = { from: debutAnnee(), to: aujourdhui() };
-    const [resultat, bilan, flux, controles] = await Promise.all([
-      api.getAccountingIncomeStatement(periode),
-      api.getAccountingBalanceSheet({ date: aujourdhui() }),
-      api.getAccountingCashFlow(periode),
-      api.getAccountingControls().catch(() => null),
-    ]);
-    return { resultat, bilan, flux, controles };
-  }, []);
-
-  if (erreur) return <div className="erreur">{erreur}</div>;
-  if (!d) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
-
-  const { resultat, bilan, flux, controles } = d;
-  const produits = Number(resultat.produitsExploitation?.total || 0);
-  const charges = Number(resultat.chargesExploitation?.total || 0);
-  const net = Number(resultat.resultatNet || 0);
-  const aVerifier = controles ? controles.controls.filter((x) => !x.ok && !x.info) : [];
-  const annee = new Date().getFullYear();
-
-  return (
-    <div>
-      <GrilleKpi cartes={[
-        { label: `Chiffre d'affaires ${annee}`, valeur: fmt(resultat.chiffreAffaires), unite: 'FCFA' },
-        { label: `Résultat net ${annee}`, valeur: fmt(net), unite: 'FCFA', ton: net < 0 ? 'alerte' : undefined },
-        { label: 'Trésorerie', valeur: fmt(flux.closing), unite: 'FCFA', detail: `${flux.variation >= 0 ? '+' : ''}${fmt(flux.variation)} depuis le 1er janvier`, ton: flux.closing < 0 ? 'alerte' : undefined },
-        { label: 'Total du bilan', valeur: fmt(bilan.totalActif), unite: 'FCFA', detail: Math.abs(Number(bilan.ecart)) < 1 ? 'Actif = passif' : `Écart de ${fmt(bilan.ecart)}`, ton: Math.abs(Number(bilan.ecart)) >= 1 ? 'alerte' : undefined },
-        { label: 'Contrôles', valeur: controles ? (aVerifier.length === 0 ? 'Tout est bon' : `${aVerifier.length} à vérifier`) : '—', ton: aVerifier.length > 0 ? 'alerte' : undefined },
-      ]} />
-
-      <BarresComparaison
-        titre={`Activité depuis le 1er janvier ${annee}`}
-        lignes={[
-          { label: "Produits d'exploitation", valeur: produits, texte: `${fmt(produits)} FCFA` },
-          { label: "Charges d'exploitation", valeur: charges, texte: `${fmt(charges)} FCFA` },
-          { label: 'Résultat net', valeur: net, texte: `${fmt(net)} FCFA` },
-        ]}
-      />
-
-      {flux.sections.length > 0 && (
-        <BarresComparaison
-          titre="D'où vient et où va l'argent"
-          lignes={flux.sections.map((s) => ({ label: s.label, valeur: s.net, texte: `${s.net >= 0 ? '+' : ''}${fmt(s.net)} FCFA` }))}
-        />
-      )}
-
-      {aVerifier.length > 0 && (
-        <div style={{ border: '1px solid rgba(128,128,128,0.22)', borderRadius: 10, padding: '14px 16px' }}>
-          <h3 style={{ fontSize: 14, margin: '0 0 8px' }}>À vérifier</h3>
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: 'var(--encre-douce)' }}>
-            {aVerifier.map((x) => <li key={x.id}>{x.libelle} : {x.detail}</li>)}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ---------- Page ----------
 
 const ONGLETS = [
-  { id: 'vue', label: "Vue d'ensemble", composant: VueEnsembleCompta },
   { id: 'journal', label: 'Journal', composant: JournalTab },
   { id: 'immobilisations', label: 'Immobilisations', composant: ImmobilisationsTab },
   { id: 'financement', label: 'Capital et emprunts', composant: FinancementTab },
@@ -2692,7 +2629,7 @@ const ONGLETS = [
 
 export function ComptabilitePage() {
   const { enabled, loading } = useAccountingAccess();
-  const [onglet, setOnglet] = useState('vue');
+  const [onglet, setOnglet] = useState('journal');
   const [cle, setCle] = useState(0);
   const [synchro, setSynchro] = useState(null);
   const [enSynchro, setEnSynchro] = useState(false);
@@ -2745,7 +2682,13 @@ export function ComptabilitePage() {
       {synchro?.errors?.length > 0 && (
         <div className="erreur">Certaines données n'ont pas pu être reprises : {synchro.errors.join(', ')}.</div>
       )}
-      <BarreSections sections={ONGLETS} actif={onglet} onChoisir={setOnglet} />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+        {ONGLETS.map((o) => (
+          <button key={o.id} type="button" className={`btn ${o.id === onglet ? 'btn-principal' : ''}`} onClick={() => setOnglet(o.id)}>
+            {o.label}
+          </button>
+        ))}
+      </div>
       <Actif key={`${onglet}-${cle}`} />
     </div>
   );

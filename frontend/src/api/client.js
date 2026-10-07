@@ -198,6 +198,8 @@ export const api = {
     request(`/products/${id}/lots/${lotId}${warehouseId ? `?warehouseId=${warehouseId}` : ''}`, { method: 'DELETE' }),
   addProductUnit: (productId, data) =>
     request(`/products/${productId}/units`, { method: 'POST', body: JSON.stringify(data) }),
+  declareStockLoss: (productId, data) =>
+    request(`/products/${productId}/losses`, { method: 'POST', body: JSON.stringify(data) }),
   deleteProductUnit: (productId, unitId) =>
     request(`/products/${productId}/units/${unitId}`, { method: 'DELETE' }),
 
@@ -380,6 +382,29 @@ export const api = {
   getAccountingIncomeStatement: (params) => request(`/accounting/income-statement${qs(params)}`),
   getAccountingBalanceSheet: (params) => request(`/accounting/balance-sheet${qs(params)}`),
   syncAccounting: () => request('/accounting/sync', { method: 'POST' }),
+  getAccountingCashFlow: (params) => request(`/accounting/cash-flow${qs(params)}`),
+  getAccountingControls: () => request('/accounting/controls'),
+  getOpeningBalances: () => request('/accounting/opening-balances'),
+  saveOpeningBalances: (data) =>
+    request('/accounting/opening-balances', { method: 'POST', body: JSON.stringify(data) }),
+  getAttachments: (sourceType, sourceId) => request(`/accounting/attachments${qs({ sourceType, sourceId })}`),
+  deleteAttachment: (id) => request(`/accounting/attachments/${id}`, { method: 'DELETE' }),
+  previewAttachment: (id) => previewFile(`/accounting/attachments/${id}/file`),
+  // Le fichier part tel quel (image ou PDF) : les informations de la pièce sont dans l'adresse.
+  uploadAttachment: async (sourceType, sourceId, blob, fileName) => {
+    const token = getToken();
+    const response = await fetch(
+      `${API_URL}/accounting/attachments${qs({ sourceType, sourceId, fileName })}`,
+      { method: 'POST', headers: { 'Content-Type': blob.type, ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: blob }
+    );
+    if (response.status === 401) {
+      signalerSessionExpiree();
+      throw new Error('Votre session a expiré. Veuillez vous reconnecter.');
+    }
+    const body = response.headers.get('content-type')?.includes('application/json') ? await response.json() : null;
+    if (!response.ok) throw new Error(body?.error || `Erreur ${response.status}`);
+    return body;
+  },
   getAccountingGeneralLedger: (params) => request(`/accounting/general-ledger${qs(params)}`),
 
   // Natures de charges proposées dans « Nouvelle sortie de caisse » (page Caisse).

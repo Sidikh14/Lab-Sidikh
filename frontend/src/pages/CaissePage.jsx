@@ -170,6 +170,7 @@ export function CaissePage() {
     reason: '',
     expenseDate: dateAujourdHui(),
     chargeAccount: '',
+    tvaAmount: '',
     brsBeneficiaryName: '',
     brsBeneficiaryRef: '',
     sansRetenue: false,
@@ -217,6 +218,11 @@ export function CaissePage() {
     }
     // Loyer ou prestation : le bénéficiaire alimente automatiquement le registre BRS (retenue de 5 %).
     // Sans nature de charge (comptabilité non activée), un motif contenant « loyer » compte comme un loyer.
+    const tva = nature ? Number(nouvelleSortie.tvaAmount) || 0 : 0;
+    if (tva < 0 || (tva > 0 && tva >= Number(nouvelleSortie.amount))) {
+      setErreur('La TVA doit être inférieure au montant TTC.');
+      return;
+    }
     const natureBrs = nature?.brs || (!nature && /loyer/i.test(detail) ? 'loyer' : null);
     const retenue = Boolean(natureBrs) && !nouvelleSortie.sansRetenue;
     const beneficiaire = nouvelleSortie.brsBeneficiaryName.trim();
@@ -236,11 +242,12 @@ export function CaissePage() {
           detail,
           amount: Number(nouvelleSortie.amount),
           billDate: nouvelleSortie.expenseDate,
+          tvaAmount: tva || undefined,
           paymentMethod: nouvelleSortie.paymentMethod,
           warehouseId: activeWarehouseId,
           ...brs,
         });
-        setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui(), chargeAccount: '', brsBeneficiaryName: '', brsBeneficiaryRef: '', sansRetenue: false });
+        setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui(), chargeAccount: '', tvaAmount: '', brsBeneficiaryName: '', brsBeneficiaryRef: '', sansRetenue: false });
         setRefreshKey((k) => k + 1);
         return;
       }
@@ -249,6 +256,7 @@ export function CaissePage() {
         // Charge : le motif devient « Nature — détail » et la nature sert à l'imputation comptable.
         reason: nature ? (detail ? `${nature.label} — ${detail}` : nature.label) : detail,
         chargeAccount: nature ? nature.code : undefined,
+        tvaAmount: tva || undefined,
         amount: Number(nouvelleSortie.amount),
         warehouseId: activeWarehouseId,
         brsBeneficiaryName: undefined,
@@ -257,7 +265,7 @@ export function CaissePage() {
         brsNature: undefined,
         ...brs,
       });
-      setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui(), chargeAccount: '', brsBeneficiaryName: '', brsBeneficiaryRef: '', sansRetenue: false });
+      setNouvelleSortie({ paymentMethod: 'especes', amount: '', reason: '', expenseDate: dateAujourdHui(), chargeAccount: '', tvaAmount: '', brsBeneficiaryName: '', brsBeneficiaryRef: '', sansRetenue: false });
       chargerSorties();
     } catch (err) {
       setErreur(err.message);
@@ -562,6 +570,21 @@ export function CaissePage() {
                       <option key={n.code} value={n.code}>{n.label}</option>
                     ))}
                   </select>
+                </div>
+              )}
+              {nouvelleSortie.chargeAccount && (
+                <div className="champ-groupe">
+                  <label className="etiquette" htmlFor="s-tva">Dont TVA déductible (facultatif)</label>
+                  <input
+                    id="s-tva"
+                    type="number"
+                    min="0"
+                    step="1"
+                    className="champ"
+                    value={nouvelleSortie.tvaAmount}
+                    onChange={(e) => setNouvelleSortie({ ...nouvelleSortie, tvaAmount: e.target.value })}
+                    placeholder="Montant de TVA inclus dans le total payé"
+                  />
                 </div>
               )}
               {(natures.find((n) => n.code === nouvelleSortie.chargeAccount)?.brs || (!nouvelleSortie.chargeAccount && /loyer/i.test(nouvelleSortie.reason))) && (

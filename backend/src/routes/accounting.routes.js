@@ -145,10 +145,13 @@ router.get('/caisse/factures', accesCaisse, async (req, res) => {
 router.post('/caisse/factures', accesCaisse, async (req, res) => {
   const { chargeAccount, detail, paymentMethod, brsBeneficiaryName, brsBeneficiaryRef } = req.body;
   const montant = arrondi(req.body.amount);
+  // TVA déductible facultative : le montant saisi est TTC, la TVA en fait partie.
+  const tva = arrondi(req.body.tvaAmount || 0);
   const date = req.body.billDate || aujourdhui();
   const nature = NATURES_CHARGES.find((n) => n[1] === String(chargeAccount));
   if (!nature) return res.status(400).json({ error: 'Choisissez la nature de la charge.' });
   if (!(montant > 0)) return res.status(400).json({ error: 'Le montant doit être positif.' });
+  if (!(tva >= 0) || tva >= montant) return res.status(400).json({ error: 'La TVA doit être comprise entre 0 et le montant TTC.' });
   if (!['virement', 'a_payer'].includes(paymentMethod)) return res.status(400).json({ error: 'Mode invalide.' });
   if (!dateOk(date) || date > aujourdhui()) return res.status(400).json({ error: 'Date invalide.' });
   const libelle = `${nature[0]}${detail && String(detail).trim() ? ` — ${String(detail).trim().slice(0, 150)}` : ''}`;
@@ -161,16 +164,17 @@ router.post('/caisse/factures', accesCaisse, async (req, res) => {
     if (date < debut) throw erreurMetier(400, `Cette date est antérieure au début de la comptabilité (${debut}).`);
     await verifierExerciceOuvert(client, merchantId, date);
     await assurerCompte(client, merchantId, nature[1], nature[0]);
+    if (tva > 0) await assurerCompte(client, merchantId, '445', 'État, TVA récupérable sur achats');
     const natureBrs = NATURES_BRS[nature[1]] || null;
     const beneficiaire = natureBrs ? String(brsBeneficiaryName || '').trim().slice(0, 200) : '';
     const refBeneficiaire = beneficiaire && brsBeneficiaryRef ? String(brsBeneficiaryRef).trim().slice(0, 40) : null;
     const facture = await client.query(
       `INSERT INTO accounting_charge_bills (merchant_id, nature_account, label, amount, bill_date, warehouse_id, paid_at, paid_method, created_by,
-                                            brs_nature, brs_beneficiary_name, brs_beneficiary_ref)
-       VALUES ($1, $2, $3, $4, $5::date, $6, $7::date, $8, $9, $10, $11, $12) RETURNING id`,
+                                            brs_nature, brs_beneficiary_name, brs_beneficiary_ref, tva_amount)
+       VALUES ($1, $2, $3, $4, $5::date, $6, $7::date, $8, $9, $10, $11, $12, $13) RETURNING id`,
       [merchantId, nature[1], libelle, montant, date, UUID_RE.test(String(req.body.warehouseId || '')) ? req.body.warehouseId : null,
         paymentMethod === 'virement' ? date : null, paymentMethod === 'virement' ? 'virement' : null, req.user.id,
-        beneficiaire ? natureBrs : null, beneficiaire || null, refBeneficiaire]
+        beneficiaire ? natureBrs : null, beneficiaire || null, refBeneficiaire, tva]
     );
     // Virement : la somme est versée tout de suite, la retenue est donc due ce mois-ci.
     if (paymentMethod === 'virement' && beneficiaire) {
@@ -2422,12 +2426,13 @@ async function creerEnLot(client, merchantId, userId, type, lot) {
     const morceau = lot.slice(i, i + 500);
     const numeros = morceau.map(() => ++numero);
     const ins = await client.query(
-      `INSERT INTO accounting_entries (merchant_id, journal_id, entry_number, entry_date, reference, label, source_type, source_id, source_sig, created_by)
-       SELECT $1::uuid, t.j, t.n, t.d::date, t.r, t.l, $2::text, t.sid, t.sig, $3::uuid
-       FROM unnest($4::uuid[], $5::bigint[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[]) AS t(j, n, d, r, l, sid, sig)
+      `INSERT INTO accounting_entries (merchant_id, journal_id, entry_number, entry_date, reference, label, source_type, source_id, source_sig, created_by, period_marker)
+       SELECT $1::uuid, t.j, t.n, t.d::date, t.r, t.l, $2::text, t.sid, t.sig, $3::uuid, t.pm
+       FROM unnest($4::uuid[], $5::bigint[], $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], $11::text[]) AS t(j, n, d, r, l, sid, sig, pm)
        RETURNING id, source_id`,
       [merchantId, type, userId || null, morceau.map((e) => e.journalId), numeros, morceau.map((e) => e.date),
-        morceau.map((e) => e.reference || null), morceau.map((e) => e.label), morceau.map((e) => e.sourceId), morceau.map((e) => e.sig)]
+        morceau.map((e) => e.reference || null), morceau.map((e) => e.label), morceau.map((e) => e.sourceId), morceau.map((e) => e.sig),
+        morceau.map((e) => e.marqueur || null)]
     );
     const idParSource = new Map(ins.rows.map((r) => [r.source_id, r.id]));
     const entrees = [];
@@ -2453,6 +2458,96 @@ async function creerEnLot(client, merchantId, userId, type, lot) {
   }
 }
 
+// ---------- Périodes closes : corrections (D2) et ventes tardives (D10) ----------
+// Un exercice clôturé n'est jamais modifié. Quand un événement le concerne après la clôture
+// (annulation, modification, vente hors-ligne arrivée tard), la synchro écrit dans le premier
+// exercice ouvert une écriture « de correction » égale à l'écart entre ce qui devrait être
+// comptabilisé et ce qui l'est déjà. Une vente jamais comptabilisée y est marquée « vente tardive ».
+const TYPES_AVEC_CORRECTION = ['vente', 'retour', 'achat', 'perte', 'reglement_client', 'reglement_assureur', 'reglement_fournisseur', 'caisse', 'facture_charge', 'reglement_charge'];
+const SUFFIXE_CORRECTION = /~c\d{4}$/;
+
+// Écart entre les lignes voulues et les lignes déjà comptabilisées, compte par compte.
+// Renvoie les lignes de l'écriture de correction (vide si rien à corriger).
+function calculerCorrection(lignesVoulues, lignesFigees) {
+  const net = new Map();
+  for (const l of lignesVoulues) net.set(l.compte, arrondi((net.get(l.compte) || 0) + (Number(l.debit) || 0) - (Number(l.credit) || 0)));
+  for (const l of lignesFigees) net.set(l.compte, arrondi((net.get(l.compte) || 0) - (Number(l.debit) || 0) + (Number(l.credit) || 0)));
+  const lignes = [];
+  for (const [compte, ecart] of [...net.entries()].sort((x, y) => x[0].localeCompare(y[0]))) {
+    if (Math.abs(ecart) < 1) continue;
+    lignes.push(ecart > 0 ? { compte, debit: ecart, credit: 0 } : { compte, debit: 0, credit: -ecart });
+  }
+  const totalDebit = arrondi(lignes.reduce((t, l) => t + l.debit, 0));
+  const totalCredit = arrondi(lignes.reduce((t, l) => t + l.credit, 0));
+  return totalDebit === totalCredit ? lignes : [];
+}
+
+async function lireLignesFigees(client, merchantId, type, closes) {
+  if (closes.size === 0) return new Map();
+  const r = await client.query(
+    `SELECT e.source_id, a.code, COALESCE(SUM(l.debit), 0) AS d, COALESCE(SUM(l.credit), 0) AS c
+     FROM accounting_entries e
+     JOIN accounting_lines l ON l.entry_id = e.id
+     JOIN accounting_accounts a ON a.id = l.account_id
+     WHERE e.merchant_id = $1 AND e.source_type = $2 AND EXTRACT(YEAR FROM e.entry_date)::int = ANY($3::int[])
+     GROUP BY e.source_id, a.code`,
+    [merchantId, type, [...closes]]
+  );
+  const parBase = new Map();
+  for (const row of r.rows) {
+    const base = row.source_id.replace(SUFFIXE_CORRECTION, '');
+    if (!parBase.has(base)) parBase.set(base, []);
+    parBase.get(base).push({ compte: row.code, debit: Number(row.d), credit: Number(row.c) });
+  }
+  return parBase;
+}
+
+// Transforme les écritures voulues : celles qui touchent un exercice clos deviennent des corrections
+// datées du premier exercice ouvert.
+async function appliquerCorrections(client, merchantId, type, voulues, closes) {
+  if (closes.size === 0 || !TYPES_AVEC_CORRECTION.includes(type)) return voulues;
+  const figees = await lireLignesFigees(client, merchantId, type, closes);
+  const premiereOuverte = Math.max(...closes) + 1;
+  const dateReport = `${premiereOuverte}-01-01`;
+  const voulueParBase = new Map(voulues.map((v) => [v.sourceId, v]));
+  const resultat = [];
+  const traites = new Set();
+
+  for (const v of voulues) {
+    const dejaFige = figees.has(v.sourceId);
+    const dansExerciceClos = closes.has(Number(String(v.date).slice(0, 4)));
+    if (!dejaFige && !dansExerciceClos) {
+      resultat.push(v);
+      continue;
+    }
+    traites.add(v.sourceId);
+    const lignes = calculerCorrection(v.lignes, figees.get(v.sourceId) || []);
+    if (lignes.length === 0) continue;
+    resultat.push({
+      ...v,
+      sourceId: `${v.sourceId}~c${premiereOuverte}`,
+      date: dateReport,
+      label: dejaFige ? `Correction — ${v.label}` : v.label,
+      sig: `corr:${lignes.map((l) => `${l.compte}:${l.debit}:${l.credit}`).join('|')}`,
+      lignes,
+      marqueur: !dejaFige && type === 'vente' ? 'vente_tardive' : 'correction',
+    });
+  }
+  // Ce qui a été comptabilisé dans un exercice clos mais n'existe plus à la source (annulation) : on l'extourne.
+  for (const [base, lignesFigees] of figees) {
+    if (traites.has(base) || voulueParBase.has(base)) continue;
+    const lignes = calculerCorrection([], lignesFigees);
+    if (lignes.length === 0) continue;
+    resultat.push({
+      sourceId: `${base}~c${premiereOuverte}`, date: dateReport, journal: 'OD', reference: null,
+      label: `Correction — annulation (${base})`,
+      sig: `corr:${lignes.map((l) => `${l.compte}:${l.debit}:${l.credit}`).join('|')}`,
+      lignes, marqueur: 'correction',
+    });
+  }
+  return resultat;
+}
+
 // Compare les écritures voulues (calculées depuis la source) à celles déjà
 // générées : supprime ce qui n'existe plus ou a changé, crée ce qui manque.
 async function reconcilier(client, merchantId, userId, refs, type, voulues) {
@@ -2462,6 +2557,7 @@ async function reconcilier(client, merchantId, userId, refs, type, voulues) {
   );
   // Un exercice clôturé est figé : la synchro ne crée, ne modifie ni ne supprime rien dedans.
   const closes = await anneesCloturees(client, merchantId);
+  voulues = await appliquerCorrections(client, merchantId, type, voulues, closes);
   const parSource = new Map(voulues.map((v) => [v.sourceId, v]));
   const ok = new Set();
   const aSupprimer = [];
@@ -2603,7 +2699,7 @@ const REGLES_DEPENSES = [
 
 async function lireCaisse(client, merchantId, debut, ctx) {
   const r = await client.query(
-    `SELECT id::text AS id, movement_type, payment_method, amount, COALESCE(reason, '') AS reason, charge_account,
+    `SELECT id::text AS id, movement_type, payment_method, amount, COALESCE(reason, '') AS reason, charge_account, COALESCE(tva_amount, 0) AS tva,
             to_char(expense_date, 'YYYY-MM-DD') AS d
      FROM cash_expenses
      WHERE merchant_id = $1 AND COALESCE(amount, 0) > 0
@@ -2652,8 +2748,11 @@ async function lireCaisse(client, merchantId, debut, ctx) {
       const [compte, j] = tresorerie(mode === 'cheque' ? 'virement' : mode);
       journal = j;
       if (!regle && !compteCharge) nonClassees.push(row.reason);
-      lignes = [ligne(compteCharge || (regle ? regle[1] : '658'), montant, 0), ligne(compte, 0, montant)];
-      sigCharge = compteCharge ? `|${compteCharge}` : '';
+      const tva = Math.min(arrondi(row.tva), montant);
+      lignes = [ligne(compteCharge || (regle ? regle[1] : '658'), arrondi(montant - tva), 0)];
+      if (tva > 0) lignes.push(ligne('445', tva, 0));
+      lignes.push(ligne(compte, 0, montant));
+      sigCharge = `${compteCharge ? `|${compteCharge}` : ''}${tva > 0 ? `|v${tva}` : ''}`;
       nom = `Sortie de caisse : ${row.reason}`.slice(0, 120);
     }
     out.push({
@@ -2815,6 +2914,9 @@ async function lireVentes(client, merchantId, debut, ctx) {
             COALESCE(o.total_amount, 0) AS total, COALESCE(o.tva_amount, 0) AS tva,
             ${SQL_JOUR_TZ('COALESCE(o.validated_at, o.delivered_at, o.created_at)')} AS d,
             COALESCE((SELECT SUM(oi.quantity * COALESCE(oi.unit_cost, 0)) FROM order_items oi WHERE oi.order_id = o.id), 0) AS cogs,
+            COALESCE((SELECT SUM(CASE WHEN oi.quantity > 0 THEN LEAST(pr.quantity, oi.quantity) / oi.quantity * oi.line_total ELSE 0 END)
+                      FROM pending_reservations pr JOIN order_items oi ON oi.id = pr.order_item_id
+                      WHERE pr.order_id = o.id AND pr.status <> 'annulee' AND pr.delivered_at IS NULL), 0) AS differe,
             COALESCE((SELECT SUM(c.amount) FROM insurer_copayments c WHERE c.order_id = o.id), 0) AS copay,
             (SELECT c.payment_method FROM insurer_copayments c WHERE c.order_id = o.id LIMIT 1) AS copay_pm
      FROM orders o
@@ -2840,7 +2942,11 @@ async function lireVentes(client, merchantId, debut, ctx) {
     } else {
       lignes.push(ligne(tresorerie(modeNormalise(row.pm))[0], total, 0));
     }
-    if (ht > 0) lignes.push(ligne('701', 0, ht));
+    // Reliquat (D8) : la part de la vente dont la marchandise n'est pas encore livrée au client
+    // n'est pas du chiffre d'affaires : elle reste en acompte client (419) jusqu'à la livraison.
+    const differe = Math.min(arrondi(row.differe), ht);
+    if (ht - differe > 0) lignes.push(ligne('701', 0, arrondi(ht - differe)));
+    if (differe > 0) lignes.push(ligne('419', 0, differe));
     if (tva > 0) lignes.push(ligne('443', 0, tva));
     if (cogs > 0) {
       lignes.push(ligne('6031', cogs, 0));
@@ -2849,7 +2955,8 @@ async function lireVentes(client, merchantId, debut, ctx) {
     out.push({
       sourceId: row.id, date: row.d, journal: 'VT', reference: row.order_seq ? `V${row.order_seq}` : null,
       label: `Vente${row.order_seq ? ` n°${row.order_seq}` : ''}`,
-      sig: `${total}|${tva}|${row.pm}|${cogs}|${row.copay}|${row.d}|${row.client_id}|${row.insurer_id}|t3`,
+      // La signature ne change que s'il y a un reliquat non livré : les ventes existantes ne sont pas réécrites.
+      sig: `${total}|${tva}|${row.pm}|${cogs}|${row.copay}|${row.d}|${row.client_id}|${row.insurer_id}|t3${differe > 0 ? `|d${differe}` : ''}`,
       lignes,
     });
   }
@@ -3021,6 +3128,41 @@ async function lireReglementsFournisseurs(client, merchantId, debut, ctx) {
   return out;
 }
 
+// Pertes de stock (casse, péremption, lot détruit, vol) : le stock sort à son prix de revient et
+// la valeur perdue devient une charge (débit 6581, crédit 311). Valeur = quantité × coût unitaire
+// enregistré au moment de la perte, à défaut le prix de revient actuel du produit.
+async function lirePertes(client, merchantId, debut, ctx) {
+  const r = await client.query(
+    `SELECT sm.id::text AS id, sm.quantity, sm.reason, p.name AS produit,
+            COALESCE(sm.unit_cost, p.cost_price, 0) AS cout,
+            ${SQL_JOUR_TZ('sm.created_at')} AS d
+     FROM stock_movements sm
+     JOIN products p ON p.id = sm.product_id
+     WHERE sm.merchant_id = $1 AND sm.movement_type = 'perte' AND sm.created_at >= $2::date
+     ORDER BY sm.created_at`,
+    [merchantId, debut]
+  );
+  const out = [];
+  let sansCout = 0;
+  for (const row of r.rows) {
+    const valeur = arrondi(Number(row.quantity) * Number(row.cout));
+    if (!(valeur > 0)) {
+      sansCout += 1;
+      continue;
+    }
+    out.push({
+      sourceId: row.id, date: row.d, journal: 'OD', reference: 'PERTE',
+      label: `Perte de stock — ${row.produit}${row.reason ? ` (${String(row.reason).slice(0, 80)})` : ''}`,
+      sig: `${valeur}|${row.d}|p1`,
+      lignes: [ligne('6581', valeur, 0), ligne('311', 0, valeur)],
+    });
+  }
+  if (sansCout > 0) {
+    ctx.avertissements.push(`${sansCout} perte(s) de stock sans prix de revient : renseignez le prix de revient du produit pour qu'elles soient comptabilisées.`);
+  }
+  return out;
+}
+
 // Valeur du stock : le stock réel (quantités × prix de revient) est la
 // référence. Deux écritures automatiques font coïncider le compte 311 avec lui :
 //  - "ouverture" (figée) : stock déjà présent au début de la comptabilité,
@@ -3146,17 +3288,21 @@ const dateOuverture = (a, debut) => (a.acq < debut ? debut : a.acq);
 
 async function lireFacturesCharges(client, merchantId, debut) {
   const r = await client.query(
-    `SELECT id::text AS id, nature_account, label, amount, to_char(bill_date, 'YYYY-MM-DD') AS d
+    `SELECT id::text AS id, nature_account, label, amount, COALESCE(tva_amount, 0) AS tva, to_char(bill_date, 'YYYY-MM-DD') AS d
      FROM accounting_charge_bills WHERE merchant_id = $1 AND bill_date >= $2::date ORDER BY bill_date`,
     [merchantId, debut]
   );
   return r.rows.map((row) => {
     const montant = arrondi(row.amount);
+    const tva = Math.min(arrondi(row.tva), montant);
+    const lignes = [ligne(row.nature_account, arrondi(montant - tva), 0)];
+    if (tva > 0) lignes.push(ligne('445', tva, 0));
+    lignes.push(ligne('401', 0, montant));
     return {
       sourceId: row.id, date: row.d, journal: 'AC', reference: 'FAC',
       label: `Charge à payer : ${row.label}`.slice(0, 120),
-      sig: `${montant}|${row.nature_account}|${row.d}|${row.label}|t1`,
-      lignes: [ligne(row.nature_account, montant, 0), ligne('401', 0, montant)],
+      sig: `${montant}|${row.nature_account}|${row.d}|${row.label}|t1${tva > 0 ? `|v${tva}` : ''}`,
+      lignes,
     };
   });
 }
@@ -3387,6 +3533,7 @@ const SOURCES = [
   { type: 'cession', lire: lireCessions },
   { type: 'financement', lire: lireFinancement },
   { type: 'regularisation', lire: lireRegularisations },
+  { type: 'perte', lire: lirePertes },
   { type: 'stock', lire: lireStock },
 ];
 
@@ -3414,6 +3561,8 @@ async function synchroniserMaintenant(merchantId, userId) {
         await assurerCompte(client, merchantId, c.compte, c.nom);
         if (c.amort) await assurerCompte(client, merchantId, c.amort, c.nomAmort);
       }
+      await assurerCompte(client, merchantId, '6581', 'Pertes sur stocks (casse, péremption, vol)');
+      await assurerCompte(client, merchantId, '419', 'Clients, avances et acomptes reçus');
       PLAN_VERIFIE.add(merchantId);
     }
 
@@ -3679,6 +3828,264 @@ router.get('/trial-balance', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors du calcul de la balance.' });
+  }
+});
+
+// GET /accounting/cash-flow?from=&to= — tableau des flux de trésorerie (méthode directe, D4).
+// Calculé depuis les écritures qui touchent un compte de trésorerie (classe 5). Un virement entre deux
+// comptes de trésorerie s'annule dans une même écriture : il n'apparaît pas comme flux.
+const FLUX_LIGNES = {
+  vente: ['exploitation', "Encaissements des ventes"],
+  reglement_client: ['exploitation', 'Règlements reçus des clients'],
+  reglement_assureur: ['exploitation', 'Règlements reçus des assureurs'],
+  retour: ['exploitation', 'Remboursements aux clients'],
+  achat: ['exploitation', 'Achats de marchandises payés'],
+  reglement_fournisseur: ['exploitation', 'Règlements aux fournisseurs'],
+  caisse: ['exploitation', 'Charges payées depuis la caisse'],
+  facture_charge: ['exploitation', 'Charges payées'],
+  reglement_charge: ['exploitation', 'Règlements de factures de charges'],
+  paie: ['exploitation', 'Salaires et charges sociales'],
+  salaire: ['exploitation', 'Salaires'],
+  immobilisation: ['investissement', "Acquisitions d'immobilisations"],
+  cession: ['investissement', "Cessions d'immobilisations"],
+  financement: ['financement', 'Emprunts, apports et remboursements'],
+};
+const FLUX_SECTIONS = [['exploitation', "Flux liés à l'activité"], ['investissement', "Flux d'investissement"], ['financement', 'Flux de financement'], ['autres', 'Autres flux']];
+
+router.get('/cash-flow', async (req, res) => {
+  if (!verifierPeriode(req, res)) return;
+  if (!req.query.from || !req.query.to) return res.status(400).json({ error: 'La période (du … au …) est requise.' });
+  try {
+    const merchantId = req.user.merchantId;
+    const flux = await pool.query(
+      `SELECT t.source_type, COALESCE(SUM(GREATEST(t.net, 0)), 0) AS entrees, COALESCE(SUM(GREATEST(-t.net, 0)), 0) AS sorties
+       FROM (
+         SELECT e.id, e.source_type, SUM(l.debit - l.credit) AS net
+         FROM accounting_entries e
+         JOIN accounting_lines l ON l.entry_id = e.id
+         JOIN accounting_accounts a ON a.id = l.account_id
+         WHERE e.merchant_id = $1 AND e.entry_date BETWEEN $2::date AND $3::date AND a.code LIKE '5%'
+         GROUP BY e.id, e.source_type
+       ) t
+       WHERE t.net <> 0
+       GROUP BY t.source_type`,
+      [merchantId, req.query.from, req.query.to]
+    );
+    const ouverture = await pool.query(
+      `SELECT COALESCE(SUM(l.debit - l.credit), 0) AS solde
+       FROM accounting_lines l
+       JOIN accounting_entries e ON e.id = l.entry_id
+       JOIN accounting_accounts a ON a.id = l.account_id
+       WHERE e.merchant_id = $1 AND e.entry_date < $2::date AND a.code LIKE '5%'`,
+      [merchantId, req.query.from]
+    );
+    const sections = new Map(FLUX_SECTIONS.map(([id, label]) => [id, { id, label, lignes: [], entrees: 0, sorties: 0 }]));
+    for (const row of flux.rows) {
+      const [idSection, label] = FLUX_LIGNES[row.source_type] || ['autres', `Autres opérations (${row.source_type})`];
+      const entrees = arrondi(row.entrees);
+      const sorties = arrondi(row.sorties);
+      const s = sections.get(idSection);
+      s.lignes.push({ label, entrees, sorties, net: arrondi(entrees - sorties) });
+      s.entrees = arrondi(s.entrees + entrees);
+      s.sorties = arrondi(s.sorties + sorties);
+    }
+    const liste = [...sections.values()].filter((s) => s.lignes.length > 0).map((s) => ({ ...s, net: arrondi(s.entrees - s.sorties) }));
+    const variation = arrondi(liste.reduce((t, s) => t + s.net, 0));
+    const ouvertureSolde = arrondi(ouverture.rows[0].solde);
+    res.json({ from: req.query.from, to: req.query.to, opening: ouvertureSolde, variation, closing: arrondi(ouvertureSolde + variation), sections: liste });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du calcul des flux de trésorerie.' });
+  }
+});
+
+// ---------- Contrôles de cohérence (D1, D2, D10) ----------
+// GET /accounting/controls — vérifie que la comptabilité tient debout : équilibre des écritures,
+// stock comptable = stock réel, produits sans prix de revient, ventes tardives et corrections.
+router.get('/controls', async (req, res) => {
+  try {
+    const merchantId = req.user.merchantId;
+    const q = (sql, params = [merchantId]) => pool.query(sql, params).then((r) => r.rows[0]);
+    const [equilibre, desequilibrees, stockCompta, stockReel, sansCout, tardives, corrections, pertesSansCout] = await Promise.all([
+      q(`SELECT COALESCE(SUM(debit), 0) AS d, COALESCE(SUM(credit), 0) AS c FROM accounting_lines WHERE merchant_id = $1`),
+      q(`SELECT COUNT(*) AS n FROM (SELECT entry_id FROM accounting_lines WHERE merchant_id = $1 GROUP BY entry_id HAVING ROUND(SUM(debit) - SUM(credit), 2) <> 0) t`),
+      q(`SELECT COALESCE(SUM(l.debit - l.credit), 0) AS v FROM accounting_lines l JOIN accounting_accounts a ON a.id = l.account_id WHERE l.merchant_id = $1 AND a.code = '311'`),
+      q(`SELECT COALESCE(SUM(ps.quantity_in_stock * COALESCE(p.cost_price, 0)), 0) AS v FROM product_stock ps JOIN products p ON p.id = ps.product_id WHERE ps.merchant_id = $1`),
+      q(`SELECT COUNT(*) AS n FROM product_stock ps JOIN products p ON p.id = ps.product_id WHERE ps.merchant_id = $1 AND ps.quantity_in_stock > 0 AND COALESCE(p.cost_price, 0) = 0`),
+      q(`SELECT COUNT(*) AS n FROM accounting_entries WHERE merchant_id = $1 AND period_marker = 'vente_tardive'`),
+      q(`SELECT COUNT(*) AS n FROM accounting_entries WHERE merchant_id = $1 AND period_marker = 'correction'`),
+      q(`SELECT COUNT(*) AS n FROM stock_movements sm JOIN products p ON p.id = sm.product_id WHERE sm.merchant_id = $1 AND sm.movement_type = 'perte' AND COALESCE(sm.unit_cost, p.cost_price, 0) = 0`),
+    ]);
+    const ecartBalance = arrondi(equilibre.d - equilibre.c);
+    const ecartStock = arrondi(stockCompta.v - stockReel.v);
+    const controles = [
+      { id: 'balance', libelle: 'Total des débits = total des crédits', ok: ecartBalance === 0, detail: ecartBalance === 0 ? 'Équilibrée.' : `Écart de ${ecartBalance} FCFA.` },
+      { id: 'ecritures', libelle: 'Chaque écriture est équilibrée', ok: Number(desequilibrees.n) === 0, detail: Number(desequilibrees.n) === 0 ? 'Aucune écriture déséquilibrée.' : `${desequilibrees.n} écriture(s) déséquilibrée(s).` },
+      { id: 'stock', libelle: 'Stock comptable (311) = stock réel valorisé', ok: Math.abs(ecartStock) < 1, detail: Math.abs(ecartStock) < 1 ? 'Concordant.' : `Écart de ${ecartStock} FCFA (la prochaine synchronisation le corrige).` },
+      { id: 'prix_revient', libelle: 'Produits en stock avec un prix de revient', ok: Number(sansCout.n) === 0, detail: Number(sansCout.n) === 0 ? 'Tous renseignés.' : `${sansCout.n} produit(s) en stock sans prix de revient.` },
+      { id: 'pertes', libelle: 'Pertes de stock valorisées', ok: Number(pertesSansCout.n) === 0, detail: Number(pertesSansCout.n) === 0 ? 'Toutes valorisées.' : `${pertesSansCout.n} perte(s) non comptabilisée(s) faute de prix de revient.` },
+      { id: 'tardives', libelle: 'Ventes tardives (arrivées après clôture)', ok: Number(tardives.n) === 0, info: true, detail: Number(tardives.n) === 0 ? 'Aucune.' : `${tardives.n} vente(s) rattachée(s) à un exercice ouvert.` },
+      { id: 'corrections', libelle: 'Écritures de correction (après clôture)', ok: Number(corrections.n) === 0, info: true, detail: Number(corrections.n) === 0 ? 'Aucune.' : `${corrections.n} correction(s).` },
+    ];
+    res.json({ controls: controles, allOk: controles.filter((c) => !c.info).every((c) => c.ok) });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors des contrôles comptables.');
+  }
+});
+
+// ---------- Soldes d'ouverture (D6) : assistant à faire une seule fois ----------
+const COMPTES_OUVERTURE = {
+  caisse: ['571', 'Caisse'], wave: ['5211', 'Wave'], orange_money: ['5212', 'Orange Money'], banque: ['521', 'Banque'],
+  creances: ['411', 'Clients'], dettes: ['401', 'Fournisseurs'], capital: ['101', 'Capital social'],
+};
+
+router.get('/opening-balances', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT to_char(opening_date, 'YYYY-MM-DD') AS opening_date, balances, validated_at FROM accounting_opening_balances WHERE merchant_id = $1`,
+      [req.user.merchantId]
+    );
+    res.json({ validated: r.rows.length > 0, ...(r.rows[0] || {}) });
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de la lecture des soldes d'ouverture.");
+  }
+});
+
+// POST /accounting/opening-balances { openingDate, balances: { caisse, wave, orange_money, banque, creances, dettes, capital } }
+// Écrit une seule écriture d'ouverture ; le solde restant va au report à nouveau (121). Le stock et les
+// immobilisations ne se saisissent pas ici : le stock vient des quantités réelles, les immobilisations de leur module.
+router.post('/opening-balances', async (req, res) => {
+  const { openingDate, balances } = req.body || {};
+  if (!dateOk(openingDate)) return res.status(400).json({ error: "Date d'ouverture invalide." });
+  const montants = {};
+  for (const cle of Object.keys(COMPTES_OUVERTURE)) {
+    const v = balances && balances[cle] !== undefined && balances[cle] !== '' ? Number(balances[cle]) : 0;
+    if (!Number.isFinite(v) || v < 0) return res.status(400).json({ error: `Montant invalide : ${COMPTES_OUVERTURE[cle][1]}.` });
+    montants[cle] = arrondi(v);
+  }
+  if (Object.values(montants).every((v) => v === 0)) return res.status(400).json({ error: 'Saisissez au moins un solde.' });
+
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const deja = await client.query(`SELECT 1 FROM accounting_opening_balances WHERE merchant_id = $1`, [merchantId]);
+    if (deja.rows.length > 0) throw erreurMetier(400, "Les soldes d'ouverture ont déjà été validés : ils ne peuvent plus être modifiés.");
+    await verifierExerciceOuvert(client, merchantId, openingDate);
+
+    const journal = await client.query(`SELECT id FROM accounting_journals WHERE merchant_id = $1 AND code = 'OD'`, [merchantId]);
+    if (journal.rows.length === 0) throw erreurMetier(400, "Journal des opérations diverses introuvable.");
+
+    // Débit : trésorerie et créances ; crédit : dettes et capital ; le reste équilibre sur le report à nouveau.
+    const debit = ['caisse', 'wave', 'orange_money', 'banque', 'creances'];
+    const lignes = [];
+    for (const cle of Object.keys(COMPTES_OUVERTURE)) {
+      if (montants[cle] === 0) continue;
+      const [code, nom] = COMPTES_OUVERTURE[cle];
+      const compteId = await assurerCompte(client, merchantId, code, nom);
+      lignes.push(debit.includes(cle) ? { compteId, debit: montants[cle], credit: 0 } : { compteId, debit: 0, credit: montants[cle] });
+    }
+    const totalDebit = arrondi(lignes.reduce((t, l) => t + l.debit, 0));
+    const totalCredit = arrondi(lignes.reduce((t, l) => t + l.credit, 0));
+    const reste = arrondi(totalDebit - totalCredit);
+    if (reste !== 0) {
+      const reportId = await assurerCompte(client, merchantId, '121', 'Report à nouveau');
+      lignes.push(reste > 0 ? { compteId: reportId, debit: 0, credit: reste } : { compteId: reportId, debit: -reste, credit: 0 });
+    }
+
+    const num = await client.query(`SELECT COALESCE(MAX(entry_number), 0) + 1 AS n FROM accounting_entries WHERE merchant_id = $1`, [merchantId]);
+    const entree = await client.query(
+      `INSERT INTO accounting_entries (merchant_id, journal_id, entry_number, entry_date, reference, label, source_type, source_id, created_by)
+       VALUES ($1, $2, $3, $4::date, 'OUVERTURE', $5, 'ouverture_solde', 'ouverture', $6) RETURNING id`,
+      [merchantId, journal.rows[0].id, Number(num.rows[0].n), openingDate, "Soldes d'ouverture", req.user.id]
+    );
+    for (const l of lignes) {
+      await client.query(
+        `INSERT INTO accounting_lines (entry_id, merchant_id, account_id, debit, credit, label) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [entree.rows[0].id, merchantId, l.compteId, l.debit, l.credit, "Soldes d'ouverture"]
+      );
+    }
+    await client.query(
+      `INSERT INTO accounting_opening_balances (merchant_id, opening_date, balances, validated_by) VALUES ($1, $2::date, $3::jsonb, $4)`,
+      [merchantId, openingDate, JSON.stringify(montants), req.user.id]
+    );
+    await client.query('COMMIT');
+    res.status(201).json({ entryId: entree.rows[0].id, carriedForward: reste });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, "Erreur lors de l'enregistrement des soldes d'ouverture.");
+  } finally {
+    client.release();
+  }
+});
+
+// ---------- Pièces jointes (D5) ----------
+// Corps envoyé tel quel (image ou PDF), métadonnées dans l'URL : cela évite la limite de taille du
+// parseur JSON global. 1,5 Mo maximum par pièce (l'image est compressée côté navigateur), 50 Mo par commerçant.
+const PIECES_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+const PIECE_MAX_OCTETS = 1572864;
+const PIECES_QUOTA_OCTETS = 50 * 1024 * 1024;
+
+router.post('/attachments', express.raw({ type: PIECES_TYPES, limit: '2mb' }), async (req, res) => {
+  const { sourceType, sourceId, fileName } = req.query;
+  const mime = String(req.headers['content-type'] || '').split(';')[0].trim();
+  if (!sourceType || !sourceId || !fileName) return res.status(400).json({ error: 'Pièce jointe : source et nom du fichier requis.' });
+  if (!PIECES_TYPES.includes(mime)) return res.status(400).json({ error: 'Format non accepté (JPEG, PNG, WebP ou PDF).' });
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) return res.status(400).json({ error: 'Fichier vide.' });
+  if (req.body.length > PIECE_MAX_OCTETS) return res.status(413).json({ error: 'Fichier trop volumineux (1,5 Mo maximum).' });
+  try {
+    const total = await pool.query(`SELECT COALESCE(SUM(size_bytes), 0) AS t FROM accounting_attachments WHERE merchant_id = $1`, [req.user.merchantId]);
+    if (Number(total.rows[0].t) + req.body.length > PIECES_QUOTA_OCTETS) {
+      return res.status(413).json({ error: 'Espace de stockage des pièces jointes plein (50 Mo).' });
+    }
+    const r = await pool.query(
+      `INSERT INTO accounting_attachments (merchant_id, source_type, source_id, file_name, mime_type, size_bytes, content, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, file_name, mime_type, size_bytes, created_at`,
+      [req.user.merchantId, String(sourceType).slice(0, 40), String(sourceId).slice(0, 80), String(fileName).slice(0, 200), mime, req.body.length, req.body, req.user.id]
+    );
+    res.status(201).json(r.rows[0]);
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de l'enregistrement de la pièce jointe.");
+  }
+});
+
+router.get('/attachments', async (req, res) => {
+  const { sourceType, sourceId } = req.query;
+  if (!sourceType || !sourceId) return res.status(400).json({ error: 'Source requise.' });
+  try {
+    const r = await pool.query(
+      `SELECT id, file_name, mime_type, size_bytes, created_at FROM accounting_attachments
+       WHERE merchant_id = $1 AND source_type = $2 AND source_id = $3 ORDER BY created_at DESC`,
+      [req.user.merchantId, String(sourceType), String(sourceId)]
+    );
+    res.json(r.rows);
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la lecture des pièces jointes.');
+  }
+});
+
+router.get('/attachments/:id/file', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Identifiant invalide.' });
+  try {
+    const r = await pool.query(`SELECT file_name, mime_type, content FROM accounting_attachments WHERE id = $1 AND merchant_id = $2`, [req.params.id, req.user.merchantId]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Pièce introuvable.' });
+    res.setHeader('Content-Type', r.rows[0].mime_type);
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(r.rows[0].file_name)}"`);
+    res.send(r.rows[0].content);
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la lecture de la pièce.');
+  }
+});
+
+router.delete('/attachments/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(400).json({ error: 'Identifiant invalide.' });
+  try {
+    const r = await pool.query(`DELETE FROM accounting_attachments WHERE id = $1 AND merchant_id = $2 RETURNING id`, [req.params.id, req.user.merchantId]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Pièce introuvable.' });
+    res.status(204).send();
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la suppression de la pièce.');
   }
 });
 

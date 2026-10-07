@@ -388,6 +388,11 @@ router.get('/closings', requireRole('manager', 'gerant'), async (req, res) => {
 // POST /cash/expenses — enregistrer une sortie de caisse manuelle
 router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   const { paymentMethod, amount, reason, expenseDate, warehouseId: warehouseIdInput, chargeAccount, brsBeneficiaryName, brsBeneficiaryRef, brsNature } = req.body;
+  // TVA déductible facultative (montant TTC saisi, TVA incluse), seulement avec une nature de charge.
+  const tvaSortie = Math.round(Number(req.body.tvaAmount) || 0);
+  if (tvaSortie < 0 || (tvaSortie > 0 && tvaSortie >= Number(amount))) {
+    return res.status(400).json({ error: 'La TVA doit être comprise entre 0 et le montant TTC.' });
+  }
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
   }
@@ -417,6 +422,9 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
       }
       compteCharge = code;
     }
+    if (tvaSortie > 0 && !compteCharge) {
+      return res.status(400).json({ error: 'Choisissez la nature de la charge pour déclarer la TVA.' });
+    }
 
     // Même règle que pour un achat de stock au comptant : une sortie
     // manuelle ne doit jamais rendre une caisse négative.
@@ -437,9 +445,9 @@ router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
     try {
       await client.query('BEGIN');
       result = await client.query(
-        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id, charge_account)
-         VALUES ($1, $2, $3, $4, $5, $6, 'sortie', $7, $8) RETURNING *`,
-        [req.user.merchantId, req.user.id, paymentMethod, Number(amount), reason, dateSortie, warehouseId, compteCharge]
+        `INSERT INTO cash_expenses (merchant_id, user_id, payment_method, amount, reason, expense_date, movement_type, warehouse_id, charge_account, tva_amount)
+         VALUES ($1, $2, $3, $4, $5, $6, 'sortie', $7, $8, $9) RETURNING *`,
+        [req.user.merchantId, req.user.id, paymentMethod, Number(amount), reason, dateSortie, warehouseId, compteCharge, tvaSortie]
       );
       if (natureBrs && beneficiaire) {
         await client.query(

@@ -1353,11 +1353,95 @@ router.get('/:id/lots', async (req, res) => {
   }
 });
 
+// POST /products/:id/losses — déclare une perte de stock (casse, péremption, vol…).
+// Le stock diminue, un mouvement « perte » valorisé au prix de revient est enregistré, et la
+// comptabilité en tire une charge « pertes sur stocks » (débit 6581, crédit 311).
+// Les lots (pharmacie) sont consommés du plus proche de la péremption au plus lointain.
+const MOTIFS_PERTE = { casse: 'Casse', peremption: 'Péremption', vol: 'Vol / démarque', autre: 'Autre perte' };
+router.post('/:id/losses', requireRole('manager', 'gerant'), async (req, res) => {
+  const { quantity, reason, note, warehouseId: warehouseIdInput } = req.body;
+  if (typeof quantity !== 'number' || !(quantity > 0)) {
+    return res.status(400).json({ error: 'La quantité perdue doit être un nombre positif.' });
+  }
+  if (!MOTIFS_PERTE[reason]) {
+    return res.status(400).json({ error: 'Motif de perte invalide (casse, péremption, vol ou autre).' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const warehouseId = await resolveWarehouseId(req, client, warehouseIdInput);
+
+    const stockResult = await client.query(
+      `SELECT ps.quantity_in_stock, p.name, p.is_weighted, p.cost_price
+       FROM product_stock ps JOIN products p ON p.id = ps.product_id
+       WHERE ps.product_id = $1 AND ps.warehouse_id = $2 AND ps.merchant_id = $3
+       FOR UPDATE OF ps`,
+      [req.params.id, warehouseId, req.user.merchantId]
+    );
+    const stock = stockResult.rows[0];
+    if (!stock) throw { status: 404, message: 'Produit introuvable dans cette boutique.' };
+    if (!stock.is_weighted && !Number.isInteger(quantity)) {
+      throw { status: 400, message: `${stock.name} n'est pas vendu au poids : la quantité doit être un nombre entier.` };
+    }
+    if (Number(stock.quantity_in_stock) < quantity) {
+      throw { status: 400, message: `Stock insuffisant : ${Number(stock.quantity_in_stock)} en stock, ${quantity} déclaré(s) perdu(s).` };
+    }
+
+    await client.query(
+      `UPDATE product_stock SET quantity_in_stock = quantity_in_stock - $1 WHERE product_id = $2 AND warehouse_id = $3`,
+      [quantity, req.params.id, warehouseId]
+    );
+
+    // Lots : on retire d'abord ce qui périme le plus tôt.
+    let reste = quantity;
+    const lots = await client.query(
+      `SELECT id, quantity FROM product_lots
+       WHERE product_id = $1 AND warehouse_id = $2 AND merchant_id = $3 AND quantity > 0
+       ORDER BY expiry_date ASC NULLS LAST FOR UPDATE`,
+      [req.params.id, warehouseId, req.user.merchantId]
+    );
+    for (const lot of lots.rows) {
+      if (reste <= 0) break;
+      const retire = Math.min(Number(lot.quantity), reste);
+      await client.query(`UPDATE product_lots SET quantity = quantity - $1 WHERE id = $2`, [retire, lot.id]);
+      reste -= retire;
+    }
+
+    const detail = String(note || '').trim().slice(0, 200);
+    await client.query(
+      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id, unit_cost)
+       VALUES ($1, $2, $3, 'perte', $4, $5, $6, $7)`,
+      [req.user.merchantId, req.params.id, req.user.id, quantity,
+        `${MOTIFS_PERTE[reason]}${detail ? ` — ${detail}` : ''}`, warehouseId, stock.cost_price]
+    );
+
+    await client.query('COMMIT');
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'stock_loss',
+      description: `a déclaré une perte de stock (${MOTIFS_PERTE[reason].toLowerCase()})`,
+    });
+    res.status(201).json({
+      newStock: Number(stock.quantity_in_stock) - quantity,
+      lossValue: Math.round(quantity * (Number(stock.cost_price) || 0)),
+      missingCost: !(Number(stock.cost_price) > 0),
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la déclaration de la perte.' });
+  } finally {
+    client.release();
+  }
+});
+
 // DELETE /products/:id/lots/:lotId — détruit (met au rebut) un lot périmé.
 // Contrairement à une simple suppression, ça décrémente aussi le stock
 // affiché (product_stock) de la quantité détruite, sinon le lot périmé
 // continuerait à gonfler le stock affiché indéfiniment — juste bloqué à
-// la vente. Trace conservée via un mouvement de stock ('ajustement').
+// la vente. Trace conservée via un mouvement de stock ('perte').
 // Le lot n'est jamais vraiment vendable une fois périmé : on ne permet
 // la destruction que d'un lot déjà périmé (expiry_date < aujourd'hui),
 // pour éviter qu'un lot valide soit détruit par erreur au lieu d'être
@@ -1405,8 +1489,8 @@ router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), async (req, 
     );
 
     await client.query(
-      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id)
-       VALUES ($1, $2, $3, 'ajustement', $4, $5, $6)`,
+      `INSERT INTO stock_movements (merchant_id, product_id, user_id, movement_type, quantity, reason, warehouse_id, unit_cost)
+       VALUES ($1, $2, $3, 'perte', $4, $5, $6, (SELECT cost_price FROM products WHERE id = $2 AND merchant_id = $1))`,
       [req.user.merchantId, req.params.id, req.user.id, quantiteDetruite,
         `Lot périmé détruit${lot.lot_number ? ` (n° ${lot.lot_number})` : ''} — péremption ${lot.expiry_date.toISOString().slice(0, 10)}`,
         warehouseId]
