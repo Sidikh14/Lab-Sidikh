@@ -3,7 +3,7 @@ const PDFDocument = require('pdfkit');
 const { getSoldeActuel, LABEL_METHODE } = require('../utils/cashBalance');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, aRole } = require('../middleware/roles');
 const { requireModule } = require('../middleware/modules');
 const { requireOwnerModule } = require('../middleware/ownerModules');
 const { logActivity } = require('../utils/activityLog');
@@ -25,7 +25,8 @@ const aujourdhui = () => new Date().toISOString().slice(0, 10);
 // n'est pas activé par l'owner ou si le compte n'est pas manager.
 router.get('/access', async (req, res) => {
   try {
-    if (req.user.role !== 'manager' || !req.user.merchantId) return res.json({ enabled: false });
+    // Le manager et le comptable accèdent à la comptabilité (le comptable peut cumuler d'autres rôles).
+    if (!aRole(req.user, 'manager', 'comptable') || !req.user.merchantId) return res.json({ enabled: false });
     const result = await pool.query('SELECT accounting_enabled FROM merchants WHERE id = $1', [req.user.merchantId]);
     res.json({ enabled: result.rows[0]?.accounting_enabled === true });
   } catch (err) {
@@ -269,6 +270,80 @@ async function verifierCaisse(req, client, merchantId, warehouseId, mode, montan
   }
 }
 
+// ---------- Rappels fiscaux (tableau de bord du manager, du gérant et du comptable) ----------
+// Pour chacun des trois derniers mois, on liste les déclarations mensuelles à déposer (TVA, retenues sur
+// salaires, BRS) qui ne sont pas encore enregistrées comme déposées, dès 10 jours avant leur échéance
+// (le 15 du mois suivant, reportée au lundi si elle tombe un week-end).
+const AVANCE_RAPPEL_JOURS = 10;
+const JOURS_URGENT = 3;
+
+const moisPrecedents = (jour, n) => {
+  const [a, m] = jour.split('-').map(Number);
+  return Array.from({ length: n }, (_, i) => {
+    const d = new Date(Date.UTC(a, m - 2 - i, 1));
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  });
+};
+const ecartJours = (de, a) => Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${de}T00:00:00Z`)) / 86400000);
+
+function calculerAlertesFiscales({ jour, regime, depots, activite }) {
+  const alertes = [];
+  for (const mois of moisPrecedents(jour, 3)) {
+    const limite = limiteDepot(mois);
+    const joursRestants = ecartJours(jour, limite);
+    if (joursRestants > AVANCE_RAPPEL_JOURS) continue;
+    const declarations = [
+      { kind: 'tva', depot: 'tva', label: 'Déclaration de TVA', concerne: regime !== 'cgu' && activite.tva.has(mois) },
+      { kind: 'salaires', depot: 'ir', label: 'Retenues sur salaires (IR, TRIMF, CFCE)', concerne: activite.salaires.has(mois) },
+      { kind: 'brs', depot: 'brs', label: 'Déclaration de la BRS (retenue à la source)', concerne: activite.brs.has(mois) },
+    ];
+    for (const d of declarations) {
+      if (!d.concerne || depots.has(`${d.depot}|${mois}`)) continue;
+      alertes.push({
+        id: `${d.kind}-${mois}`, kind: d.kind, label: d.label, periode: libellePeriode(mois), mois, limite, joursRestants,
+        statut: joursRestants < 0 ? 'retard' : joursRestants <= JOURS_URGENT ? 'urgent' : 'proche',
+      });
+    }
+  }
+  return alertes.sort((x, y) => x.joursRestants - y.joursRestants);
+}
+
+// GET /accounting/fiscal-alerts — ouvert au manager, au gérant et au comptable (lecture seule).
+router.get('/fiscal-alerts', async (req, res) => {
+  try {
+    const vide = { enabled: false, alertes: [] };
+    if (!aRole(req.user, 'manager', 'gerant', 'comptable') || !req.user.merchantId) return res.json(vide);
+    const merchantId = req.user.merchantId;
+    const actif = await pool.query('SELECT accounting_enabled FROM merchants WHERE id = $1', [merchantId]);
+    if (actif.rows[0]?.accounting_enabled !== true) return res.json(vide);
+
+    const jour = aujourdhui();
+    const mois = moisPrecedents(jour, 3);
+    const debut = `${mois[mois.length - 1]}-01`;
+    const [profil, deposes, ledger, brs] = await Promise.all([
+      lireProfilFiscal(pool, merchantId),
+      pool.query(`SELECT kind, period FROM accounting_tax_filings WHERE merchant_id = $1 AND kind IN ('tva', 'brs', 'ir') AND period = ANY($2)`, [merchantId, mois]),
+      pool.query(
+        `SELECT DISTINCT to_char(e.entry_date, 'YYYY-MM') AS m, a.code
+         FROM accounting_lines l JOIN accounting_entries e ON e.id = l.entry_id JOIN accounting_accounts a ON a.id = l.account_id
+         WHERE l.merchant_id = $1 AND a.code IN ('443', '445', '447', '442') AND e.entry_date >= $2::date AND e.source_type <> 'paiement_etat'`,
+        [merchantId, debut]
+      ),
+      pool.query(`SELECT DISTINCT to_char(paid_on, 'YYYY-MM') AS m FROM accounting_brs_entries WHERE merchant_id = $1 AND paid_on >= $2::date`, [merchantId, debut]),
+    ]);
+    const activite = { tva: new Set(), salaires: new Set(), brs: new Set(brs.rows.map((r) => r.m)) };
+    for (const r of ledger.rows) (['443', '445'].includes(r.code) ? activite.tva : activite.salaires).add(r.m);
+
+    res.json({
+      enabled: true,
+      alertes: calculerAlertesFiscales({ jour, regime: profil.regime, depots: new Set(deposes.rows.map((r) => `${r.kind}|${r.period}`)), activite }),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du calcul des rappels fiscaux.' });
+  }
+});
+
 // ---------- Pièces jointes des sorties de caisse et des factures de charges ----------
 // Exception à la règle « manager uniquement » : le gérant et le caissier qui règlent des charges peuvent
 // joindre un justificatif aux sorties de caisse de leur lieu et aux factures de charges, et supprimer
@@ -279,7 +354,7 @@ const SOURCES_PIECES_CAISSE = {
 };
 
 async function piecesCaisse(req, res, next) {
-  if (req.user.role === 'manager') return next(); // le manager suit le chemin habituel
+  if (aRole(req.user, 'manager', 'comptable')) return next(); // manager et comptable suivent le chemin habituel
   const refus = (msg = 'Les pièces jointes de la comptabilité sont réservées au manager.') => res.status(403).json({ error: msg });
   try {
     if (!ROLES_CAISSE.includes(req.user.role) || !req.user.merchantId) return refus('Accès refusé.');
@@ -322,7 +397,7 @@ router.use('/attachments', piecesCaisse);
 
 // Tout le reste : manager uniquement ET module activé par l'owner (sauf pièces de caisse validées ci-dessus).
 const sauf = (drapeau, garde) => (req, res, next) => (req[drapeau] ? next() : garde(req, res, next));
-router.use(sauf('pieceCaisse', requireRole('manager')));
+router.use(sauf('pieceCaisse', requireRole('manager', 'comptable')));
 router.use(sauf('pieceCaisse', requireModule('comptabilite')));
 // Impôts, cotisations et paiements à l'État : module Fiscalité (activé séparément par l'owner).
 router.use(['/state-dues', '/state-payments', '/tax-settings', '/tax-profile', '/declarations', '/filings', '/brs-entries'], requireOwnerModule('fiscalite'));

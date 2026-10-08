@@ -1,4 +1,5 @@
 const express = require('express');
+const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
@@ -78,6 +79,141 @@ router.get('/:id', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération du transfert.' });
+  }
+});
+
+// Dessine le bon de transfert (A4) : ce que le livreur emporte, d'où, vers où, avec les cases de signature.
+const STATUTS_TRANSFERT = { envoye: 'En cours de livraison', recu: 'Reçu', annule: 'Annulé' };
+const nombreFr = (n) => Number(n).toLocaleString('fr-FR', { maximumFractionDigits: 3 });
+const dateHeureFr = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '');
+
+function dessinerBonTransfert(doc, { commerce, transfert, articles }) {
+  const gauche = doc.page.margins.left;
+  const largeur = doc.page.width - gauche - doc.page.margins.right;
+  const ref = String(transfert.id).replace(/-/g, '').slice(0, 8).toUpperCase();
+
+  doc.font('Helvetica-Bold').fontSize(16).text(commerce, gauche, 40, { width: largeur });
+  doc.font('Helvetica-Bold').fontSize(20).text('BON DE TRANSFERT', gauche, 40, { width: largeur, align: 'right' });
+  doc.font('Helvetica').fontSize(10).fillColor('#555').text(`Réf. ${ref}`, gauche, 66, { width: largeur, align: 'right' });
+  doc.fillColor('#000');
+  doc.moveTo(gauche, 90).lineTo(gauche + largeur, 90).strokeColor('#999').stroke();
+
+  // Origine → destination
+  const demi = largeur / 2 - 10;
+  doc.font('Helvetica').fontSize(9).fillColor('#555').text('DE (expéditeur)', gauche, 102).text('VERS (destinataire)', gauche + demi + 20, 102);
+  doc.font('Helvetica-Bold').fontSize(14).fillColor('#000')
+    .text(transfert.from_warehouse_name, gauche, 116, { width: demi })
+    .text(transfert.to_warehouse_name, gauche + demi + 20, 116, { width: demi });
+
+  doc.font('Helvetica').fontSize(10).fillColor('#000');
+  const infos = [
+    ['Date d\'envoi', dateHeureFr(transfert.created_at)],
+    ['Préparé par', transfert.created_by_name || '—'],
+    ['Statut', STATUTS_TRANSFERT[transfert.status] || transfert.status],
+  ];
+  let y = 150;
+  for (const [libelle, valeur] of infos) {
+    doc.font('Helvetica').fillColor('#555').text(`${libelle} :`, gauche, y, { width: 90, continued: false });
+    doc.font('Helvetica-Bold').fillColor('#000').text(valeur, gauche + 95, y, { width: largeur - 95 });
+    y += 16;
+  }
+  if (transfert.notes) {
+    doc.font('Helvetica').fillColor('#555').text('Remarque :', gauche, y, { width: 90 });
+    doc.font('Helvetica').fillColor('#000').text(String(transfert.notes), gauche + 95, y, { width: largeur - 95 });
+    y = doc.y + 4;
+  }
+
+  // Tableau des articles : N° | Article | Quantité | Vérifié à l'arrivée (case à cocher)
+  y += 12;
+  const colonnes = [
+    { titre: 'N°', x: gauche, w: 30 },
+    { titre: 'Article', x: gauche + 30, w: largeur - 30 - 90 - 90 },
+    { titre: 'Quantité', x: gauche + largeur - 180, w: 90, align: 'right' },
+    { titre: 'Vérifié', x: gauche + largeur - 90, w: 90, align: 'center' },
+  ];
+  const enteteTableau = (yy) => {
+    doc.rect(gauche, yy, largeur, 20).fill('#eeeeee');
+    doc.fillColor('#000').font('Helvetica-Bold').fontSize(10);
+    for (const c of colonnes) doc.text(c.titre, c.x + 4, yy + 5, { width: c.w - 8, align: c.align || 'left' });
+    return yy + 20;
+  };
+  y = enteteTableau(y);
+  doc.font('Helvetica').fontSize(10);
+  let totalQuantite = 0;
+  articles.forEach((a, i) => {
+    const hauteurNom = doc.heightOfString(a.product_name, { width: colonnes[1].w - 8 });
+    const h = Math.max(22, hauteurNom + 10);
+    if (y + h > doc.page.height - 190) { // il faut garder la place pour les signatures
+      doc.addPage();
+      y = enteteTableau(40);
+      doc.font('Helvetica').fontSize(10);
+    }
+    doc.fillColor('#000');
+    doc.text(String(i + 1), colonnes[0].x + 4, y + 6, { width: colonnes[0].w - 8 });
+    doc.text(a.product_name, colonnes[1].x + 4, y + 6, { width: colonnes[1].w - 8 });
+    doc.font('Helvetica-Bold').text(nombreFr(a.quantity), colonnes[2].x + 4, y + 6, { width: colonnes[2].w - 8, align: 'right' }).font('Helvetica');
+    doc.rect(colonnes[3].x + colonnes[3].w / 2 - 6, y + 5, 12, 12).strokeColor('#555').stroke();
+    doc.moveTo(gauche, y + h).lineTo(gauche + largeur, y + h).strokeColor('#dddddd').stroke();
+    totalQuantite += Number(a.quantity);
+    y += h;
+  });
+  doc.font('Helvetica-Bold').fontSize(10).fillColor('#000')
+    .text(`${articles.length} article${articles.length > 1 ? 's' : ''} — quantité totale : ${nombreFr(totalQuantite)}`, gauche, y + 8, { width: largeur, align: 'right' });
+
+  // Signatures : toujours en bas de la dernière page.
+  let ySign = Math.max(doc.y + 30, doc.page.height - 170);
+  if (ySign + 130 > doc.page.height - 40) { doc.addPage(); ySign = 60; }
+  const tiers = largeur / 3 - 8;
+  const cases = ['Remis par (expéditeur)', 'Livreur — nom, véhicule', 'Reçu par (destinataire)'];
+  cases.forEach((titre, i) => {
+    const x = gauche + i * (tiers + 12);
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#000').text(titre, x, ySign, { width: tiers });
+    doc.rect(x, ySign + 16, tiers, 80).strokeColor('#999').stroke();
+    doc.font('Helvetica').fontSize(8).fillColor('#777').text('Nom, date et signature', x + 4, ySign + 100, { width: tiers - 8 });
+  });
+  doc.page.margins.bottom = 0; // le pied de page est sous la marge basse : sans cela pdfkit ajoute une page vide
+  doc.font('Helvetica').fontSize(8).fillColor('#777')
+    .text(`Document imprimé le ${dateHeureFr(new Date())}. À contrôler à l'arrivée : toute différence doit être signalée avant signature.`, gauche, doc.page.height - 36, { width: largeur, align: 'center' });
+}
+
+// GET /stock-transfers/:id/pdf — bon de transfert à remettre au livreur (manager, ou gérant concerné)
+router.get('/:id/pdf', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT t.*, wf.name AS from_warehouse_name, wt.name AS to_warehouse_name,
+              uc.full_name AS created_by_name, m.business_name
+       FROM stock_transfers t
+       JOIN warehouses wf ON wf.id = t.from_warehouse_id
+       JOIN warehouses wt ON wt.id = t.to_warehouse_id
+       JOIN merchants m ON m.id = t.merchant_id
+       LEFT JOIN users uc ON uc.id = t.created_by
+       WHERE t.id = $1 AND t.merchant_id = $2`,
+      [req.params.id, req.user.merchantId]
+    );
+    const transfert = result.rows[0];
+    if (!transfert) return res.status(404).json({ error: 'Transfert introuvable.' });
+    if (req.user.role === 'gerant' && req.user.warehouseId !== transfert.from_warehouse_id && req.user.warehouseId !== transfert.to_warehouse_id) {
+      return res.status(403).json({ error: 'Ce transfert ne concerne pas votre boutique.' });
+    }
+
+    const articles = await pool.query(
+      `SELECT p.name AS product_name, ti.quantity
+       FROM stock_transfer_items ti JOIN products p ON p.id = ti.product_id
+       WHERE ti.transfer_id = $1 ORDER BY p.name`,
+      [transfert.id]
+    );
+
+    const ref = String(transfert.id).replace(/-/g, '').slice(0, 8).toUpperCase();
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="bon-transfert-${ref}.pdf"`);
+    const doc = new PDFDocument({ size: 'A4', margin: 40 });
+    doc.on('error', (e) => console.error('pdfkit (bon de transfert) :', e));
+    doc.pipe(res);
+    dessinerBonTransfert(doc, { commerce: transfert.business_name, transfert, articles: articles.rows });
+    doc.end();
+  } catch (err) {
+    console.error(err);
+    if (!res.headersSent) res.status(500).json({ error: 'Erreur lors de la génération du bon de transfert.' });
   }
 });
 

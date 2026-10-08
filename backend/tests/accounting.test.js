@@ -27,12 +27,13 @@ function trouverRoutes() {
 
 function charger() {
   const src = fs.readFileSync(trouverRoutes(), 'utf8')
-    + '\nglobalThis.__T = { lireFacturesCharges, lireReglementsCharges, lireCaisse, lireVentes, lireAchats, lireRetours, lirePertes, construireAnnexeExonerations, piecesCaisse, retenueBrs, ligne };';
+    + '\nglobalThis.__T = { lireFacturesCharges, lireReglementsCharges, lireCaisse, lireVentes, lireAchats, lireRetours, lirePertes, construireAnnexeExonerations, piecesCaisse, calculerAlertesFiscales, retenueBrs, ligne };';
   const routeur = new Proxy({}, { get: () => () => {} });
   const faux = {
     express: Object.assign(() => ({}), { Router: () => routeur, raw: () => () => {}, json: () => () => {}, urlencoded: () => () => {} }),
     pdfkit: function PDFDocument() {},
     '../config/db': { query: (...a) => globalThis.__baseFausse(...a), connect: async () => ({}) },
+    '../middleware/roles': { requireRole: () => () => {}, aRole: (u, ...r) => r.includes(u?.role) || (u?.roles || []).some((x) => r.includes(x)) },
   };
   const req = (nom) => faux[nom] || new Proxy({}, { get: () => () => {} });
   const module_ = { exports: {} };
@@ -309,4 +310,58 @@ test('pièces de caisse : lecture du fichier d\'une pièce de caisse autorisée,
   const autreSource = async (sql) => (sql.includes('FROM accounting_attachments') ? { rows: [{ source_type: 'immobilisation', source_id: 'i1', auteur: 'u1' }] } : baseCaisse()(sql));
   const non = await lancerPieces({ user: caissier, method: 'GET', path: `/${id}/file`, base: autreSource });
   assert.equal(non.code, 403);
+});
+
+test('pièces de caisse : un comptable (même cumulé avec caissier) suit le chemin habituel', async () => {
+  const r = await lancerPieces({ user: { id: 'u2', role: 'caissier', roles: ['caissier', 'comptable'], merchantId: 'm1', warehouseIds: [] }, query: { sourceType: 'immobilisation', sourceId: 'x' }, base: () => { throw new Error('ne doit rien lire'); } });
+  assert.equal(r.suite, true);
+  assert.equal(r.req.pieceCaisse, undefined);
+});
+
+// ---------- Rappels fiscaux (R7) ----------
+const activiteDe = ({ tva = [], salaires = [], brs = [] } = {}) => ({ tva: new Set(tva), salaires: new Set(salaires), brs: new Set(brs) });
+const alertesLe = (jour, extra = {}) => T.calculerAlertesFiscales({ jour, regime: 'reel_simplifie', depots: new Set(), activite: activiteDe({ tva: ['2026-09'] }), ...extra });
+
+test('rappels fiscaux : rien avant les 10 jours qui précèdent l\'échéance du 15', () => {
+  assert.equal(alertesLe('2026-10-04').length, 0); // 11 jours avant le 15/10
+});
+
+test('rappels fiscaux : TVA de septembre, "proche" puis "urgent" puis "en retard"', () => {
+  const proche = alertesLe('2026-10-05');
+  assert.equal(proche.length, 1);
+  assert.equal(proche[0].statut, 'proche');
+  assert.equal(proche[0].joursRestants, 10);
+  assert.equal(proche[0].limite, '2026-10-15');
+  assert.equal(alertesLe('2026-10-13')[0].statut, 'urgent');
+  const retard = alertesLe('2026-10-20')[0];
+  assert.equal(retard.statut, 'retard');
+  assert.equal(retard.joursRestants, -5);
+});
+
+test('rappels fiscaux : déclaration déjà déposée -> plus de rappel', () => {
+  assert.equal(alertesLe('2026-10-20', { depots: new Set(['tva|2026-09']) }).length, 0);
+});
+
+test('rappels fiscaux : régime CGU ou mois sans activité -> pas de rappel TVA', () => {
+  assert.equal(alertesLe('2026-10-20', { regime: 'cgu' }).length, 0);
+  assert.equal(alertesLe('2026-10-20', { activite: activiteDe() }).length, 0);
+});
+
+test('rappels fiscaux : salaires et BRS ont leur propre rappel, les plus en retard d\'abord', () => {
+  const a = alertesLe('2026-10-20', { activite: activiteDe({ tva: ['2026-09'], salaires: ['2026-08'], brs: ['2026-09'] }) });
+  assert.deepEqual(a.map((x) => x.kind), ['salaires', 'tva', 'brs']);
+  assert.equal(a[0].mois, '2026-08');
+});
+
+test('rappels fiscaux : une échéance qui tombe un week-end passe au lundi', () => {
+  // Le 15 novembre 2026 est un dimanche : l'échéance d'octobre est reportée au lundi 16.
+  const a = T.calculerAlertesFiscales({ jour: '2026-11-10', regime: 'reel_normal', depots: new Set(), activite: activiteDe({ tva: ['2026-10'] }) });
+  assert.equal(a[0].limite, '2026-11-16');
+  assert.equal(a[0].joursRestants, 6);
+});
+
+test('rappels fiscaux : passage d\'année (janvier regarde décembre, novembre et octobre)', () => {
+  const a = T.calculerAlertesFiscales({ jour: '2027-01-12', regime: 'reel_normal', depots: new Set(), activite: activiteDe({ tva: ['2026-12', '2026-11'] }) });
+  assert.deepEqual(a.map((x) => x.mois), ['2026-11', '2026-12']);
+  assert.equal(a[1].limite, '2027-01-15');
 });

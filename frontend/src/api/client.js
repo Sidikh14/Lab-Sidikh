@@ -173,6 +173,10 @@ export const api = {
     request('/stock-transfers', { method: 'POST', body: JSON.stringify(data) }),
   receiveStockTransfer: (id) => request(`/stock-transfers/${id}/receive`, { method: 'PATCH' }),
   cancelStockTransfer: (id) => request(`/stock-transfers/${id}/cancel`, { method: 'PATCH' }),
+  // Bon de transfert (PDF) à remettre au livreur : ouvert en aperçu, prêt à imprimer.
+  downloadStockTransferPdf: (id) => previewFile(`/stock-transfers/${id}/pdf`),
+  // Rappels fiscaux (déclarations à déposer) pour le tableau de bord.
+  getFiscalAlerts: () => request('/accounting/fiscal-alerts'),
 
   getProducts: (warehouseId) => request(`/products${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   createProduct: (data) =>
@@ -288,8 +292,9 @@ export const api = {
     request('/users', { method: 'POST', body: JSON.stringify(data) }),
   setUserStatus: (id, isActive) =>
     request(`/users/${id}/status`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
-  setUserRole: (id, role) =>
-    request(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+  // `roles` : liste des rôles cochés (un seul rôle sous forme de texte reste accepté).
+  setUserRole: (id, roles) =>
+    request(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify(Array.isArray(roles) ? { roles } : { role: roles }) }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
   setUserPermissions: (id, modules) =>
     request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules }) }),

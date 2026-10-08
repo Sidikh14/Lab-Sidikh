@@ -37,6 +37,21 @@ function RequireOwner({ children }) {
   return children;
 }
 
+// Un comptable (sans autre rôle) n'a pas accès aux pages de gestion : retour au tableau de bord.
+function SaufComptableSeul({ children }) {
+  const { aRole } = useAuth();
+  if (aRole('comptable') && !aRole('manager', 'gerant', 'vendeur', 'caissier')) return <Navigate to="/" replace />;
+  return children;
+}
+
+function RouteGestion({ children }) {
+  return (
+    <RouteCommercant>
+      <SaufComptableSeul>{children}</SaufComptableSeul>
+    </RouteCommercant>
+  );
+}
+
 function RouteCommercant({ children }) {
   return (
     <ProtectedRoute>
@@ -55,16 +70,16 @@ export default function App() {
           <Route path="/connexion" element={<LoginPage />} />
           <Route path="/inscription" element={<RegisterPage />} />
           <Route path="/" element={<RouteCommercant><DashboardPage /></RouteCommercant>} />
-          <Route path="/stock" element={<RouteCommercant><StockPage /></RouteCommercant>} />
-          <Route path="/ventes" element={<RouteCommercant><OrdersPage /></RouteCommercant>} />
-          <Route path="/clients" element={<RouteCommercant><ClientsPage /></RouteCommercant>} />
-          <Route path="/fournisseurs" element={<RouteCommercant><SuppliersPage /></RouteCommercant>} />
+          <Route path="/stock" element={<RouteGestion><StockPage /></RouteGestion>} />
+          <Route path="/ventes" element={<RouteGestion><OrdersPage /></RouteGestion>} />
+          <Route path="/clients" element={<RouteGestion><ClientsPage /></RouteGestion>} />
+          <Route path="/fournisseurs" element={<RouteGestion><SuppliersPage /></RouteGestion>} />
           <Route path="/achats" element={<Navigate to="/fournisseurs?tab=achats" replace />} />
-          <Route path="/caisse" element={<RouteCommercant><CaissePage /></RouteCommercant>} />
-          <Route path="/entreprise" element={<RouteCommercant><SettingsPage /></RouteCommercant>} />
+          <Route path="/caisse" element={<RouteGestion><CaissePage /></RouteGestion>} />
+          <Route path="/entreprise" element={<RouteGestion><SettingsPage /></RouteGestion>} />
           <Route path="/salaires" element={<Navigate to="/paie" replace />} />
           <Route path="/paie" element={<RouteCommercant><PaiePage /></RouteCommercant>} />
-          <Route path="/boutiques" element={<RouteCommercant><WarehousesPage /></RouteCommercant>} />
+          <Route path="/boutiques" element={<RouteGestion><WarehousesPage /></RouteGestion>} />
           <Route path="/transferts" element={<Navigate to="/boutiques?tab=transferts" replace />} />
           <Route path="/equipe" element={<RouteCommercant><TeamPage /></RouteCommercant>} />
           <Route path="/comptabilite" element={<RouteCommercant><ComptabilitePage /></RouteCommercant>} />

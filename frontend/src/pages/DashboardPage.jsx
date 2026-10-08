@@ -6,6 +6,7 @@ import { StatusBadge } from '../components/StatusBadge';
 import { ActiviteListe, initiales, couleurPour } from '../components/ActiviteListe';
 import { ModaleEncaissement } from '../components/ModaleEncaissement';
 import { useLiveEvent } from '../offline/liveEvents';
+import { RappelsFiscaux } from '../components/RappelsFiscaux';
 
 // Quantités : la base renvoie NUMERIC(12,3) sous forme de texte ("12.000").
 // On retire les décimales inutiles ("12"), et on garde une vraie décimale pour
@@ -177,7 +178,38 @@ const CSS_DASHBOARD = `
 }
 `;
 
+// Un comptable (sans autre rôle) n'a ni stock ni ventes : son tableau de bord se limite aux rappels fiscaux
+// et aux raccourcis vers ses trois modules.
+function DashboardComptable() {
+  const navigate = useNavigate();
+  const raccourcis = [
+    { to: '/comptabilite', titre: 'Comptabilité', texte: 'Écritures, grand livre, bilan, clôture.' },
+    { to: '/fiscalite', titre: 'Fiscalité', texte: 'Déclarations, impôts à payer, profil fiscal.' },
+    { to: '/paie', titre: 'Paie', texte: 'Salaires, bulletins et réglages de paie.' },
+  ];
+  return (
+    <>
+      <div className="entete-page"><h1>Tableau de bord</h1></div>
+      <RappelsFiscaux lien="/fiscalite" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+        {raccourcis.map((r) => (
+          <button key={r.to} type="button" className="md-carte" style={{ textAlign: 'left', cursor: 'pointer' }} onClick={() => navigate(r.to)}>
+            <strong style={{ fontSize: 15 }}>{r.titre}</strong>
+            <span style={{ display: 'block', fontSize: 13, color: 'var(--encre-douce)', marginTop: 4 }}>{r.texte}</span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export function DashboardPage() {
+  const { aRole } = useAuth();
+  const comptableSeul = aRole('comptable') && !aRole('manager', 'gerant', 'vendeur', 'caissier');
+  return comptableSeul ? <DashboardComptable /> : <DashboardCommerce />;
+}
+
+function DashboardCommerce() {
   const { user, merchant } = useAuth();
   const navigate = useNavigate();
   const vueEquipe = ['manager', 'gerant'].includes(user.role);
@@ -700,6 +732,8 @@ export function DashboardPage() {
                 </div>
               </div>
             )}
+
+            {vueEquipe && <RappelsFiscaux lien={estManager ? '/fiscalite' : undefined} />}
 
             {estManager && alerteSalaires?.show && (
               <div className="erreur" style={{ marginBottom: 20, cursor: 'pointer' }} onClick={() => navigate('/salaires')}>

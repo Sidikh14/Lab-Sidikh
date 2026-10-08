@@ -183,18 +183,28 @@ const TOUS_LES_LIENS = [
 // personnalisé les permissions d'un membre précis (visibleModules).
 // "caisse" (clôture, sorties de caisse, relevés) suit les mêmes rôles que le
 // backend autorise sur ces routes : manager, gérant, caissier (pas vendeur).
+// Une personne peut cumuler plusieurs rôles : elle voit les modules de tous ses rôles réunis.
+// Le comptable n'a aucun module de gestion : ses accès (Comptabilité, Fiscalité, Paie) sont ajoutés plus bas.
 const MODULES_PAR_DEFAUT = {
   manager: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   vendeur: ['stock', 'ventes', 'clients'],
   caissier: ['ventes', 'caisse'],
   vendeur_caissier: ['stock', 'ventes', 'clients', 'caisse'],
+  comptable: [],
 };
 
 function modulesAutorises(user) {
   if (user.role === 'manager') return MODULES_PAR_DEFAUT.manager;
   if (Array.isArray(user.visibleModules)) return user.visibleModules;
-  return MODULES_PAR_DEFAUT[user.role] || [];
+  const roles = Array.isArray(user.roles) && user.roles.length > 0 ? user.roles : [user.role];
+  return [...new Set(roles.flatMap((r) => MODULES_PAR_DEFAUT[r] || []))];
+}
+
+const LIBELLES_ROLES = { manager: 'Manager', gerant: 'Gérant', vendeur: 'Vendeur', caissier: 'Caissier', comptable: 'Comptable', owner: 'Propriétaire', vendeur_caissier: 'Vendeur · Caissier' };
+function libelleRoles(user) {
+  const roles = Array.isArray(user.roles) && user.roles.length > 0 ? user.roles : [user.role];
+  return roles.map((r) => LIBELLES_ROLES[r] || r).join(' · ');
 }
 
 function IconFermer() {
@@ -227,7 +237,7 @@ function lireGroupesOuverts() {
 }
 
 export function Sidebar({ ouvert = false, onFermer }) {
-  const { user, merchant, logout } = useAuth();
+  const { user, merchant, logout, aRole } = useAuth();
   const { pathname } = useLocation();
   const secteurConfig = getSecteurConfig(merchant?.sector);
   // Comptabilité, Fiscalité et Paie : visibles seulement si l'owner a donné l'accès.
@@ -246,8 +256,10 @@ export function Sidebar({ ouvert = false, onFermer }) {
   }).filter((lien) =>
     lien.module === 'fournisseurs' ? autorises.includes('fournisseurs') || autorises.includes('achats') : autorises.includes(lien.module)
   );
-  const voitEquipe = ['manager', 'gerant'].includes(user?.role);
+  const voitEquipe = aRole('manager', 'gerant');
   const estManager = user?.role === 'manager';
+  // Le comptable gère la comptabilité, la fiscalité et la paie, comme le manager (qui garde en plus l'entreprise).
+  const voitFinance = aRole('manager', 'comptable');
 
   if (voitEquipe) {
     liensGestion.push({ to: '/boutiques', label: estManager ? `${secteurConfig.libelleBoutique}s` : 'Transferts', icone: IconBoutique });
@@ -256,7 +268,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
   const liensFinance = [];
   // Le manager voit toujours Comptabilité, Fiscalité et Paie ; sans activation par l'owner, le clic
   // affiche un message au lieu d'ouvrir la page (verrouillé = cadenas).
-  if (estManager) {
+  if (voitFinance) {
     liensFinance.push({ to: '/comptabilite', label: 'Comptabilité', icone: IconComptabilite, verrouille: modulesCharges && !comptaActive });
     liensFinance.push({ to: '/fiscalite', label: 'Fiscalité', icone: IconFiscalite, verrouille: modulesCharges && !(comptaActive && fiscaliteActive) });
     liensFinance.push({ to: '/paie', label: 'Paie', icone: IconSalaires, verrouille: modulesCharges && !paieActive });
@@ -370,7 +382,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
           <span className="avatar">{initiales}</span>
           <div style={{ minWidth: 0 }}>
             <p className="nom">{user.fullName}</p>
-            <p className="role">{user.role}</p>
+            <p className="role">{libelleRoles(user)}</p>
             <button className="lien-deconnexion" onClick={logout}>
               Se déconnecter
             </button>

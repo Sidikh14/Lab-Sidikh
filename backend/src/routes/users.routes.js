@@ -2,32 +2,43 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, normaliserRoles, rolePrincipal, ROLES_ATTRIBUABLES } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 
 const router = express.Router();
 router.use(authenticate);
 
-// Qui peut créer qui : seul le manager ajoute des membres à l'équipe
-// (gérants, vendeurs, caissiers). Le gérant ne crée plus personne — il
-// gère sa boutique mais ne peut pas constituer son équipe lui-même.
-// Personne ne crée de second manager depuis cette route (ça reste le rôle
-// du premier compte créé à l'inscription du commerce).
-const ROLES_AUTORISES_PAR_CREATEUR = {
-  manager: ['gerant', 'vendeur', 'caissier', 'vendeur_caissier'],
-};
+// Qui peut créer qui : seul le manager ajoute des membres à l'équipe. Une personne peut cumuler
+// plusieurs rôles (gérant, vendeur, caissier, comptable) : on les coche tous, il n'y a plus de rôle
+// « vendeur/caissier » à part (l'ancienne valeur est encore acceptée et devient vendeur + caissier).
+// Personne ne crée de second manager depuis cette route.
+const ROLES_ACCEPTES = [...ROLES_ATTRIBUABLES, 'vendeur_caissier'];
 
-// Rôles qui vendent / encaissent : ils ne peuvent être affectés qu'à une
-// boutique, jamais à un dépôt (un dépôt sert uniquement au stockage). Seul un
-// gérant peut être affecté à un dépôt, pour en gérer le stock et les transferts.
-const ROLES_VENTE = ['vendeur', 'caissier', 'vendeur_caissier'];
+// Rôles qui vendent / encaissent : ils ne peuvent être affectés qu'à une boutique, jamais à un
+// dépôt (un dépôt sert uniquement au stockage). Seul un gérant peut être affecté à un dépôt.
+const ROLES_VENTE = ['vendeur', 'caissier'];
+// Rôles qui travaillent dans un lieu : une boutique est obligatoire. Le comptable, lui, n'en a pas besoin.
+const ROLES_AVEC_LIEU = ['gerant', 'vendeur', 'caissier'];
 const MSG_DEPOT_RESERVE = "Un dépôt sert uniquement au stockage : seul un gérant peut y être affecté. Choisissez une boutique pour ce rôle.";
+
+// Lit les rôles demandés (liste `roles`, ou ancien champ `role`) et les valide.
+function lireRoles(corps) {
+  const demandes = Array.isArray(corps?.roles) ? corps.roles : corps?.role ? [corps.role] : [];
+  if (demandes.length === 0) return { erreur: 'Choisissez au moins un rôle.', code: 400 };
+  if (demandes.includes('manager') || demandes.includes('owner')) {
+    return { erreur: 'Vous ne pouvez pas attribuer ce rôle.', code: 403 };
+  }
+  if (!demandes.every((r) => ROLES_ACCEPTES.includes(r))) return { erreur: 'Rôle invalide.', code: 400 };
+  return { roles: normaliserRoles(demandes) };
+}
+const aRoleDeVente = (roles) => roles.some((r) => ROLES_VENTE.includes(r));
+const aBesoinDUnLieu = (roles) => roles.some((r) => ROLES_AVEC_LIEU.includes(r));
 
 // GET /users — liste de l'équipe du commerce (manager et gérant uniquement)
 router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.full_name, u.email, u.role, u.is_active, u.last_login_at, u.created_at,
+      `SELECT u.id, u.full_name, u.email, u.role, COALESCE(u.roles, ARRAY[u.role]) AS roles, u.is_active, u.last_login_at, u.created_at,
               u.visible_modules, u.warehouse_id, w.name AS warehouse_name, w.type AS warehouse_type
        FROM users u
        LEFT JOIN warehouses w ON w.id = u.warehouse_id
@@ -46,34 +57,33 @@ router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
 
 // POST /users — créer un membre de l'équipe (manager uniquement)
 router.post('/', requireRole('manager'), async (req, res) => {
-  const { fullName, email, password, role, warehouseId } = req.body;
+  const { fullName, email, password, warehouseId } = req.body;
 
-  if (!fullName || !email || !password || !role) {
+  if (!fullName || !email || !password) {
     return res.status(400).json({ error: 'Champs requis manquants.' });
   }
+  const lecture = lireRoles(req.body);
+  if (lecture.erreur) return res.status(lecture.code).json({ error: lecture.erreur });
+  const { roles } = lecture;
+  const role = rolePrincipal(roles);
 
-  const rolesAutorises = ROLES_AUTORISES_PAR_CREATEUR[req.user.role] || [];
-  if (!rolesAutorises.includes(role)) {
-    return res.status(403).json({
-      error: `Vous ne pouvez pas créer un compte avec le rôle "${role}".`,
-    });
-  }
-
-  // Tout rôle autre que manager doit être assigné à une boutique.
-  if (!warehouseId) {
+  // Les rôles qui travaillent dans un lieu exigent une boutique ; un comptable seul peut s'en passer.
+  if (aBesoinDUnLieu(roles) && !warehouseId) {
     return res.status(400).json({ error: 'La boutique est requise pour ce rôle.' });
   }
 
   try {
-    const boutique = await pool.query(
-      `SELECT id, type FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
-      [warehouseId, req.user.merchantId]
-    );
-    if (boutique.rows.length === 0) {
-      return res.status(404).json({ error: 'Boutique introuvable.' });
-    }
-    if (boutique.rows[0].type === 'depot' && ROLES_VENTE.includes(role)) {
-      return res.status(400).json({ error: MSG_DEPOT_RESERVE });
+    if (warehouseId) {
+      const boutique = await pool.query(
+        `SELECT id, type FROM warehouses WHERE id = $1 AND merchant_id = $2 AND is_active = TRUE`,
+        [warehouseId, req.user.merchantId]
+      );
+      if (boutique.rows.length === 0) {
+        return res.status(404).json({ error: 'Boutique introuvable.' });
+      }
+      if (boutique.rows[0].type === 'depot' && aRoleDeVente(roles)) {
+        return res.status(400).json({ error: MSG_DEPOT_RESERVE });
+      }
     }
 
     // Plafond de comptes fixé par le propriétaire de la plateforme
@@ -96,17 +106,17 @@ router.post('/', requireRole('manager'), async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await pool.query(
-      `INSERT INTO users (merchant_id, full_name, email, password_hash, role, warehouse_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, full_name, email, role, is_active, created_at, warehouse_id`,
-      [req.user.merchantId, fullName, email, passwordHash, role, warehouseId]
+      `INSERT INTO users (merchant_id, full_name, email, password_hash, role, roles, warehouse_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, full_name, email, role, roles, is_active, created_at, warehouse_id`,
+      [req.user.merchantId, fullName, email, passwordHash, role, roles, warehouseId || null]
     );
 
     await logActivity({
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'team_member_created',
-      description: `a ajouté ${fullName} à l'équipe (${role})`,
+      description: `a ajouté ${fullName} à l'équipe (${roles.join(', ')})`,
     });
 
     res.status(201).json(result.rows[0]);
@@ -210,10 +220,10 @@ router.patch('/:id/warehouse', requireRole('manager'), async (req, res) => {
     }
     if (boutique.rows[0].type === 'depot') {
       const membre = await pool.query(
-        `SELECT role FROM users WHERE id = $1 AND merchant_id = $2 AND role != 'manager'`,
+        `SELECT role, roles FROM users WHERE id = $1 AND merchant_id = $2 AND role != 'manager'`,
         [req.params.id, req.user.merchantId]
       );
-      if (membre.rows[0] && ROLES_VENTE.includes(membre.rows[0].role)) {
+      if (membre.rows[0] && aRoleDeVente(normaliserRoles(membre.rows[0].roles, membre.rows[0].role))) {
         return res.status(400).json({ error: MSG_DEPOT_RESERVE });
       }
     }
@@ -282,40 +292,42 @@ router.patch('/:id/password', requireRole('manager'), async (req, res) => {
   }
 });
 
-// PATCH /users/:id/role — manager change le rôle d'un membre (ex : caissier
-// devient gérant, vendeur devient caissier). Réinitialise les permissions
-// personnalisées (visible_modules) car les modules par défaut du nouveau
-// rôle ne correspondent plus forcément à l'ancienne sélection.
-const ROLES_MODIFIABLES = ['gerant', 'vendeur', 'caissier', 'vendeur_caissier'];
-
+// PATCH /users/:id/role — manager change les rôles d'un membre : { roles: ['vendeur', 'caissier'] }
+// (l'ancien format { role } reste accepté). Réinitialise les permissions personnalisées
+// (visible_modules) car les modules par défaut des nouveaux rôles ne correspondent plus forcément
+// à l'ancienne sélection.
 router.patch('/:id/role', requireRole('manager'), async (req, res) => {
-  const { role } = req.body;
+  const lecture = lireRoles(req.body);
+  if (lecture.erreur) return res.status(lecture.code).json({ error: lecture.erreur });
+  const { roles } = lecture;
 
-  if (!ROLES_MODIFIABLES.includes(role)) {
-    return res.status(400).json({ error: 'Rôle invalide.' });
-  }
   if (req.params.id === req.user.id) {
     return res.status(400).json({ error: 'Vous ne pouvez pas modifier votre propre rôle ici.' });
   }
 
   try {
-    // Un membre affecté à un dépôt ne peut pas passer à un rôle de vente.
-    if (ROLES_VENTE.includes(role)) {
-      const lieu = await pool.query(
-        `SELECT w.type FROM users u LEFT JOIN warehouses w ON w.id = u.warehouse_id
-         WHERE u.id = $1 AND u.merchant_id = $2 AND u.role != 'manager'`,
-        [req.params.id, req.user.merchantId]
-      );
-      if (lieu.rows[0]?.type === 'depot') {
-        return res.status(400).json({ error: "Ce membre est affecté à un dépôt (stockage uniquement) : affectez-le d'abord à une boutique pour lui donner un rôle de vente." });
-      }
+    const membre = await pool.query(
+      `SELECT u.warehouse_id, w.type AS lieu_type
+       FROM users u LEFT JOIN warehouses w ON w.id = u.warehouse_id
+       WHERE u.id = $1 AND u.merchant_id = $2 AND u.role != 'manager'`,
+      [req.params.id, req.user.merchantId]
+    );
+    if (membre.rows.length === 0) {
+      return res.status(404).json({ error: 'Membre introuvable.' });
+    }
+    // Un membre affecté à un dépôt ne peut pas avoir de rôle de vente.
+    if (aRoleDeVente(roles) && membre.rows[0].lieu_type === 'depot') {
+      return res.status(400).json({ error: "Ce membre est affecté à un dépôt (stockage uniquement) : affectez-le d'abord à une boutique pour lui donner un rôle de vente." });
+    }
+    if (aBesoinDUnLieu(roles) && !membre.rows[0].warehouse_id) {
+      return res.status(400).json({ error: "Ce membre n'est affecté à aucune boutique : affectez-le d'abord à une boutique pour lui donner ce rôle." });
     }
 
     const result = await pool.query(
-      `UPDATE users SET role = $1, visible_modules = NULL
-       WHERE id = $2 AND merchant_id = $3 AND role != 'manager'
-       RETURNING id, full_name, role, visible_modules`,
-      [role, req.params.id, req.user.merchantId]
+      `UPDATE users SET role = $1, roles = $2, visible_modules = NULL
+       WHERE id = $3 AND merchant_id = $4 AND role != 'manager'
+       RETURNING id, full_name, role, roles, visible_modules`,
+      [rolePrincipal(roles), roles, req.params.id, req.user.merchantId]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Membre introuvable.' });
@@ -325,7 +337,7 @@ router.patch('/:id/role', requireRole('manager'), async (req, res) => {
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'team_member_role_changed',
-      description: `a changé le rôle de ${result.rows[0].full_name} en ${result.rows[0].role}`,
+      description: `a changé les rôles de ${result.rows[0].full_name} : ${roles.join(', ')}`,
     });
 
     res.json(result.rows[0]);

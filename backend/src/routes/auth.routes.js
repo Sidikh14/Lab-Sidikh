@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const { requireAdminKey } = require('../middleware/adminKey');
+const { normaliserRoles, rolePrincipal } = require('../middleware/roles');
 const { getMaintenance, reponseMaintenance } = require('../middleware/maintenance');
 const { CATEGORIES_PHARMACIE } = require('../data/pharmacieCatalogue');
 const { CATEGORIES_ELECTROMENAGER } = require('../data/electromenagerCategories');
@@ -141,7 +142,7 @@ router.post('/login', async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT u.id, u.merchant_id, u.full_name, u.email, u.password_hash, u.role, u.is_active,
+      `SELECT u.id, u.merchant_id, u.full_name, u.email, u.password_hash, u.role, u.roles, u.is_active,
               u.visible_modules, u.warehouse_id, w.name AS warehouse_name,
               m.business_name, m.sector, m.currency, m.is_active AS merchant_is_active
        FROM users u
@@ -151,6 +152,10 @@ router.post('/login', async (req, res) => {
       [email]
     );
     const user = result.rows[0];
+    if (user) {
+      user.roles = normaliserRoles(user.roles, user.role);
+      user.role = rolePrincipal(user.roles) || user.role;
+    }
 
     if (!user || !user.is_active) {
       return res.status(401).json({ error: 'Identifiants incorrects.' });
@@ -185,6 +190,7 @@ router.post('/login', async (req, res) => {
         fullName: user.full_name,
         email: user.email,
         role: user.role,
+        roles: user.roles,
         visibleModules: user.visible_modules,
         warehouseId: user.warehouse_id,
         warehouseName: user.warehouse_name,

@@ -86,8 +86,14 @@ export function AuthProvider({ children }) {
 
   const clearSessionExpiredMessage = useCallback(() => setSessionExpiredMessage(null), []);
 
+  // Vrai si la personne a au moins un des rôles demandés (elle peut en cumuler plusieurs).
+  const aRole = useCallback((...roles) => {
+    const possedes = new Set([...(user?.roles || []), user?.role].filter(Boolean));
+    return roles.some((r) => possedes.has(r));
+  }, [user]);
+
   return (
-    <AuthContext.Provider value={{ user, merchant, login, register, logout, sessionExpiredMessage, clearSessionExpiredMessage }}>
+    <AuthContext.Provider value={{ user, merchant, login, register, logout, aRole, sessionExpiredMessage, clearSessionExpiredMessage }}>
       {children}
     </AuthContext.Provider>
   );

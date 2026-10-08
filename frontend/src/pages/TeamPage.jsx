@@ -82,11 +82,14 @@ function IconSupprimer() {
 
 // Rôles qui vendent : affectables uniquement à une boutique (un dépôt sert au
 // stockage seul — seul un gérant peut y être affecté).
-const ROLES_VENTE = ['vendeur', 'caissier', 'vendeur_caissier'];
+const ROLES_VENTE = ['vendeur', 'caissier'];
+// Rôles qui travaillent dans un lieu : une boutique est obligatoire (le comptable seul n'en a pas besoin).
+const ROLES_AVEC_LIEU = ['gerant', 'vendeur', 'caissier'];
 
-function lieuxAffectables(warehouses, role) {
-  return ROLES_VENTE.includes(role) ? warehouses.filter((w) => w.type !== 'depot') : warehouses;
+function lieuxAffectables(warehouses, roles) {
+  return roles.some((r) => ROLES_VENTE.includes(r)) ? warehouses.filter((w) => w.type !== 'depot') : warehouses;
 }
+const besoinDunLieu = (roles) => roles.some((r) => ROLES_AVEC_LIEU.includes(r));
 
 function IconBoutique() {
   return (
@@ -104,14 +107,22 @@ const FILTRES_STATUT = [
   { value: 'desactives', label: 'Désactivés' },
 ];
 
-const ROLES_PROPOSES = {
-  manager: [
-    { value: 'gerant', label: 'Gérant' },
-    { value: 'vendeur', label: 'Vendeur' },
-    { value: 'caissier', label: 'Caissier' },
-    { value: 'vendeur_caissier', label: 'Vendeur/Caissier' },
-  ],
-};
+// Une personne peut cumuler plusieurs rôles : on les coche (plus de rôle « Vendeur/Caissier » à part).
+const ROLES_ATTRIBUABLES = [
+  { value: 'gerant', label: 'Gérant', aide: 'Gère sa boutique ou son dépôt (stock, transferts, caisse).' },
+  { value: 'vendeur', label: 'Vendeur', aide: 'Vend et suit ses clients.' },
+  { value: 'caissier', label: 'Caissier', aide: 'Encaisse et tient la caisse.' },
+  { value: 'comptable', label: 'Comptable', aide: 'Comptabilité, fiscalité et paie uniquement.' },
+];
+const ROLES_PROPOSES = { manager: ROLES_ATTRIBUABLES };
+const LIBELLES_ROLES = { manager: 'Manager', gerant: 'Gérant', vendeur: 'Vendeur', caissier: 'Caissier', comptable: 'Comptable' };
+
+// Liste des rôles d'un membre (l'ancien « vendeur_caissier » compte pour vendeur + caissier).
+function rolesDe(membre) {
+  const brut = Array.isArray(membre.roles) && membre.roles.length > 0 ? membre.roles : [membre.role];
+  return [...new Set(brut.flatMap((r) => (r === 'vendeur_caissier' ? ['vendeur', 'caissier'] : [r])))];
+}
+const libelleRoles = (membre) => rolesDe(membre).map((r) => LIBELLES_ROLES[r] || r).join(' · ');
 
 const MODULES = [
   { value: 'stock', label: 'Stock' },
@@ -122,19 +133,32 @@ const MODULES = [
   { value: 'caisse', label: 'Caisse' },
 ];
 
-const MODULES_PAR_DEFAUT = {
+const MODULES_PAR_ROLE = {
   gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   vendeur: ['stock', 'ventes', 'clients'],
   caissier: ['ventes', 'caisse'],
-  vendeur_caissier: ['stock', 'ventes', 'clients', 'caisse'],
+  comptable: [],
 };
+// Modules visibles par défaut : ceux de tous les rôles de la personne réunis.
+const modulesParDefaut = (roles) => MODULES.map((m) => m.value).filter((m) => roles.some((r) => (MODULES_PAR_ROLE[r] || []).includes(m)));
 
-const TOUS_LES_ROLES = [
-  { value: 'gerant', label: 'Gérant' },
-  { value: 'vendeur', label: 'Vendeur' },
-  { value: 'caissier', label: 'Caissier' },
-  { value: 'vendeur_caissier', label: 'Vendeur/Caissier' },
-];
+// Cases à cocher des rôles (création et modification).
+function ChoixRoles({ roles, onChange }) {
+  const basculer = (valeur) => onChange(roles.includes(valeur) ? roles.filter((r) => r !== valeur) : [...roles, valeur]);
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      {ROLES_ATTRIBUABLES.map((r) => (
+        <label key={r.value} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+          <input type="checkbox" checked={roles.includes(r.value)} onChange={() => basculer(r.value)} style={{ marginTop: 3 }} />
+          <span>
+            <strong style={{ fontSize: 14 }}>{r.label}</strong>
+            <span style={{ display: 'block', fontSize: 12.5, color: 'var(--encre-douce)' }}>{r.aide}</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
 
 const NOMS_MOIS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 function formatMois(moisStr) {
@@ -193,7 +217,7 @@ function EquipeTab() {
     fullName: '',
     email: '',
     password: '',
-    role: rolesProposes[0]?.value || 'vendeur',
+    roles: ['vendeur'],
     warehouseId: '',
   });
 
@@ -241,15 +265,19 @@ function EquipeTab() {
       setErreur('Tous les champs sont requis.');
       return;
     }
+    if (nouveauMembre.roles.length === 0) {
+      setErreur('Cochez au moins un rôle.');
+      return;
+    }
     const warehouseId = estManager ? nouveauMembre.warehouseId : user.warehouseId;
-    if (!warehouseId) {
+    if (!warehouseId && besoinDunLieu(nouveauMembre.roles)) {
       setErreur(`La ${secteurConfig.libelleBoutique.toLowerCase()} est requise.`);
       return;
     }
     try {
-      await api.createUser({ ...nouveauMembre, warehouseId });
+      await api.createUser({ ...nouveauMembre, warehouseId: warehouseId || undefined });
       setModaleOuverte(false);
-      setNouveauMembre({ fullName: '', email: '', password: '', role: rolesProposes[0]?.value || 'vendeur', warehouseId: '' });
+      setNouveauMembre({ fullName: '', email: '', password: '', roles: ['vendeur'], warehouseId: '' });
       charger();
     } catch (err) {
       setErreur(err.message);
@@ -270,7 +298,7 @@ function EquipeTab() {
 
   function ouvrirPermissions(membre) {
     setMembrePermissions(membre);
-    setSelectionModules(membre.visible_modules ?? MODULES_PAR_DEFAUT[membre.role] ?? []);
+    setSelectionModules(membre.visible_modules ?? modulesParDefaut(rolesDe(membre)));
   }
 
   function toggleModule(value) {
@@ -326,23 +354,28 @@ function EquipeTab() {
   }
 
   const [membreRole, setMembreRole] = useState(null);
-  const [nouveauRole, setNouveauRole] = useState('');
+  const [nouveauxRoles, setNouveauxRoles] = useState([]);
   const [enregistrementRole, setEnregistrementRole] = useState(false);
 
   function ouvrirChangerRole(membre) {
     setMembreRole(membre);
-    setNouveauRole(membre.role);
+    setNouveauxRoles(rolesDe(membre));
   }
 
   async function handleChangerRole(e) {
     e.preventDefault();
-    if (nouveauRole === membreRole.role) {
+    const actuels = rolesDe(membreRole);
+    if (nouveauxRoles.length === 0) {
+      setErreur('Cochez au moins un rôle.');
+      return;
+    }
+    if (nouveauxRoles.length === actuels.length && nouveauxRoles.every((r) => actuels.includes(r))) {
       setMembreRole(null);
       return;
     }
     setEnregistrementRole(true);
     try {
-      await api.setUserRole(membreRole.id, nouveauRole);
+      await api.setUserRole(membreRole.id, nouveauxRoles);
       setMembreRole(null);
       charger();
     } catch (err) {
@@ -479,7 +512,7 @@ function EquipeTab() {
               </div>
               <p className="carte-entite-nom">{m.full_name}</p>
               <p className="carte-entite-detail">{m.email}</p>
-              <p className="carte-entite-metrique" style={{ textTransform: 'capitalize' }}>{m.role}</p>
+              <p className="carte-entite-metrique">{libelleRoles(m)}</p>
               {m.warehouse_name && <p className="carte-entite-detail">{m.warehouse_name}</p>}
               <p className="carte-entite-souslegende">Depuis le {new Date(m.created_at).toLocaleDateString('fr-FR')}</p>
               {estManager && m.role !== 'manager' && (
@@ -579,33 +612,26 @@ function EquipeTab() {
                 />
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="m-role">Rôle</label>
-                <select
-                  id="m-role"
-                  className="champ"
-                  value={nouveauMembre.role}
-                  onChange={(e) => {
-                    const role = e.target.value;
-                    const lieuValide = lieuxAffectables(warehouses, role).some((w) => w.id === nouveauMembre.warehouseId);
-                    setNouveauMembre({ ...nouveauMembre, role, warehouseId: lieuValide ? nouveauMembre.warehouseId : '' });
+                <span className="etiquette">Rôles (cochez-en plusieurs si besoin)</span>
+                <ChoixRoles
+                  roles={nouveauMembre.roles}
+                  onChange={(roles) => {
+                    const lieuValide = lieuxAffectables(warehouses, roles).some((w) => w.id === nouveauMembre.warehouseId);
+                    setNouveauMembre({ ...nouveauMembre, roles, warehouseId: lieuValide ? nouveauMembre.warehouseId : '' });
                   }}
-                >
-                  {rolesProposes.map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-                </select>
+                />
               </div>
               {estManager && (
                 <div className="champ-groupe">
-                  <label className="etiquette" htmlFor="m-boutique">{secteurConfig.libelleBoutique}</label>
+                  <label className="etiquette" htmlFor="m-boutique">{secteurConfig.libelleBoutique}{besoinDunLieu(nouveauMembre.roles) ? '' : ' (facultatif pour un comptable)'}</label>
                   <select
                     id="m-boutique"
                     className="champ"
                     value={nouveauMembre.warehouseId}
                     onChange={(e) => setNouveauMembre({ ...nouveauMembre, warehouseId: e.target.value })}
                   >
-                    <option value="">Choisir une {secteurConfig.libelleBoutique.toLowerCase()}</option>
-                    {lieuxAffectables(warehouses, nouveauMembre.role).map((w) => (
+                    <option value="">{besoinDunLieu(nouveauMembre.roles) ? `Choisir une ${secteurConfig.libelleBoutique.toLowerCase()}` : 'Aucune'}</option>
+                    {lieuxAffectables(warehouses, nouveauMembre.roles).map((w) => (
                       <option key={w.id} value={w.id}>{w.name}{w.type === 'depot' ? ' (dépôt)' : ''}</option>
                     ))}
                   </select>
@@ -695,21 +721,12 @@ function EquipeTab() {
           <div className="modale" onClick={(e) => e.stopPropagation()}>
             <h2>Changer le rôle de {membreRole.full_name}</h2>
             <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-              Rôle actuel : <strong style={{ textTransform: 'capitalize' }}>{membreRole.role}</strong>. Les permissions personnalisées seront réinitialisées sur les modules par défaut du nouveau rôle.
+              Rôles actuels : <strong>{libelleRoles(membreRole)}</strong>. Les permissions personnalisées seront réinitialisées sur les modules par défaut des nouveaux rôles.
             </p>
             <form onSubmit={handleChangerRole}>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="m-nouveau-role">Nouveau rôle</label>
-                <select
-                  id="m-nouveau-role"
-                  className="champ"
-                  value={nouveauRole}
-                  onChange={(e) => setNouveauRole(e.target.value)}
-                >
-                  {TOUS_LES_ROLES.map((r) => (
-                    <option key={r.value} value={r.value}>{r.label}</option>
-                  ))}
-                </select>
+                <span className="etiquette">Rôles</span>
+                <ChoixRoles roles={nouveauxRoles} onChange={setNouveauxRoles} />
               </div>
               <div className="actions-modale">
                 <button type="button" className="btn" onClick={() => setMembreRole(null)}>
@@ -740,7 +757,7 @@ function EquipeTab() {
                   onChange={(e) => setNouvelleBoutique(e.target.value)}
                 >
                   <option value="">Choisir une {secteurConfig.libelleBoutique.toLowerCase()}</option>
-                  {lieuxAffectables(warehouses, membreBoutique.role).map((w) => (
+                  {lieuxAffectables(warehouses, rolesDe(membreBoutique)).map((w) => (
                     <option key={w.id} value={w.id}>{w.name}{w.type === 'depot' ? ' (dépôt)' : ''}</option>
                   ))}
                 </select>
