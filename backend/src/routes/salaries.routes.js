@@ -8,7 +8,8 @@ const { broadcast } = require('../utils/eventsBus');
 
 const router = express.Router();
 router.use(authenticate);
-router.use(requireRole('manager'));
+// Manager et comptable (le comptable gère la paie ; il peut aussi cumuler d'autres rôles).
+router.use(requireRole('manager', 'comptable'));
 // Module Paie : activé par l'owner commerçant par commerçant. Sans accès, le rappel de salaire
 // (/alert) répond simplement « rien à afficher » pour ne pas casser le tableau de bord.
 router.use(requireOwnerModule('paie', { '/alert': { show: false, unpaid: [] } }));

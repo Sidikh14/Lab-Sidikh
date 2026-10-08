@@ -862,16 +862,16 @@ function ReglagesPaieTab() {
   );
 }
 
-// Gestion de la paie : séparée de la page Équipe. Réservée au manager, et seulement si
+// Gestion de la paie : séparée de la page Équipe. Réservée au manager et au comptable, et seulement si
 // l'owner a activé le module Paie pour ce commerçant.
 export function PaiePage() {
-  const { user } = useAuth();
+  const { user, aRole } = useAuth();
   const { loaded, payroll, accounting, fiscalite } = useModulesAccess();
   const [onglet, setOnglet] = useState('salaires');
   // Le paiement des cotisations s'appuie sur la comptabilité et le module Fiscalité (activés par l'owner).
   const cotisationsDisponibles = Boolean(accounting && fiscalite);
 
-  if (user?.role !== 'manager') return <Navigate to="/" replace />;
+  if (!user || !aRole('manager', 'comptable')) return <Navigate to="/" replace />;
   if (!loaded) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
   if (!payroll) return <PageModuleNonActive nom="Paie" />;
 

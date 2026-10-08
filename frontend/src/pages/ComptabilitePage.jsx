@@ -1818,7 +1818,7 @@ function BalanceAgeeTab() {
 
 const MODES_ETAT = MODES.filter((m) => m[0] !== 'a_payer');
 const NOMS_ETAT = {
-  tva: 'TVA', retenues: 'IR et TRIMF sur salaires', css: 'Cotisations CSS',
+  tva: 'TVA', retenues: 'IR et TRIMF sur salaires', brs: 'RAS Tiers et loyers (BRS)', css: 'Cotisations CSS',
   ipres: 'Cotisations IPRES', cfce: 'CFCE', is: 'Impôt sur les résultats',
 };
 const FREQUENCES_COTISATIONS = [['monthly', 'Mensuelle'], ['quarterly', 'Trimestrielle'], ['semiannual', 'Semestrielle']];

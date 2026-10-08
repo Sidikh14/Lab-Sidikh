@@ -2,7 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, aRole } = require('../middleware/roles');
 const { requireOwnerModule } = require('../middleware/ownerModules');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
@@ -42,7 +42,7 @@ function nomMois(moisStr) {
 // Un employé ne peut consulter que son propre bulletin ; manager/gérant
 // peuvent consulter ceux de toute leur équipe.
 function peutConsulter(req, userId) {
-  return req.user.id === userId || ['manager', 'gerant'].includes(req.user.role);
+  return req.user.id === userId || aRole(req.user, 'manager', 'gerant', 'comptable');
 }
 
 // Quand l'employé consulte SON PROPRE bulletin (quel que soit son rôle,
@@ -68,11 +68,11 @@ async function recupererOuCreerReglages(merchantId) {
 }
 
 // ---------------------------------------------------------------------------
-// Réglages fiscaux/sociaux (manager uniquement)
+// Réglages fiscaux/sociaux (manager et comptable)
 // ---------------------------------------------------------------------------
 
 // GET /payroll/settings
-router.get('/settings', requireRole('manager'), async (req, res) => {
+router.get('/settings', requireRole('manager', 'comptable'), async (req, res) => {
   try {
     const reglages = await recupererOuCreerReglages(req.user.merchantId);
     res.json(reglages);
@@ -90,7 +90,7 @@ const CHAMPS_REGLAGES = [
 ];
 
 // PUT /payroll/settings
-router.put('/settings', requireRole('manager'), async (req, res) => {
+router.put('/settings', requireRole('manager', 'comptable'), async (req, res) => {
   try {
     await recupererOuCreerReglages(req.user.merchantId); // garantit qu'une ligne existe déjà
 
@@ -132,7 +132,7 @@ router.put('/settings', requireRole('manager'), async (req, res) => {
 // ---------------------------------------------------------------------------
 
 // GET /payroll/:userId/bonuses?month=YYYY-MM
-router.get('/:userId/bonuses', requireRole('manager'), async (req, res) => {
+router.get('/:userId/bonuses', requireRole('manager', 'comptable'), async (req, res) => {
   try {
     const month = req.query.month || moisActuel();
     const { rows } = await pool.query(
@@ -151,7 +151,7 @@ router.get('/:userId/bonuses', requireRole('manager'), async (req, res) => {
 });
 
 // GET /payroll/:userId/deductions?month=YYYY-MM — retenues saisies pour le mois
-router.get('/:userId/deductions', requireRole('manager'), async (req, res) => {
+router.get('/:userId/deductions', requireRole('manager', 'comptable'), async (req, res) => {
   try {
     const month = req.query.month || moisActuel();
     const { rows } = await pool.query(
@@ -175,7 +175,7 @@ router.get('/:userId/deductions', requireRole('manager'), async (req, res) => {
 
 // POST /payroll/:userId/generate — calcule et enregistre le bulletin d'un
 // mois donné (remplace les primes existantes de ce mois par celles fournies).
-router.post('/:userId/generate', requireRole('manager'), async (req, res) => {
+router.post('/:userId/generate', requireRole('manager', 'comptable'), async (req, res) => {
   const client = await pool.connect();
   try {
     const { userId } = req.params;
