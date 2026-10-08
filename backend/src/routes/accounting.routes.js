@@ -269,9 +269,61 @@ async function verifierCaisse(req, client, merchantId, warehouseId, mode, montan
   }
 }
 
-// Tout le reste : manager uniquement ET module activé par l'owner.
-router.use(requireRole('manager'));
-router.use(requireModule('comptabilite'));
+// ---------- Pièces jointes des sorties de caisse et des factures de charges ----------
+// Exception à la règle « manager uniquement » : le gérant et le caissier qui règlent des charges peuvent
+// joindre un justificatif aux sorties de caisse de leur lieu et aux factures de charges, et supprimer
+// leurs propres envois. Toute autre pièce (écritures, immobilisations…) reste réservée au manager.
+const SOURCES_PIECES_CAISSE = {
+  sortie_caisse: 'SELECT warehouse_id::text AS lieu, user_id::text AS auteur FROM cash_expenses WHERE id::text = $1 AND merchant_id = $2',
+  facture_charge: 'SELECT warehouse_id::text AS lieu, created_by::text AS auteur FROM accounting_charge_bills WHERE id::text = $1 AND merchant_id = $2',
+};
+
+async function piecesCaisse(req, res, next) {
+  if (req.user.role === 'manager') return next(); // le manager suit le chemin habituel
+  const refus = (msg = 'Les pièces jointes de la comptabilité sont réservées au manager.') => res.status(403).json({ error: msg });
+  try {
+    if (!ROLES_CAISSE.includes(req.user.role) || !req.user.merchantId) return refus('Accès refusé.');
+    const m = await pool.query('SELECT accounting_enabled FROM merchants WHERE id = $1', [req.user.merchantId]);
+    if (m.rows[0]?.accounting_enabled !== true) return refus("Le module comptabilité n'est pas activé.");
+
+    let sourceType;
+    let sourceId;
+    const surUnePiece = req.path.match(/^\/([0-9a-f-]{36})(\/file)?$/i);
+    if (req.path === '/' && ['GET', 'POST'].includes(req.method)) {
+      ({ sourceType, sourceId } = req.query);
+    } else if (surUnePiece && (req.method === 'DELETE' || (req.method === 'GET' && surUnePiece[2]))) {
+      const p = await pool.query('SELECT source_type, source_id, created_by::text AS auteur FROM accounting_attachments WHERE id = $1 AND merchant_id = $2', [surUnePiece[1], req.user.merchantId]);
+      if (p.rows.length === 0) return res.status(404).json({ error: 'Pièce introuvable.' });
+      sourceType = p.rows[0].source_type;
+      sourceId = p.rows[0].source_id;
+      // Chacun ne supprime que ses propres envois.
+      if (req.method === 'DELETE' && p.rows[0].auteur !== String(req.user.id)) return refus('Vous ne pouvez supprimer que vos propres pièces.');
+    } else {
+      return refus();
+    }
+
+    const requete = SOURCES_PIECES_CAISSE[sourceType];
+    if (!requete || !sourceId) return refus();
+    const source = await pool.query(requete, [String(sourceId), req.user.merchantId]);
+    if (source.rows.length === 0) return res.status(404).json({ error: 'Opération introuvable.' });
+    // Une sortie de caisse reste dans son lieu : le gérant et le caissier ne touchent que celles de leurs lieux ou les leurs.
+    if (sourceType === 'sortie_caisse') {
+      const { lieu, auteur } = source.rows[0];
+      const lieuAutorise = !lieu || (req.user.warehouseIds || []).map(String).includes(lieu);
+      if (!lieuAutorise && auteur !== String(req.user.id)) return refus('Cette sortie de caisse appartient à un autre lieu.');
+    }
+    req.pieceCaisse = true;
+    next();
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la vérification des droits sur la pièce jointe.');
+  }
+}
+router.use('/attachments', piecesCaisse);
+
+// Tout le reste : manager uniquement ET module activé par l'owner (sauf pièces de caisse validées ci-dessus).
+const sauf = (drapeau, garde) => (req, res, next) => (req[drapeau] ? next() : garde(req, res, next));
+router.use(sauf('pieceCaisse', requireRole('manager')));
+router.use(sauf('pieceCaisse', requireModule('comptabilite')));
 // Impôts, cotisations et paiements à l'État : module Fiscalité (activé séparément par l'owner).
 router.use(['/state-dues', '/state-payments', '/tax-settings', '/tax-profile', '/declarations', '/filings', '/brs-entries'], requireOwnerModule('fiscalite'));
 
@@ -1704,6 +1756,32 @@ const REGIMES = ['cgu', 'reel_simplifie', 'reel_normal'];
 const FORMES = ['societe_is', 'entreprise_individuelle'];
 const NOMS_REGIME = { cgu: 'Contribution globale unique (CGU)', reel_simplifie: 'Réel simplifié', reel_normal: 'Réel normal' };
 
+// Annexe « Exonérations » : ventes du mois sans TVA (hors exportations et suspensions, qui ont leur annexe).
+// La ligne 15 vient du grand livre ; l'annexe liste les ventes concernées et expose l'écart éventuel avec elle,
+// pour que le total de l'annexe soit toujours égal à la ligne 15.
+function construireAnnexeExonerations(ventes, ligne15) {
+  const total = arrondi(ventes.reduce((u, x) => u + Number(x.ht), 0));
+  const ecart = arrondi(ligne15 - total);
+  if (ventes.length === 0 && ligne15 <= 0) return { annexe: null, ecart: 0 };
+  const lignes = ventes.map((x) => [dateFr(x.d), x.order_seq ? `V${x.order_seq}` : '—', x.client, fcfa(x.ht)]);
+  if (ecart !== 0) {
+    lignes.push([
+      '', '',
+      ecart > 0 ? 'Autres opérations exonérées (hors ventes)' : 'Ajustement (livraison ou retour non encore comptabilisé)',
+      fcfa(ecart),
+    ]);
+  }
+  lignes.push({ fort: true, cells: ['Total', '', '', fcfa(ligne15)] });
+  return {
+    annexe: {
+      titre: 'Annexe EXONÉRATIONS',
+      colonnes: [{ label: 'Date' }, { label: 'Vente' }, { label: 'Client' }, { label: 'Montant HT', align: 'right' }],
+      lignes,
+    },
+    ecart,
+  };
+}
+
 async function lireProfilFiscal(db, merchantId) {
   const r = await db.query(
     `SELECT ninea, legal_name, address, tax_center, regime, legal_form FROM accounting_tax_profile WHERE merchant_id = $1`,
@@ -1911,7 +1989,6 @@ router.get('/declarations/tva', async (req, res) => {
     alertesProfil(profil, alertes);
     if (profil.regime === 'cgu') alertes.push('Régime CGU : le redevable de la CGU ne facture pas la TVA. Vérifiez votre régime dans le profil fiscal.');
     if (neant) alertes.push('Aucune opération ce mois : déclaration « NÉANT ».');
-    alertes.push("Annexe des exonérations non détaillée : seul le total (ligne 15) est calculé. Les autres annexes sont générées à partir des types saisis sur les ventes et les achats.");
     if (importsRes.rows.some((x) => !x.dum)) alertes.push("Une importation du mois n'a pas de numéro de déclaration en douane : complétez-le avant de joindre l'annexe.");
 
     // Lignes du formulaire « Taxe sur la valeur ajoutée » de la DGID (numéros et formules officiels).
@@ -1995,6 +2072,19 @@ router.get('/declarations/tva', async (req, res) => {
     annexesOps.push(...annexeVentes('Annexe EXPORTATIONS', exportations, false));
     annexesOps.push(...annexeVentes('Annexe SUSPENSIONS', suspensions, false));
     annexesOps.push(...annexeVentes('Annexe TVA PRECOMPTEE', precomptees, true));
+    const exonerees = await pool.query(
+      `SELECT o.order_seq, COALESCE(c.full_name, 'Client de passage') AS client, ${jourVente} AS d,
+              COALESCE(o.total_amount, 0) AS ht
+       FROM orders o LEFT JOIN clients c ON c.id = o.client_id
+       WHERE o.merchant_id = $1 AND o.status IN ('validee', 'livree')
+         AND COALESCE(o.tva_regime, 'normal') = 'normal' AND COALESCE(o.tva_amount, 0) = 0 AND COALESCE(o.total_amount, 0) > 0
+         AND ${jourVente} LIKE $2
+       ORDER BY ${jourVente}, o.order_seq`,
+      [merchantId, `${mois}-%`]
+    );
+    const exo = construireAnnexeExonerations(exonerees.rows, L[15]);
+    if (exo.annexe) annexesOps.push(exo.annexe);
+    if (exo.ecart !== 0) alertes.push(`Annexe des exonérations : ${fcfa(Math.abs(exo.ecart))} d'écart entre les ventes sans TVA et la ligne 15 (voir la dernière ligne de l'annexe). Vérifiez les ventes à reliquat non livré et les retours du mois.`);
     if (importsRes.rows.length > 0) {
       annexesOps.push({
         titre: 'Annexe IMPORTATIONS',

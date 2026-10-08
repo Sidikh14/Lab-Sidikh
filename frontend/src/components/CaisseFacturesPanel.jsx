@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { PiecesModal } from './PiecesModal';
 
 // Factures de charges « à payer plus tard » (dette fournisseur) : on les règle ici,
 // depuis la caisse (espèces, Wave, Orange Money) ou par virement. Le règlement crée la
@@ -26,6 +27,8 @@ export function CaisseFacturesPanel({ warehouseId, refreshKey, onPaid }) {
   const [erreur, setErreur] = useState('');
   const [message, setMessage] = useState('');
   const [envoi, setEnvoi] = useState(false);
+  // Justificatif (facture du fournisseur, reçu…) joint à une facture à payer.
+  const [piecesFacture, setPiecesFacture] = useState(null);
 
   async function charger() {
     try {
@@ -79,12 +82,17 @@ export function CaisseFacturesPanel({ warehouseId, refreshKey, onPaid }) {
           <span style={{ fontSize: 13.5 }}>{dateFr(f.bill_date)} · {f.label}</span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{fmt(f.amount)} FCFA</strong>
+            <button type="button" className="btn" style={{ padding: '6px 10px', fontSize: 12.5 }} onClick={() => setPiecesFacture(f)}>Justificatif</button>
             <button type="button" className={`btn ${choix?.id === f.id ? 'btn-principal' : ''}`} style={{ padding: '6px 10px', fontSize: 12.5 }} onClick={() => choisir(f)}>
               Régler
             </button>
           </span>
         </div>
       ))}
+
+      {piecesFacture && (
+        <PiecesModal sourceType="facture_charge" sourceId={piecesFacture.id} titre={`${piecesFacture.label} — ${fmt(piecesFacture.amount)} FCFA`} onClose={() => setPiecesFacture(null)} />
+      )}
 
       {choix && (
         <form onSubmit={regler} style={{ marginTop: 14, display: 'grid', gap: 10, maxWidth: 420 }}>

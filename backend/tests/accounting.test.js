@@ -27,11 +27,12 @@ function trouverRoutes() {
 
 function charger() {
   const src = fs.readFileSync(trouverRoutes(), 'utf8')
-    + '\nglobalThis.__T = { lireFacturesCharges, lireReglementsCharges, lireCaisse, lireVentes, lireAchats, lireRetours, lirePertes, retenueBrs, ligne };';
+    + '\nglobalThis.__T = { lireFacturesCharges, lireReglementsCharges, lireCaisse, lireVentes, lireAchats, lireRetours, lirePertes, construireAnnexeExonerations, piecesCaisse, retenueBrs, ligne };';
   const routeur = new Proxy({}, { get: () => () => {} });
   const faux = {
     express: Object.assign(() => ({}), { Router: () => routeur, raw: () => () => {}, json: () => () => {}, urlencoded: () => () => {} }),
     pdfkit: function PDFDocument() {},
+    '../config/db': { query: (...a) => globalThis.__baseFausse(...a), connect: async () => ({}) },
   };
   const req = (nom) => faux[nom] || new Proxy({}, { get: () => () => {} });
   const module_ = { exports: {} };
@@ -208,4 +209,104 @@ test('vente avec coût de revient : 6031 / 311 équilibrés', async () => {
   equilibre(e);
   assert.equal(montantSur(e, '6031', 'debit'), 40000);
   assert.equal(montantSur(e, '311', 'credit'), 40000);
+});
+
+// ---------- Annexe « Exonérations » (R6) ----------
+const venteExo = (n, ht) => ({ order_seq: n, client: 'Client', d: '2026-10-0' + n, ht: String(ht) });
+const totalAnnexe = (a) => a.lignes[a.lignes.length - 1].cells[3];
+
+test('annexe exonérations : les ventes listées égalent la ligne 15, aucun écart', () => {
+  const { annexe, ecart } = T.construireAnnexeExonerations([venteExo(1, 40000), venteExo(2, 60000)], 100000);
+  assert.equal(ecart, 0);
+  assert.equal(annexe.lignes.length, 3); // 2 ventes + total
+  assert.equal(totalAnnexe(annexe), (100000).toLocaleString('fr-FR'));
+});
+
+test('annexe exonérations : ligne 15 plus grande que les ventes -> ligne « autres opérations »', () => {
+  const { annexe, ecart } = T.construireAnnexeExonerations([venteExo(1, 40000)], 100000);
+  assert.equal(ecart, 60000);
+  assert.equal(annexe.lignes.length, 3);
+  assert.match(annexe.lignes[1][2], /Autres opérations exonérées/);
+  assert.equal(totalAnnexe(annexe), (100000).toLocaleString('fr-FR'));
+});
+
+test('annexe exonérations : ventes plus grandes que la ligne 15 -> ajustement négatif', () => {
+  const { annexe, ecart } = T.construireAnnexeExonerations([venteExo(1, 70000), venteExo(2, 50000)], 100000);
+  assert.equal(ecart, -20000);
+  assert.match(annexe.lignes[2][2], /Ajustement/);
+  assert.equal(totalAnnexe(annexe), (100000).toLocaleString('fr-FR'));
+});
+
+test('annexe exonérations : rien à déclarer -> pas d\'annexe', () => {
+  const { annexe, ecart } = T.construireAnnexeExonerations([], 0);
+  assert.equal(annexe, null);
+  assert.equal(ecart, 0);
+});
+
+// ---------- Pièces jointes de la Caisse (R5) ----------
+// Faux serveur : base programmable + requête/réponse minimales.
+function lancerPieces({ user, method = 'POST', path = '/', query = {}, base }) {
+  globalThis.__baseFausse = async (sql, params) => base(sql, params);
+  const res = { code: null, status(c) { this.code = c; return this; }, json(b) { this.corps = b; return this; } };
+  let suite = false;
+  const req = { user, method, path, query };
+  return T.piecesCaisse(req, res, () => { suite = true; }).then(() => ({ suite, code: res.code, corps: res.corps, req }));
+}
+const caissier = { id: 'u1', role: 'caissier', merchantId: 'm1', warehouseIds: ['w1'] };
+const baseCaisse = ({ module = true, lieu = 'w1', auteur = 'u9', pieceAuteur = 'u1' } = {}) => async (sql) => {
+  if (sql.includes('accounting_enabled')) return { rows: [{ accounting_enabled: module }] };
+  if (sql.includes('FROM accounting_attachments')) return { rows: [{ source_type: 'sortie_caisse', source_id: 's1', auteur: pieceAuteur }] };
+  if (sql.includes('FROM cash_expenses') || sql.includes('FROM accounting_charge_bills')) return { rows: [{ lieu, auteur }] };
+  return { rows: [] };
+};
+
+test('pièces de caisse : le manager suit le chemin habituel, sans requête', async () => {
+  const r = await lancerPieces({ user: { id: 'u1', role: 'manager', merchantId: 'm1' }, query: { sourceType: 'immobilisation', sourceId: 'x' }, base: () => { throw new Error('ne doit rien lire'); } });
+  assert.equal(r.suite, true);
+  assert.equal(r.req.pieceCaisse, undefined);
+});
+
+test('pièces de caisse : le caissier joint un justificatif à une sortie de son lieu', async () => {
+  const r = await lancerPieces({ user: caissier, query: { sourceType: 'sortie_caisse', sourceId: 's1' }, base: baseCaisse() });
+  assert.equal(r.suite, true);
+  assert.equal(r.req.pieceCaisse, true);
+});
+
+test('pièces de caisse : sortie d\'un autre lieu refusée, sauf si c\'est la sienne', async () => {
+  const autre = await lancerPieces({ user: caissier, query: { sourceType: 'sortie_caisse', sourceId: 's1' }, base: baseCaisse({ lieu: 'w2' }) });
+  assert.equal(autre.code, 403);
+  assert.equal(autre.suite, false);
+  const sienne = await lancerPieces({ user: caissier, query: { sourceType: 'sortie_caisse', sourceId: 's1' }, base: baseCaisse({ lieu: 'w2', auteur: 'u1' }) });
+  assert.equal(sienne.suite, true);
+});
+
+test('pièces de caisse : facture de charge acceptée, autre type de pièce refusé', async () => {
+  const ok = await lancerPieces({ user: caissier, query: { sourceType: 'facture_charge', sourceId: 'f1' }, base: baseCaisse() });
+  assert.equal(ok.suite, true);
+  const non = await lancerPieces({ user: caissier, query: { sourceType: 'immobilisation', sourceId: 'i1' }, base: baseCaisse() });
+  assert.equal(non.code, 403);
+});
+
+test('pièces de caisse : module comptabilité désactivé ou rôle inconnu refusé', async () => {
+  const sansModule = await lancerPieces({ user: caissier, query: { sourceType: 'sortie_caisse', sourceId: 's1' }, base: baseCaisse({ module: false }) });
+  assert.equal(sansModule.code, 403);
+  const vendeur = await lancerPieces({ user: { ...caissier, role: 'vendeur' }, query: { sourceType: 'sortie_caisse', sourceId: 's1' }, base: baseCaisse() });
+  assert.equal(vendeur.code, 403);
+});
+
+test('pièces de caisse : suppression limitée à ses propres envois', async () => {
+  const id = '11111111-2222-3333-4444-555555555555';
+  const sienne = await lancerPieces({ user: caissier, method: 'DELETE', path: `/${id}`, base: baseCaisse({ pieceAuteur: 'u1' }) });
+  assert.equal(sienne.suite, true);
+  const autrui = await lancerPieces({ user: caissier, method: 'DELETE', path: `/${id}`, base: baseCaisse({ pieceAuteur: 'u9' }) });
+  assert.equal(autrui.code, 403);
+});
+
+test('pièces de caisse : lecture du fichier d\'une pièce de caisse autorisée, d\'une autre source refusée', async () => {
+  const id = '11111111-2222-3333-4444-555555555555';
+  const ok = await lancerPieces({ user: caissier, method: 'GET', path: `/${id}/file`, base: baseCaisse() });
+  assert.equal(ok.suite, true);
+  const autreSource = async (sql) => (sql.includes('FROM accounting_attachments') ? { rows: [{ source_type: 'immobilisation', source_id: 'i1', auteur: 'u1' }] } : baseCaisse()(sql));
+  const non = await lancerPieces({ user: caissier, method: 'GET', path: `/${id}/file`, base: autreSource });
+  assert.equal(non.code, 403);
 });

@@ -5,6 +5,7 @@ import { useLiveEvent } from '../offline/liveEvents';
 
 import { StylesModernes } from '../components/StylesModernes';
 import { CaisseFacturesPanel } from '../components/CaisseFacturesPanel';
+import { PiecesModal } from '../components/PiecesModal';
 const MOYENS_PAIEMENT = [
   { value: 'especes', label: 'Espèces' },
   { value: 'wave', label: 'Wave' },
@@ -180,6 +181,9 @@ export function CaissePage() {
   const [natures, setNatures] = useState([]);
   // Module Fiscalité actif : le bénéficiaire est alors exigé pour les loyers et prestations (retenue BRS de 5 %).
   const [brsActif, setBrsActif] = useState(false);
+  // Justificatif d'une sortie de caisse : proposé seulement si le module comptabilité est activé.
+  const [piecesSortie, setPiecesSortie] = useState(null);
+  const comptaActive = natures.length > 0;
   useEffect(() => {
     api.getCaisseNatures()
       .then((d) => {
@@ -665,6 +669,7 @@ export function CaissePage() {
                   <th>Moyen</th>
                   <th>Enregistré par</th>
                   <th>Montant</th>
+                  {comptaActive && <th>Pièces</th>}
                 </tr>
               </thead>
               <tbody>
@@ -675,11 +680,19 @@ export function CaissePage() {
                     <td>{MOYENS_PAIEMENT.find((m) => m.value === s.payment_method)?.label || s.payment_method}</td>
                     <td>{s.user_name}</td>
                     <td className="chiffre">{Math.round(s.amount).toLocaleString('fr-FR')} FCFA</td>
+                    {comptaActive && (
+                      <td>
+                        <button type="button" className="btn" style={{ padding: '4px 10px', fontSize: 12.5 }} onClick={() => setPiecesSortie(s)}>Justificatif</button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
             </div>
+            {piecesSortie && (
+              <PiecesModal sourceType="sortie_caisse" sourceId={piecesSortie.id} titre={`${piecesSortie.reason} — ${Math.round(piecesSortie.amount).toLocaleString('fr-FR')} FCFA`} onClose={() => setPiecesSortie(null)} />
+            )}
             </>
           )}
         </>
