@@ -1,3 +1,9 @@
+/* Charte graphique Amaterasu v7 — jetons de design.
+   Nuit #14151f · Indigo #5b4fe9 · Ardoise #6b7280 · Brume #f7f8fa
+   Indigo clair #dedcfb · Indigo survol #4a3fd1
+   Succès #0e7490 · Alerte #92400e · Erreur #b91c1c
+   Poppins (marque, titres) · Inter (interface dense, chiffres) */
+
 :root {
   --fond: #f7f8fa;
   --carte: #ffffff;
@@ -7,16 +13,16 @@
   --trait-fort: #d1d5db;
 
   --accent: #5b4fe9;
-  --accent-fonce: #4638c2;
-  --accent-clair: #eeebff;
+  --accent-fonce: #4a3fd1;
+  --accent-clair: #dedcfb;
 
-  --vif: #0891b2;
+  --vif: #0e7490;
   --vif-clair: #e0f5f8;
 
-  --danger: #dc2626;
+  --danger: #b91c1c;
   --danger-clair: #fce8e6;
 
-  --warning: #d97706;
+  --warning: #92400e;
   --warning-clair: #fef3c7;
 
   --rayon: 14px;
@@ -25,9 +31,9 @@
   --ombre-flottante: 0 8px 24px rgba(20, 21, 31, 0.14), 0 2px 6px rgba(20, 21, 31, 0.08);
   --transition: 0.15s ease;
 
-  --font-marque: 'Manrope', sans-serif;
+  --font-marque: 'Poppins', sans-serif;
   --font-ui: 'Inter', sans-serif;
-  --font-chiffres: 'IBM Plex Mono', monospace;
+  --font-chiffres: 'Inter', sans-serif;
 }
 
 * {
@@ -55,7 +61,7 @@ h2,
 h3 {
   font-family: var(--font-marque);
   font-weight: 700;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.01em;
   margin: 0;
   color: var(--encre);
 }

@@ -106,10 +106,10 @@ function IconSecteurTextile() {
 }
 
 const SECTEURS_VITRINE = [
-  { nom: 'Grossiste', tagline: 'Distribution & gros volumes', couleur: '#A78BFA', couleurClaire: 'rgba(167, 139, 250, 0.16)', Icone: IconSecteurGrossiste },
-  { nom: 'Pharmacie', tagline: 'Lots & péremption', couleur: '#4ADE80', couleurClaire: 'rgba(74, 222, 128, 0.16)', Icone: IconSecteurPharmacie },
-  { nom: 'Électroménager', tagline: 'Références & garanties', couleur: '#FBBF24', couleurClaire: 'rgba(251, 191, 36, 0.16)', Icone: IconSecteurElectromenager },
-  { nom: 'Textile', tagline: 'Tailles & coloris', couleur: '#F87171', couleurClaire: 'rgba(248, 113, 113, 0.16)', Icone: IconSecteurTextile },
+  { nom: 'Grossiste', tagline: 'Distribution & gros volumes', couleur: '#DEDCFB', couleurClaire: 'rgba(222, 220, 251, 0.16)', Icone: IconSecteurGrossiste },
+  { nom: 'Pharmacie', tagline: 'Lots & péremption', couleur: '#DEDCFB', couleurClaire: 'rgba(222, 220, 251, 0.16)', Icone: IconSecteurPharmacie },
+  { nom: 'Électroménager', tagline: 'Références & garanties', couleur: '#DEDCFB', couleurClaire: 'rgba(222, 220, 251, 0.16)', Icone: IconSecteurElectromenager },
+  { nom: 'Textile', tagline: 'Tailles & coloris', couleur: '#DEDCFB', couleurClaire: 'rgba(222, 220, 251, 0.16)', Icone: IconSecteurTextile },
 ];
 
 export function LoginPage() {
@@ -221,7 +221,7 @@ export function LoginPage() {
         <div className="fond-halo" aria-hidden="true" />
 
         <div className="marque-entete">
-          <div className="logo-badge">A</div>
+          <img className="logo-badge" src="/amaterasu-emblem.svg" alt="" width="40" height="40" />
           <span className="nom-marque">Amaterasu</span>
         </div>
 

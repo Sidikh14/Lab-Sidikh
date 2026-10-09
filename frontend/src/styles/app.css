@@ -498,7 +498,7 @@
 
 .barre-haut-commerce {
   font-family: var(--font-marque);
-  font-weight: 800;
+  font-weight: 700;
   font-size: 20px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -628,12 +628,18 @@
 .marque {
   font-family: var(--font-marque);
   font-size: 19px;
-  font-weight: 800;
+  font-weight: 700;
   padding: 0 20px 22px;
   margin-bottom: 12px;
   line-height: 1.3;
   word-break: break-word;
   color: #ffffff;
+}
+
+.marque-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .marque .sous-titre {
@@ -643,7 +649,7 @@
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #8b8de0;
+  color: var(--accent-clair);
   margin-top: 4px;
 }
 
@@ -703,7 +709,7 @@
 }
 
 .pied-sidebar .role {
-  color: #8b8de0;
+  color: var(--accent-clair);
   margin: 0 0 2px;
   text-transform: capitalize;
   font-size: 12px;
@@ -897,7 +903,7 @@ table.registre tr:last-child td {
 
 .panneau-marque {
   flex: 1.15;
-  background: linear-gradient(160deg, #14151f 0%, #1b1c2e 50%, #241f3d 100%);
+  background: linear-gradient(160deg, var(--encre) 0%, #1d1e28 50%, #241f3d 100%);
   color: #ffffff;
   display: flex;
   flex-direction: column;
@@ -936,24 +942,16 @@ table.registre tr:last-child td {
 }
 
 .logo-badge {
-  width: 36px;
-  height: 36px;
-  border-radius: 9px;
-  background: linear-gradient(135deg, var(--accent) 0%, #8b7bf0 100%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-ui);
-  font-weight: 700;
-  font-size: 17px;
-  color: #ffffff;
+  /* Emblème Amaterasu : <img src="/amaterasu-emblem.svg"> */
+  width: 40px;
+  height: 40px;
+  display: block;
   flex-shrink: 0;
-  box-shadow: 0 4px 14px rgba(91, 79, 233, 0.45);
 }
 
 .nom-marque {
-  font-family: var(--font-ui);
-  font-weight: 600;
+  font-family: var(--font-marque);
+  font-weight: 700;
   font-size: 19px;
   color: #ffffff;
   letter-spacing: 0.01em;
@@ -964,15 +962,15 @@ table.registre tr:last-child td {
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #a99cff;
+  color: var(--accent-clair);
   margin-bottom: 16px;
   position: relative;
   z-index: 1;
 }
 
 .titre-marque {
-  font-family: var(--font-ui);
-  font-weight: 800;
+  font-family: var(--font-marque);
+  font-weight: 700;
   font-size: 46px;
   line-height: 1.12;
   letter-spacing: -0.02em;
@@ -983,7 +981,7 @@ table.registre tr:last-child td {
 }
 
 .titre-marque-accent {
-  background: linear-gradient(90deg, #a99cff 0%, #6fd8e8 100%);
+  background: linear-gradient(90deg, var(--accent-clair) 0%, #ffffff 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -1028,7 +1026,7 @@ table.registre tr:last-child td {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #a99cff;
+  color: var(--accent-clair);
   flex-shrink: 0;
 }
 

@@ -345,7 +345,8 @@ export function Sidebar({ ouvert = false, onFermer }) {
     <nav className={'barre-laterale' + (ouvert ? ' ouverte' : '')}>
       <div className="marque">
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-          <span>
+          <span className="marque-logo">
+            <img src="/amaterasu-emblem.svg" alt="" width="28" height="28" />
             Amaterasu
           </span>
           <button type="button" className="bouton-fermer-menu" onClick={onFermer} aria-label="Fermer le menu">
