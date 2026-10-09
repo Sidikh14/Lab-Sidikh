@@ -151,6 +151,17 @@ router.patch('/:id/status', requireRole('manager'), async (req, res) => {
       return res.status(404).json({ error: 'Membre introuvable.' });
     }
 
+    // Paie : la fiche employé liée suit le compte (archivée à la désactivation, réactivée ensuite).
+    // L'historique de paie n'est jamais touché.
+    await pool.query(
+      `UPDATE employees
+       SET status = $1::text,
+           archived_at = CASE WHEN $2::boolean THEN NULL ELSE COALESCE(archived_at, now()) END,
+           updated_at = now()
+       WHERE user_id = $3 AND merchant_id = $4`,
+      [isActive ? 'actif' : 'archive', isActive, req.params.id, req.user.merchantId]
+    );
+
     await logActivity({
       merchantId: req.user.merchantId,
       userId: req.user.id,

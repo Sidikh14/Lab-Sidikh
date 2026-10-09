@@ -90,6 +90,33 @@ async function previewFile(path) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
+// Télécharge un fichier (CSV d'export, par exemple) au lieu de l'ouvrir dans un onglet.
+async function downloadFile(path, fallbackName) {
+  const token = getToken();
+  const response = await fetch(`${API_URL}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (response.status === 401) {
+    signalerSessionExpiree();
+    throw new Error('Votre session a expiré. Veuillez vous reconnecter.');
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(body?.error || `Erreur ${response.status}`);
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get('content-disposition') || '';
+  const nom = /filename="?([^";]+)"?/.exec(disposition)?.[1] || fallbackName || 'export.csv';
+  const url = URL.createObjectURL(blob);
+  const lien = document.createElement('a');
+  lien.href = url;
+  lien.download = nom;
+  document.body.appendChild(lien);
+  lien.click();
+  lien.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
 // Génère un PDF à partir de données envoyées (POST) et renvoie le Blob, pour un aperçu
 // intégré à la page (télécharger / imprimer) au lieu d'un nouvel onglet.
 async function requestBlob(path, payload) {
@@ -544,11 +571,61 @@ export const api = {
     request('/payroll/settings', { method: 'PUT', body: JSON.stringify(data) }),
   getSalaryBonuses: (userId, month) =>
     request(`/payroll/${userId}/bonuses${month ? `?month=${month}` : ''}`),
+  getSalaryDeductions: (userId, month) =>
+    request(`/payroll/${userId}/deductions${month ? `?month=${month}` : ''}`),
   generatePayslip: (userId, data) =>
     request(`/payroll/${userId}/generate`, { method: 'POST', body: JSON.stringify(data) }),
   getPayslip: (userId, month) => request(`/payroll/${userId}/${month}`),
   previewPayslipPdf: (userId, month) => previewFile(`/payroll/${userId}/${month}/pdf`),
   getMyPayslips: () => request('/payroll/mine'),
+  rectifyPayslip: (userId, month, data) =>
+    request(`/payroll/${userId}/${month}/rectify`, { method: 'POST', body: JSON.stringify(data) }),
+  getPayslipVersions: (userId, month) => request(`/payroll/${userId}/${month}/versions`),
+  previewPayslipVersionPdf: (userId, month, version) => previewFile(`/payroll/${userId}/${month}/pdf?version=${version}`),
+  previewPayrollMonth: (month) => request(`/payroll/preview-month?month=${month}`),
+  generateAllPayslips: (month, regenerate = false) =>
+    request('/payroll/generate-all', { method: 'POST', body: JSON.stringify({ month, regenerate }) }),
+  sendPayslips: (month, employeeIds) =>
+    request('/payroll/send', { method: 'POST', body: JSON.stringify({ month, employeeIds }) }),
+  printPayslipsPdf: (month, includeAccounts = false) =>
+    previewFile(`/payroll/print?month=${month}${includeAccounts ? '&includeAccounts=1' : ''}`),
+  getPayrollAlerts: () => request('/payroll/alerts'),
+  // États : kind = livre | cotisations | annuel | masse-salariale ; format = pdf | csv
+  openPayrollReport: (kind, params, format) => {
+    const query = new URLSearchParams({ ...params, format }).toString();
+    const chemin = `/payroll/reports/${kind}?${query}`;
+    return format === 'csv' ? downloadFile(chemin, `${kind}.csv`) : previewFile(chemin);
+  },
+  getPayrollReport: (kind, params) => request(`/payroll/reports/${kind}?${new URLSearchParams(params).toString()}`),
+  payAllSalaries: (data) => request('/salaries/pay-all', { method: 'POST', body: JSON.stringify(data) }),
+  downloadSalaryExport: (month, group) => downloadFile(`/salaries/export?month=${month}&group=${group}`, `paiements-${group}-${month}.csv`),
+
+  // Paie : fiches employés, absences, heures supplémentaires, avances
+  getEmployees: (status) => request(`/employees${status ? `?status=${status}` : ''}`),
+  getEmployee: (id) => request(`/employees/${id}`),
+  createEmployee: (data) => request('/employees', { method: 'POST', body: JSON.stringify(data) }),
+  updateEmployee: (id, data) => request(`/employees/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  archiveEmployee: (id, data = {}) => request(`/employees/${id}/archive`, { method: 'POST', body: JSON.stringify(data) }),
+  restoreEmployee: (id) => request(`/employees/${id}/restore`, { method: 'POST' }),
+  getEmployeeSalaryHistory: (id) => request(`/employees/${id}/salary-history`),
+  addEmployeeSalaryHistory: (id, data) => request(`/employees/${id}/salary-history`, { method: 'POST', body: JSON.stringify(data) }),
+  getAbsences: (month) => request(`/employees/absences${month ? `?month=${month}` : ''}`),
+  addAbsence: (id, data) => request(`/employees/${id}/absences`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteAbsence: (absenceId) => request(`/employees/absences/${absenceId}`, { method: 'DELETE' }),
+  getOvertime: (month) => request(`/employees/overtime${month ? `?month=${month}` : ''}`),
+  addOvertime: (id, data) => request(`/employees/${id}/overtime`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteOvertime: (rowId) => request(`/employees/overtime/${rowId}`, { method: 'DELETE' }),
+  getAdvances: (status) => request(`/employees/advances${status ? `?status=${status}` : ''}`),
+  addAdvance: (id, data) => request(`/employees/${id}/advances`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // Documents RH
+  getHrTemplates: () => request('/hr-documents/templates'),
+  saveHrTemplate: (type, data) => request(`/hr-documents/templates/${type}`, { method: 'PUT', body: JSON.stringify(data) }),
+  resetHrTemplate: (type) => request(`/hr-documents/templates/${type}`, { method: 'DELETE' }),
+  renderHrDocument: (data) => request('/hr-documents/render', { method: 'POST', body: JSON.stringify(data) }),
+  issueHrDocument: (data) => request('/hr-documents/issue', { method: 'POST', body: JSON.stringify(data) }),
+  getHrIssued: (employeeId) => request(`/hr-documents/issued${employeeId ? `?employeeId=${employeeId}` : ''}`),
+  openHrDocument: (id) => previewFile(`/hr-documents/issued/${id}/pdf`),
 
   getInventorySessions: (warehouseId) => request(`/inventory-sessions${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),

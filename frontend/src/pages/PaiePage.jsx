@@ -6,6 +6,7 @@ import { useModulesAccess } from '../hooks/useModulesAccess';
 import { StylesModernes } from '../components/StylesModernes';
 import { PageModuleNonActive } from '../components/ModuleNonActive';
 import { ImpotsTab } from './ComptabilitePage';
+import { ActionsMois, AlertesPaie, EmployesTab, AbsencesHeuresTab, AvancesTab, DocumentsRhTab, EtatsTab, ReglagesPeriodeSection } from './PaiePlus';
 
 const TYPES_RETENUE = [
   { value: 'avance', label: 'Avance sur salaire', court: 'Avance' },
@@ -77,6 +78,8 @@ function SalairesTab() {
   const [chargementBulletin, setChargementBulletin] = useState(false);
 
   const [employePaiement, setEmployePaiement] = useState(null);
+  const [rectifier, setRectifier] = useState(false);
+  const [motifRectif, setMotifRectif] = useState('');
   const [montantPaiement, setMontantPaiement] = useState('');
   const [methodePaiement, setMethodePaiement] = useState('especes');
   const [envoiEnCours, setEnvoiEnCours] = useState(false);
@@ -113,6 +116,8 @@ function SalairesTab() {
   async function ouvrirBulletin(emp) {
     setEmployeBulletin(emp);
     setBulletinCalcule(null);
+    setRectifier(false);
+    setMotifRectif('');
     setFicheModifiee(false);
     setErreur('');
     setSalaireSaisi(emp.monthly_salary ? Math.round(Number(emp.monthly_salary)) : '');
@@ -214,11 +219,15 @@ function SalairesTab() {
         recurringBonuses: primesValides.filter((p) => p.fixe).map(({ label, amount }) => ({ label, amount })),
       });
       // 2) Calcul et enregistrement du bulletin du mois.
-      const resultat = await api.generatePayslip(employeBulletin.id, {
+      const donnees = {
         month: mois,
         bonuses: primesValides.map(({ label, amount }) => ({ label, amount })),
         deductions: retenuesValides,
-      });
+      };
+      // Rectificatif : nouvelle version, l'ancien bulletin reste consultable (mois non payé uniquement).
+      const resultat = rectifier && bulletinCalcule
+        ? await api.rectifyPayslip(employeBulletin.id, mois, { ...donnees, reason: motifRectif })
+        : await api.generatePayslip(employeBulletin.id, donnees);
       setBulletinCalcule(resultat);
       setFicheModifiee(false);
       charger();
@@ -302,6 +311,8 @@ function SalairesTab() {
         </div>
       </div>
 
+      <ActionsMois mois={mois} onChange={charger} />
+
       {erreur && <div className="erreur">{erreur}</div>}
 
       {chargement ? (
@@ -352,8 +363,8 @@ function SalairesTab() {
                   >
                     PDF
                   </button>
-                  <button className={'btn' + (emp.payslip_net && !paye ? ' btn-principal' : '')} disabled={!emp.payslip_net} onClick={() => ouvrirPaiement(emp)}>
-                    {paye ? 'Modifier le paiement' : 'Payer'}
+                  <button className={'btn' + (emp.payslip_net && !paye ? ' btn-principal' : '')} disabled={!emp.payslip_net || paye} onClick={() => ouvrirPaiement(emp)}>
+                    {paye ? 'Payé' : 'Payer'}
                   </button>
                 </div>
               </div>
@@ -375,7 +386,7 @@ function SalairesTab() {
 
             {employeBulletin.paid_at && (
               <div className="md-info">
-                Ce mois est déjà payé. Modifier la fiche met à jour le bulletin, mais pas le paiement déjà enregistré.
+                Ce mois est déjà payé : le bulletin est verrouillé (consultation et PDF uniquement).
               </div>
             )}
 
@@ -563,6 +574,18 @@ function SalairesTab() {
                   )}
                 </section>
 
+                {bulletinCalcule && !employeBulletin.paid_at && (
+                  <div className="champ-groupe">
+                    <label className="etiquette">
+                      <input type="checkbox" checked={rectifier} onChange={(e) => setRectifier(e.target.checked)} />
+                      {' '}Conserver l'ancienne version (bulletin rectificatif{bulletinCalcule.number ? `, ${bulletinCalcule.number}` : ''})
+                    </label>
+                    {rectifier && (
+                      <input className="champ" placeholder="Motif de la rectification" value={motifRectif} onChange={(e) => setMotifRectif(e.target.value)} />
+                    )}
+                  </div>
+                )}
+
                 <div className="actions-modale">
                   <button type="button" className="btn" onClick={() => setEmployeBulletin(null)}>Fermer</button>
                   {bulletinCalcule && (
@@ -575,7 +598,7 @@ function SalairesTab() {
                       Voir / imprimer le PDF
                     </button>
                   )}
-                  <button type="submit" className="btn btn-principal" disabled={envoiEnCours}>
+                  <button type="submit" className="btn btn-principal" disabled={envoiEnCours || Boolean(employeBulletin.paid_at)}>
                     {envoiEnCours ? 'Calcul…' : bulletinCalcule ? 'Recalculer et enregistrer' : 'Calculer et enregistrer'}
                   </button>
                 </div>
@@ -886,6 +909,11 @@ export function PaiePage() {
         <button className={onglet === 'salaires' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('salaires')}>
           Salaires
         </button>
+        <button className={onglet === 'employes' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('employes')}>Employés</button>
+        <button className={onglet === 'absences' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('absences')}>Absences et heures</button>
+        <button className={onglet === 'avances' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('avances')}>Avances</button>
+        <button className={onglet === 'documents' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('documents')}>Documents RH</button>
+        <button className={onglet === 'etats' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('etats')}>États</button>
         <button className={onglet === 'reglages-paie' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('reglages-paie')}>
           Réglages paie
         </button>
@@ -896,8 +924,19 @@ export function PaiePage() {
         )}
       </div>
 
+      <AlertesPaie />
       {onglet === 'salaires' && <SalairesTab />}
-      {onglet === 'reglages-paie' && <ReglagesPaieTab />}
+      {onglet === 'employes' && <EmployesTab />}
+      {onglet === 'absences' && <AbsencesHeuresTab />}
+      {onglet === 'avances' && <AvancesTab />}
+      {onglet === 'documents' && <DocumentsRhTab />}
+      {onglet === 'etats' && <EtatsTab />}
+      {onglet === 'reglages-paie' && (
+        <>
+          <ReglagesPaieTab />
+          <ReglagesPeriodeSection />
+        </>
+      )}
       {onglet === 'cotisations' && cotisationsDisponibles && <ImpotsTab mode="cotisations" />}
     </>
   );

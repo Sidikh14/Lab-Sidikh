@@ -2195,7 +2195,7 @@ router.get('/declarations/tva', async (req, res) => {
 async function lireSalairesMois(merchantId, mois) {
   const r = await pool.query(
     `SELECT u.full_name, COALESCE(p.gross_salary, 0) AS brut, COALESCE(p.irpp, 0) AS irpp, COALESCE(p.trimf, 0) AS trimf, COALESCE(p.cfce, 0) AS cfce
-     FROM payslips p JOIN users u ON u.id = p.user_id WHERE p.merchant_id = $1 AND p.month = $2 ORDER BY u.full_name`,
+     FROM payslips p JOIN employees u ON u.id = p.user_id WHERE p.merchant_id = $1 AND p.month = $2 AND p.status <> 'remplace' ORDER BY u.full_name`,
     [merchantId, mois]
   );
   const salaries = r.rows.map((x) => ({ name: x.full_name, gross: Math.round(Number(x.brut)), ir: Math.round(Number(x.irpp)), trimf: Math.round(Number(x.trimf)), cfce: Math.round(Number(x.cfce)) }));
@@ -2786,10 +2786,10 @@ async function lirePaie(client, merchantId, debut, ctx) {
   const fin = `(to_date(p.month || '-01', 'YYYY-MM-DD') + interval '1 month' - interval '1 day')::date`;
   const r = await client.query(
     `SELECT p.id::text AS id, p.user_id::text AS user_id, p.month, p.gross_salary, p.net_a_payer,
-            p.ipres_salarial, p.css_salarial, p.irpp, p.trimf, p.ipres_patronal, p.css_patronal, p.cfce, u.full_name,
+            p.ipres_salarial, p.css_salarial, p.irpp, p.trimf, p.ipres_patronal, p.css_patronal, p.cfce, p.deductions_total, u.full_name,
             to_char(LEAST(${fin}, CURRENT_DATE), 'YYYY-MM-DD') AS d
-     FROM payslips p JOIN users u ON u.id = p.user_id
-     WHERE p.merchant_id = $1 AND ${fin} >= $2::date
+     FROM payslips p JOIN employees u ON u.id = p.user_id
+     WHERE p.merchant_id = $1 AND p.status <> 'remplace' AND ${fin} >= $2::date
      ORDER BY p.month, u.full_name`,
     [merchantId, debut]
   );
@@ -2803,20 +2803,23 @@ async function lirePaie(client, merchantId, debut, ctx) {
     const retenue = arrondi(n(row.irpp) + n(row.trimf));
     const patronal = arrondi(n(row.ipres_patronal) + n(row.css_patronal));
     const cfce = n(row.cfce);
+    // Retenues déduites du net (avances, prêts, autres) : elles soldent le compte du personnel (421).
+    const deductions = n(row.deductions_total);
     // Le brut est déduit du net et des retenues pour que l'écriture soit toujours équilibrée.
-    const brut = arrondi(net + css + ipres + retenue);
+    const brut = arrondi(net + css + ipres + retenue + deductions);
     if (!(brut > 0)) continue;
     if (Math.abs(brut - n(row.gross_salary)) > 1) ecarts += 1;
     const personnel = await ctx.tiers.obtenir('personnel', row.user_id);
     out.push({
       sourceId: row.id, date: row.d, journal: 'OD', reference: `PAIE-${row.month}`,
       label: `Paie ${row.full_name} — ${row.month}`,
-      sig: `${brut}|${net}|${css}|${ipres}|${retenue}|${patronal}|${cfce}|${row.d}|${row.user_id}|t3`,
+      sig: `${brut}|${net}|${css}|${ipres}|${retenue}|${patronal}|${cfce}|${row.d}|${row.user_id}${deductions > 0 ? `|d${deductions}` : ''}|t3`,
       lignes: [
         ligne('661', brut, 0),
         ligne('664', patronal, 0),
         ligne('641', cfce, 0),
         ligne(personnel, 0, net),
+        ligne(COMPTE_AVANCES_PERSONNEL, 0, deductions),
         ligne('431', 0, arrondi(css + n(row.css_patronal))),
         ligne('432', 0, arrondi(ipres + n(row.ipres_patronal))),
         ligne('447', 0, retenue),
@@ -2828,6 +2831,35 @@ async function lirePaie(client, merchantId, debut, ctx) {
   return out;
 }
 
+// Compte des avances et acomptes au personnel (SYSCOHADA : 421). À faire valider par l'expert-comptable.
+const COMPTE_AVANCES_PERSONNEL = '421';
+
+// Avances et prêts versés aux employés : débit du compte d'avances au personnel, crédit trésorerie.
+// Les retenues sur bulletins (lirePaie) viennent ensuite le solder.
+async function lireAvances(client, merchantId, debut, ctx) {
+  const r = await client.query(
+    `SELECT a.id::text AS id, a.amount, a.payment_method, to_char(a.advance_date, 'YYYY-MM-DD') AS d, e.full_name, a.kind
+     FROM employee_advances a JOIN employees e ON e.id = a.employee_id
+     WHERE a.merchant_id = $1 AND a.advance_date >= $2::date
+     ORDER BY a.advance_date, a.created_at`,
+    [merchantId, debut]
+  );
+  const out = [];
+  for (const row of r.rows) {
+    const montant = arrondi(row.amount);
+    if (!(montant > 0)) continue;
+    const mode = modeNormalise(row.payment_method);
+    const [compte, journal] = tresorerie(mode === 'cheque' ? 'virement' : mode);
+    out.push({
+      sourceId: row.id, date: row.d, journal, reference: `AVP-${row.d.slice(0, 7)}`,
+      label: `${row.kind === 'pret' ? 'Prêt' : 'Avance'} au personnel — ${row.full_name}`,
+      sig: `${montant}|${row.payment_method}|${row.d}|${row.full_name}|t3`,
+      lignes: [ligne(COMPTE_AVANCES_PERSONNEL, montant, 0), ligne(compte, 0, montant)],
+    });
+  }
+  return out;
+}
+
 // Salaires versés (net payé) : débit du personnel à payer (422xxx) quand le
 // bulletin existe — il a déjà été comptabilisé —, sinon débit 661 ; crédit trésorerie.
 async function lireSalaires(client, merchantId, debut, ctx) {
@@ -2835,8 +2867,8 @@ async function lireSalaires(client, merchantId, debut, ctx) {
     `SELECT sp.id::text AS id, sp.user_id::text AS user_id, sp.month, sp.amount, sp.payment_method,
             to_char(sp.paid_at::date, 'YYYY-MM-DD') AS d, u.full_name, (p.id IS NOT NULL) AS bulletin
      FROM salary_payments sp
-     JOIN users u ON u.id = sp.user_id
-     LEFT JOIN payslips p ON p.user_id = sp.user_id AND p.month = sp.month
+     JOIN employees u ON u.id = sp.user_id
+     LEFT JOIN payslips p ON p.user_id = sp.user_id AND p.month = sp.month AND p.status <> 'remplace'
      WHERE u.merchant_id = $1 AND sp.paid_at::date >= $2::date
      ORDER BY sp.paid_at`,
     [merchantId, debut]
@@ -2917,7 +2949,7 @@ async function lireCaisse(client, merchantId, debut, ctx) {
         apports += 1;
       }
     } else {
-      if (/^(salaire|remboursement retour|transfert vers)/.test(motif) || row.reason.startsWith('Charge — ') || row.reason.startsWith(MOTIF_ETAT)
+      if (/^(salaire|avance sur salaire|remboursement retour|transfert vers)/.test(motif) || row.reason.startsWith('Charge — ') || row.reason.startsWith(MOTIF_ETAT)
         || row.reason.startsWith(MOTIF_REGLEMENT) || row.reason.startsWith(MOTIF_ACQUISITION)
         || row.reason.startsWith(MOTIF_FINANCEMENT)) continue;
       // Nature de charge choisie dans le formulaire de la page Caisse : elle prime sur les mots-clés.
@@ -2984,7 +3016,7 @@ const CONFIG_TIERS = {
   client: { prefixe: '411', largeur: 3, premier: 1, dernier: 899, collectif: '411', table: 'clients', libelle: 'clients' },
   assureur: { prefixe: '4119', largeur: 2, premier: 1, dernier: 99, collectif: '411900', table: 'insurers', libelle: 'assureurs' },
   fournisseur: { prefixe: '401', largeur: 3, premier: 1, dernier: 999, collectif: '401', table: 'suppliers', libelle: 'fournisseurs' },
-  personnel: { prefixe: '422', largeur: 3, premier: 1, dernier: 999, collectif: '422', table: 'users', libelle: 'personnel' },
+  personnel: { prefixe: '422', largeur: 3, premier: 1, dernier: 999, collectif: '422', table: 'employees', libelle: 'personnel' },
 };
 
 async function nomTiers(client, merchantId, type, id) {
@@ -3717,6 +3749,7 @@ const SOURCES = [
   { type: 'reglement_fournisseur', lire: lireReglementsFournisseurs },
   { type: 'paie', lire: lirePaie },
   { type: 'salaire', lire: lireSalaires },
+  { type: 'avance_personnel', lire: lireAvances },
   { type: 'caisse', lire: lireCaisse },
   { type: 'facture_charge', lire: lireFacturesCharges },
   { type: 'reglement_charge', lire: lireReglementsCharges },
@@ -3756,6 +3789,7 @@ async function synchroniserMaintenant(merchantId, userId) {
       }
       await assurerCompte(client, merchantId, '6581', 'Pertes sur stocks (casse, péremption, vol)');
       await assurerCompte(client, merchantId, '419', 'Clients, avances et acomptes reçus');
+      await assurerCompte(client, merchantId, COMPTE_AVANCES_PERSONNEL, 'Personnel, avances et acomptes');
       PLAN_VERIFIE.add(merchantId);
     }
 
@@ -4039,6 +4073,7 @@ const FLUX_LIGNES = {
   reglement_charge: ['exploitation', 'Règlements de factures de charges'],
   paie: ['exploitation', 'Salaires et charges sociales'],
   salaire: ['exploitation', 'Salaires'],
+  avance_personnel: ['exploitation', 'Avances au personnel'],
   immobilisation: ['investissement', "Acquisitions d'immobilisations"],
   cession: ['investissement', "Cessions d'immobilisations"],
   financement: ['financement', 'Emprunts, apports et remboursements'],

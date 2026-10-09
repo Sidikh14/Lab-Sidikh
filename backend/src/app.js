@@ -31,6 +31,8 @@ const zakatRoutes = require('./routes/zakat.routes');
 const maintenanceRoutes = require('./routes/maintenance.routes');
 const accountingRoutes = require('./routes/accounting.routes');
 const modulesRoutes = require('./routes/modules.routes');
+const employeesRoutes = require('./routes/employees.routes');
+const hrDocumentsRoutes = require('./routes/hr-documents.routes');
 
 const app = express();
 
@@ -79,6 +81,8 @@ app.use('/zakat', zakatRoutes);
 app.use('/maintenance', maintenanceRoutes); // public : état de maintenance d'un secteur
 app.use('/accounting', accountingRoutes); // module comptabilité (activé par l'owner)
 app.use('/modules', modulesRoutes); // modules activés par l'owner (menu latéral)
+app.use('/employees', employeesRoutes); // fiches employés, absences, heures sup, avances (module Paie)
+app.use('/hr-documents', hrDocumentsRoutes); // documents RH : attestations, certificats, contrats (module Paie)
 
 // Gestion des routes inconnues
 app.use((req, res) => {
