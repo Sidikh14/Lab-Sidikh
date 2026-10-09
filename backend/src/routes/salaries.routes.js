@@ -55,8 +55,8 @@ const SQL_EMPLOYES_DU_MOIS = `
   FROM employees e
   JOIN employee_salaries es ON es.user_id = e.id
   WHERE e.merchant_id = $1 AND e.status = 'actif'
-    AND (e.hire_date IS NULL OR e.hire_date <= (to_date($2 || '-01', 'YYYY-MM-DD') + interval '1 month' - interval '1 day')::date)
-    AND (e.end_date IS NULL OR e.end_date >= to_date($2 || '-01', 'YYYY-MM-DD'))`;
+    AND (e.hire_date IS NULL OR e.hire_date <= (to_date($2::text || '-01', 'YYYY-MM-DD') + interval '1 month' - interval '1 day')::date)
+    AND (e.end_date IS NULL OR e.end_date >= to_date($2::text || '-01', 'YYYY-MM-DD'))`;
 
 // Mois le plus avancé accessible : le mois en cours tant qu'il n'est pas
 // entièrement soldé, sinon le mois suivant (jamais plus loin).
@@ -102,7 +102,7 @@ router.get('/', async (req, res) => {
     const month = MOIS_RE.test(req.query.month || '') ? req.query.month : moisActuel();
     await creerFichesManquantes(req.user.merchantId);
     const { rows } = await pool.query(
-      `SELECT e.id, e.full_name AS name, COALESCE(e.job_title, u.role) AS role, e.status, (e.user_id IS NOT NULL) AS has_account,
+      `SELECT e.id, e.full_name AS name, COALESCE(e.job_title, u.role::text) AS role, e.status, (e.user_id IS NOT NULL) AS has_account,
               (COALESCE(e.email, '') <> '') AS has_email, to_char(e.hire_date, 'YYYY-MM-DD') AS hire_date, to_char(e.end_date, 'YYYY-MM-DD') AS end_date,
               es.monthly_salary, es.payment_method, es.parts_fiscales, es.recurring_bonuses,
               COALESCE(es.ipres_enabled, false) AS ipres_enabled, COALESCE(es.css_enabled, false) AS css_enabled,
@@ -118,8 +118,8 @@ router.get('/', async (req, res) => {
          AND (u.id IS NULL OR u.role NOT IN ('manager', 'owner'))
          AND (e.status = 'actif' OR p.id IS NOT NULL OR sp.id IS NOT NULL)
          AND (p.id IS NOT NULL OR sp.id IS NOT NULL
-              OR ((e.hire_date IS NULL OR e.hire_date <= (to_date($2 || '-01', 'YYYY-MM-DD') + interval '1 month' - interval '1 day')::date)
-                  AND (e.end_date IS NULL OR e.end_date >= to_date($2 || '-01', 'YYYY-MM-DD'))))
+              OR ((e.hire_date IS NULL OR e.hire_date <= (to_date($2::text || '-01', 'YYYY-MM-DD') + interval '1 month' - interval '1 day')::date)
+                  AND (e.end_date IS NULL OR e.end_date >= to_date($2::text || '-01', 'YYYY-MM-DD'))))
        ORDER BY e.full_name`,
       [req.user.merchantId, month]
     );

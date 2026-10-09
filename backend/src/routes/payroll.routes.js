@@ -83,8 +83,8 @@ const SQL_EMPLOYES_DU_MOIS = `
   FROM employees e
   JOIN employee_salaries es ON es.user_id = e.id
   WHERE e.merchant_id = $1 AND e.status = 'actif'
-    AND (e.hire_date IS NULL OR e.hire_date <= (to_date($2 || '-01', 'YYYY-MM-DD') + interval '1 month' - interval '1 day')::date)
-    AND (e.end_date IS NULL OR e.end_date >= to_date($2 || '-01', 'YYYY-MM-DD'))`;
+    AND (e.hire_date IS NULL OR e.hire_date <= (to_date($2::text || '-01', 'YYYY-MM-DD') + interval '1 month' - interval '1 day')::date)
+    AND (e.end_date IS NULL OR e.end_date >= to_date($2::text || '-01', 'YYYY-MM-DD'))`;
 
 const COLONNES_EMPLOYE = `e.id, e.full_name, e.email, e.user_id, e.hire_date, e.end_date,
   es.monthly_salary, es.parts_fiscales, es.ipres_enabled, es.css_enabled, es.recurring_bonuses, es.payment_method`;
@@ -223,7 +223,7 @@ async function ecrireBulletin(client, { req, employe, mois, bonuses, deductions,
   if (rectifier) {
     version = courant.version + 1;
     numero = `${String(courant.number).replace(/-R\d+$/, '')}-R${version - 1}`;
-    const placeholders = colonnes.map((_, i) => `$${i + 10}`).join(', ');
+    const placeholders = colonnes.map((_, i) => `$${i + 9}`).join(', ');
     const cree = await client.query(
       `INSERT INTO payslips (merchant_id, user_id, month, generated_by, number, version, rectifies_id, rectify_reason, status, ${colonnes.join(', ')})
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'emis', ${placeholders}) RETURNING id`,
@@ -401,7 +401,7 @@ router.post('/generate-all', GESTION, async (req, res) => {
 // Bulletins courants et payés d'un mois, avec le nécessaire pour le PDF.
 async function bulletinsPayesDuMois(merchantId, mois, empIds) {
   const { rows } = await pool.query(
-    `SELECT p.*, e.full_name, e.email, e.user_id AS compte_id, COALESCE(e.job_title, u.role) AS role,
+    `SELECT p.*, e.full_name, e.email, e.user_id AS compte_id, COALESCE(e.job_title, u.role::text) AS role,
             m.business_name, m.ninea, m.rccm, m.address, m.bank_details, m.mobile_money_details, m.payment_terms
      FROM payslips p
      JOIN employees e ON e.id = p.user_id
@@ -804,7 +804,7 @@ router.get('/:userId/:month/pdf', async (req, res) => {
     }
     const version = aRole(req.user, 'manager', 'gerant', 'comptable') && req.query.version ? Number(req.query.version) : null;
     const { rows } = await pool.query(
-      `SELECT p.*, e.full_name, COALESCE(e.job_title, u.role) AS role,
+      `SELECT p.*, e.full_name, COALESCE(e.job_title, u.role::text) AS role,
               m.business_name, m.ninea, m.rccm, m.address, m.bank_details, m.mobile_money_details, m.payment_terms
        FROM payslips p
        JOIN employees e ON e.id = p.user_id

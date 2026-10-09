@@ -78,7 +78,7 @@ async function composerBulletin({ db, employe: employeBrut, mois, reglagesMarcha
   const employe = { ...employeBrut };
   const historique = await db.query(
     `SELECT monthly_salary FROM employee_salary_history
-     WHERE employee_id = $1 AND effective_from <= (to_date($2 || '-01', 'YYYY-MM-DD') + interval '1 month' - interval '1 day')::date
+     WHERE employee_id = $1 AND effective_from <= (to_date($2::text || '-01', 'YYYY-MM-DD') + interval '1 month' - interval '1 day')::date
      ORDER BY effective_from DESC, created_at DESC LIMIT 1`,
     [employe.id, mois]
   );
