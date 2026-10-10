@@ -84,7 +84,9 @@ function calculerBulletin({ baseSalary, bonuses = [], settings, partsFiscales = 
 
   return {
     base_salary: round2(base),
-    bonuses_detail: bonuses.map((b) => ({ label: b.label, amount: round2(Number(b.amount) || 0) })),
+    bonuses_detail: bonuses.map((b) => (b.kind
+      ? { label: b.label, amount: round2(Number(b.amount) || 0), kind: b.kind }
+      : { label: b.label, amount: round2(Number(b.amount) || 0) })),
     bonuses_total: round2(bonusesTotal),
     gross_salary: round2(brut),
     parts_fiscales: parts,
@@ -105,4 +107,71 @@ function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
 
-module.exports = { calculerBulletin, appliquerBaremeProgressif, chercherPalier };
+// ---------------------------------------------------------------------------
+// Règles de période (absences, heures supplémentaires, prorata). Aucun taux ni
+// majoration n'est mis en dur : tout vient de payroll_settings (working_days_base,
+// hours_per_day, overtime_rates), à faire valider par un professionnel.
+// ---------------------------------------------------------------------------
+
+function joursDuMois(mois) {
+  const [annee, m] = mois.split('-').map(Number);
+  return new Date(Date.UTC(annee, m, 0)).getUTCDate();
+}
+
+function aaaaMmJj(date) {
+  if (!date) return null;
+  if (typeof date === 'string') return date.slice(0, 10);
+  const d = new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Retenue d'absence non payée = salaire de base / base de jours x jours d'absence.
+function calculerRetenueAbsence(baseSalary, jours, baseJours) {
+  const base = Number(baseJours) > 0 ? Number(baseJours) : 30;
+  return round2((Number(baseSalary) / base) * Number(jours));
+}
+
+// Taux horaire = salaire de base / (base de jours x heures par jour).
+function calculerTauxHoraire(baseSalary, baseJours, heuresParJour) {
+  const jours = Number(baseJours) > 0 ? Number(baseJours) : 30;
+  const heures = Number(heuresParJour) > 0 ? Number(heuresParJour) : 8;
+  return Number(baseSalary) / (jours * heures);
+}
+
+// Heures sup = taux horaire x heures x majoration de la catégorie.
+function calculerHeuresSup(baseSalary, heures, majoration, baseJours, heuresParJour) {
+  return round2(calculerTauxHoraire(baseSalary, baseJours, heuresParJour) * Number(heures) * Number(majoration));
+}
+
+// Prorata d'entrée ou de départ : jours calendaires travaillés / jours du mois.
+// Retourne null si l'employé n'est pas concerné ce mois-là, { travailles, total, facteur }
+// sinon (facteur = 1 quand le mois est complet), ou { travailles: 0 } hors période d'emploi.
+function calculerPresence(mois, dateEmbauche, dateFin) {
+  const total = joursDuMois(mois);
+  const debutMois = `${mois}-01`;
+  const finMois = `${mois}-${String(total).padStart(2, '0')}`;
+  const embauche = aaaaMmJj(dateEmbauche);
+  const fin = aaaaMmJj(dateFin);
+  if ((embauche && embauche > finMois) || (fin && fin < debutMois)) return { travailles: 0, total, facteur: 0 };
+  const debut = embauche && embauche > debutMois ? embauche : debutMois;
+  const sortie = fin && fin < finMois ? fin : finMois;
+  const travailles = Number(sortie.slice(8, 10)) - Number(debut.slice(8, 10)) + 1;
+  return { travailles, total, facteur: travailles / total };
+}
+
+// Retenue d'avance du mois = mensualité prévue, plafonnée au solde restant et au net disponible.
+function calculerRetenueAvance(mensualite, soldeRestant, netDisponible) {
+  return round2(Math.max(0, Math.min(Number(mensualite) || 0, Number(soldeRestant) || 0, Number(netDisponible) || 0)));
+}
+
+module.exports = {
+  calculerBulletin,
+  appliquerBaremeProgressif,
+  chercherPalier,
+  joursDuMois,
+  calculerRetenueAbsence,
+  calculerTauxHoraire,
+  calculerHeuresSup,
+  calculerPresence,
+  calculerRetenueAvance,
+};

@@ -6,11 +6,14 @@
 //  - AVANCE, PRÊT, AUTRE : déduites du NET, après cotisations et impôt
 //    (récupération d'une somme déjà versée : elle n'est pas un revenu).
 
-const TYPES_RETENUE = ['avance', 'absence', 'pret', 'autre'];
+const TYPES_RETENUE = ['avance', 'absence', 'prorata', 'pret', 'autre'];
+// Types qui réduisent le BRUT (absence non rémunérée, présence partielle) : les autres sont déduits du net.
+const TYPES_SUR_BRUT = ['absence', 'prorata'];
 
 const LABEL_TYPE_RETENUE = {
   avance: 'Avance sur salaire',
   absence: 'Absence non rémunérée',
+  prorata: 'Prorata de présence',
   pret: 'Remboursement de prêt',
   autre: 'Autre retenue',
 };
@@ -28,7 +31,9 @@ function normaliserRetenues(entree) {
     .map((d) => {
       const type = TYPES_RETENUE.includes(d && d.type) ? d.type : 'autre';
       const label = String((d && d.label) || '').trim() || LABEL_TYPE_RETENUE[type];
-      return { type, label: label.slice(0, 120), amount: arrondir(d && d.amount) };
+      const retenue = { type, label: label.slice(0, 120), amount: arrondir(d && d.amount) };
+      if (d && d.advance_id) retenue.advance_id = String(d.advance_id);
+      return retenue;
     })
     .filter((d) => d.amount > 0);
 }
@@ -36,8 +41,8 @@ function normaliserRetenues(entree) {
 function totauxRetenues(retenues) {
   const somme = (liste) => arrondir(liste.reduce((total, d) => total + d.amount, 0));
   return {
-    absences: somme(retenues.filter((d) => d.type === 'absence')),
-    autres: somme(retenues.filter((d) => d.type !== 'absence')),
+    absences: somme(retenues.filter((d) => TYPES_SUR_BRUT.includes(d.type))),
+    autres: somme(retenues.filter((d) => !TYPES_SUR_BRUT.includes(d.type))),
   };
 }
 
@@ -72,6 +77,7 @@ function appliquerRetenues(resultat, baseSalary, retenues) {
 
 module.exports = {
   TYPES_RETENUE,
+  TYPES_SUR_BRUT,
   LABEL_TYPE_RETENUE,
   RetenueError,
   normaliserRetenues,
