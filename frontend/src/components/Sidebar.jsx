@@ -242,9 +242,22 @@ const STYLES_RAIL = `
 .barre-laterale.reduite .bouton-deconnexion-rail:hover { opacity: 1; background: rgba(255,255,255,.08); }
 .infobulle-rail {
   position: fixed; left: 76px; z-index: 1000; transform: translateY(-50%); pointer-events: none; white-space: nowrap;
-  background: #15152b; color: #fff; font-size: 12.5px; padding: 6px 10px; border-radius: 7px;
+  background: var(--encre); color: #fff; font-size: 12.5px; padding: 6px 10px; border-radius: 7px;
   box-shadow: 0 4px 14px rgba(0,0,0,.28);
 }
+/* Charte personnalisée : logo du client sur une pastille blanche (lisible quelle que soit sa couleur) */
+.barre-laterale .marque-logo-pastille {
+  display: inline-flex; align-items: center; justify-content: center; background: #fff; border-radius: 10px;
+  padding: 7px 12px; height: 46px; max-width: 160px;
+}
+.barre-laterale .marque-logo-pastille img { display: block; max-height: 32px; max-width: 136px; object-fit: contain; }
+.barre-laterale.reduite .marque-logo-pastille { padding: 4px; width: 44px; height: 44px; }
+.barre-laterale.reduite .marque-logo-pastille img { max-height: 34px; max-width: 34px; }
+.barre-laterale .propulse-par {
+  display: flex; align-items: center; gap: 6px; margin: 0; padding: 0 20px 12px; font-size: 11px; opacity: .6;
+}
+.barre-laterale.reduite .propulse-par { justify-content: center; padding-left: 0; padding-right: 0; }
+.barre-laterale.reduite .propulse-par .texte-pied { display: none; }
 `;
 
 const CLE_REDUITE = 'sidebarReduite';
@@ -323,7 +336,9 @@ function lireGroupesOuverts() {
 }
 
 export function Sidebar({ ouvert = false, onFermer }) {
-  const { user, merchant, logout, aRole } = useAuth();
+  const { user, merchant, logout, aRole, branding } = useAuth();
+  // Charte personnalisée du commerçant (réglée par l'owner) : son logo remplace celui d'Amaterasu en haut de la barre.
+  const logoClient = branding?.enabled && branding.logo ? branding.logo : null;
   const { pathname } = useLocation();
   const secteurConfig = getSecteurConfig(merchant?.sector);
   // Comptabilité, Fiscalité et Paie : visibles seulement si l'owner a donné l'accès.
@@ -484,8 +499,16 @@ export function Sidebar({ ouvert = false, onFermer }) {
       <div className="marque">
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
           <span className="marque-logo">
-            <img src="/amaterasu-emblem.svg" alt="" width="28" height="28" />
-            <span className="nav-texte">Amaterasu</span>
+            {logoClient ? (
+              <span className="marque-logo-pastille">
+                <img src={logoClient} alt={merchant?.businessName || 'Logo'} />
+              </span>
+            ) : (
+              <>
+                <img src="/amaterasu-emblem.svg" alt="" width="28" height="28" />
+                <span className="nav-texte">Amaterasu</span>
+              </>
+            )}
           </span>
           <button
             type="button" className="bouton-reduire" onClick={basculerRail}
@@ -537,6 +560,12 @@ export function Sidebar({ ouvert = false, onFermer }) {
       </ul>
       {infobulle && <div className="infobulle-rail" style={{ top: infobulle.y }} role="tooltip">{infobulle.texte}</div>}
       {moduleBloque && <ModuleNonActive nom={moduleBloque} onFermer={() => setModuleBloque('')} />}
+      {logoClient && (
+        <p className="propulse-par">
+          <img src="/amaterasu-emblem.svg" alt="" width="12" height="12" />
+          <span className="texte-pied">Propulsé par Amaterasu</span>
+        </p>
+      )}
       {user && (
         <div className="pied-sidebar">
           <span

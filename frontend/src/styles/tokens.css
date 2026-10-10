@@ -139,14 +139,14 @@ textarea {
   background: var(--accent);
   border-color: var(--accent);
   color: #ffffff;
-  box-shadow: 0 2px 8px rgba(31, 95, 191, 0.3);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .btn-principal:hover {
   background: var(--accent-fonce);
   border-color: var(--accent-fonce);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(31, 95, 191, 0.38);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 38%, transparent);
 }
 
 .btn:disabled {

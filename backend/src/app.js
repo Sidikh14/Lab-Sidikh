@@ -3,6 +3,8 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 
+const { brandingContext } = require('./utils/brandingContext');
+
 const authRoutes = require('./routes/auth.routes');
 const productsRoutes = require('./routes/products.routes');
 const clientsRoutes = require('./routes/clients.routes');
@@ -50,6 +52,8 @@ app.use(
 // accepter le logo de l'entreprise encodé en base64 dans le JSON.
 app.use(express.json({ limit: '3mb' }));
 app.use(morgan('dev'));
+// Charte personnalisée du commerçant connecté : mise à disposition des PDF pendant la requête (voir utils/brandingContext.js).
+app.use(brandingContext);
 
 app.get('/health', (req, res) => res.json({ status: 'ok' }));
 

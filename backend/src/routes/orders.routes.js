@@ -1583,12 +1583,26 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
 // Récupère toutes les données nécessaires au reçu : commande, client (si
 // enregistré), commerce, vendeur, caissier, et articles.
 async function getOrderReceiptDetail(merchantId, id) {
+  // Commande et lignes sont demandées en même temps : la base distante coûte un aller-retour par requête.
+  const itemsPromise = pool.query(
+    `SELECT oi.id, oi.product_id, p.name AS product_name, oi.quantity, oi.unit_price, oi.line_total,
+            oi.packaging_label, oi.packaging_quantity,
+            COALESCE(pr.quantite_reliquat, 0) AS quantite_reliquat
+     FROM order_items oi
+     JOIN products p ON p.id = oi.product_id
+     LEFT JOIN LATERAL (
+       SELECT SUM(quantity - quantity_fulfilled) AS quantite_reliquat
+       FROM pending_reservations
+       WHERE order_item_id = oi.id AND status IN ('en_attente', 'partielle')
+     ) pr ON true
+     WHERE oi.order_id = $1`,
+    [id]
+  ).catch(() => null);
   const orderResult = await pool.query(
     `SELECT o.*, 
             c.full_name AS client_name, c.phone AS client_phone, c.address AS client_address,
             m.business_name, m.currency, m.ninea, m.rccm,
             m.address AS merchant_address, m.bank_details, m.mobile_money_details, m.payment_terms,
-            to_jsonb(m) AS merchant_json,
             uv.full_name AS vendeur_name,
             uc.full_name AS caissier_name,
             EXISTS (SELECT 1 FROM product_returns pr WHERE pr.order_id = o.id) AS has_return
@@ -1601,22 +1615,9 @@ async function getOrderReceiptDetail(merchantId, id) {
     [id, merchantId]
   );
   const order = orderResult.rows[0];
+  const itemsResult = await itemsPromise;
   if (!order) return null;
-
-  const itemsResult = await pool.query(
-    `SELECT oi.id, oi.product_id, p.name AS product_name, oi.quantity, oi.unit_price, oi.line_total,
-            oi.packaging_label, oi.packaging_quantity,
-            COALESCE(pr.quantite_reliquat, 0) AS quantite_reliquat
-     FROM order_items oi
-     JOIN products p ON p.id = oi.product_id
-     LEFT JOIN LATERAL (
-       SELECT SUM(quantity - quantity_fulfilled) AS quantite_reliquat
-       FROM pending_reservations
-       WHERE order_item_id = oi.id AND status IN ('en_attente', 'partielle')
-     ) pr ON true
-     WHERE oi.order_id = $1`,
-    [order.id]
-  );
+  if (!itemsResult) throw new Error('Lecture des lignes de la commande impossible.');
 
   return { ...order, items: itemsResult.rows, order_number: formatOrderNumber(order) };
 }
@@ -1865,17 +1866,19 @@ function genererTicketEtroit(res, order) {
 // ancienne facture d'abord — FIFO, même logique que clients.routes.js) et
 // le reste à payer. Utilisé pour l'afficher directement sur la facture PDF.
 async function calculerAvanceFacture(merchantId, clientId, orderId) {
-  const ventesResult = await pool.query(
-    `SELECT id, total_amount
-     FROM orders
-     WHERE client_id = $1 AND merchant_id = $2 AND payment_method = 'a_credit' AND status != 'annulee'
-     ORDER BY created_at, id`,
-    [clientId, merchantId]
-  );
-  const paiementsResult = await pool.query(
-    `SELECT COALESCE(SUM(amount), 0) AS total_paye FROM credit_payments WHERE client_id = $1 AND merchant_id = $2`,
-    [clientId, merchantId]
-  );
+  const [ventesResult, paiementsResult] = await Promise.all([
+    pool.query(
+      `SELECT id, total_amount
+       FROM orders
+       WHERE client_id = $1 AND merchant_id = $2 AND payment_method = 'a_credit' AND status != 'annulee'
+       ORDER BY created_at, id`,
+      [clientId, merchantId]
+    ),
+    pool.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total_paye FROM credit_payments WHERE client_id = $1 AND merchant_id = $2`,
+      [clientId, merchantId]
+    ),
+  ]);
   let totalPaye = Number(paiementsResult.rows[0].total_paye);
 
   for (const vente of ventesResult.rows) {
@@ -1889,7 +1892,20 @@ async function calculerAvanceFacture(merchantId, clientId, orderId) {
   return { avance: 0, reste: 0 };
 }
 
-function genererFactureA4(res, order, creditInfo) {
+// Logo du commerçant : stocké en base (image encodée, parfois plusieurs Mo). On ne le relit et on ne le
+// décode qu'une fois toutes les 2 minutes par commerçant au lieu de le faire à chaque facture.
+const DUREE_CACHE_LOGO_MS = 2 * 60 * 1000;
+const cacheLogoCommercant = new Map();
+async function logoCommercantEnCache(merchantId) {
+  const memo = cacheLogoCommercant.get(merchantId);
+  if (memo && memo.expire > Date.now()) return memo.logo;
+  const r = await pool.query('SELECT to_jsonb(m) AS merchant_json FROM merchants m WHERE m.id = $1', [merchantId]);
+  const logo = r.rows[0] ? lireLogoCommercant(r.rows[0].merchant_json) : null;
+  cacheLogoCommercant.set(merchantId, { logo, expire: Date.now() + DUREE_CACHE_LOGO_MS });
+  return logo;
+}
+
+function genererFactureA4(res, order, creditInfo, logoPret) {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${nomFichierPdf('Facture', order.order_number)}"`);
 
@@ -1912,7 +1928,7 @@ function genererFactureA4(res, order, creditInfo) {
     mobile_money_details: order.mobile_money_details,
     payment_terms: order.payment_terms,
   };
-  const logoCommercant = lireLogoCommercant(order.merchant_json);
+  const logoCommercant = logoPret !== undefined ? logoPret : null;
 
   const largeurPage = doc.page.width;
   const droite = largeurPage - M;
@@ -2207,6 +2223,7 @@ function genererBonDeLivraison(res, order, merchant) {
 // forcé (ex : ticket de caisse pour un client enregistré).
 router.get('/:id/receipt-pdf', async (req, res) => {
   try {
+    const debut = Date.now();
     const order = await getOrderReceiptDetail(req.user.merchantId, req.params.id);
     if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
 
@@ -2215,11 +2232,17 @@ router.get('/:id/receipt-pdf', async (req, res) => {
 
     if (utiliserA4) {
       if (!order.client_name) order.client_name = 'Client de passage';
-      let creditInfo = null;
-      if (order.client_id && order.payment_method === 'a_credit') {
-        creditInfo = await calculerAvanceFacture(req.user.merchantId, order.client_id, order.id);
-      }
-      genererFactureA4(res, order, creditInfo);
+      const aCredit = order.client_id && order.payment_method === 'a_credit';
+      const [creditInfo, logo] = await Promise.all([
+        aCredit ? calculerAvanceFacture(req.user.merchantId, order.client_id, order.id) : Promise.resolve(null),
+        logoCommercantEnCache(req.user.merchantId).catch((e) => { console.error('Logo commerçant illisible :', e.message); return null; }),
+      ]);
+      const donneesMs = Date.now() - debut;
+      res.on('finish', () => {
+        const total = Date.now() - debut;
+        if (total > 1500) console.warn(`[PDF] facture A4 ${order.order_number} lente : données ${donneesMs} ms, total ${total} ms`);
+      });
+      genererFactureA4(res, order, creditInfo, logo);
     } else {
       genererTicketEtroit(res, order);
     }

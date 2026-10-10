@@ -2,7 +2,9 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const { authenticate } = require('../middleware/auth');
 const { requireAdminKey } = require('../middleware/adminKey');
+const { palettePourCouleur } = require('../utils/branding');
 const { normaliserRoles, rolePrincipal } = require('../middleware/roles');
 const { getMaintenance, reponseMaintenance } = require('../middleware/maintenance');
 const { CATEGORIES_PHARMACIE } = require('../data/pharmacieCatalogue');
@@ -11,6 +13,12 @@ const { CATEGORIES_ELECTROMENAGER } = require('../data/electromenagerCategories'
 const router = express.Router();
 
 const SECTEURS_VALIDES = ['grossiste', 'pharmacie', 'electromenager', 'textile'];
+
+// Charte personnalisée d'un commerçant : { enabled, palette } — palette calculée à partir de la couleur choisie par l'owner.
+function brandingDepuisLigne(enabled, couleur) {
+  const palette = enabled && couleur ? palettePourCouleur(couleur) : null;
+  return palette ? { enabled: true, palette } : { enabled: false, palette: null };
+}
 
 function signToken(user) {
   return jwt.sign(
@@ -144,7 +152,9 @@ router.post('/login', async (req, res) => {
     const result = await pool.query(
       `SELECT u.id, u.merchant_id, u.full_name, u.email, u.password_hash, u.role, u.roles, u.is_active,
               u.visible_modules, u.warehouse_id, w.name AS warehouse_name,
-              m.business_name, m.sector, m.currency, m.is_active AS merchant_is_active
+              m.business_name, m.sector, m.currency, m.is_active AS merchant_is_active,
+              COALESCE((to_jsonb(m)->>'brand_enabled')::boolean, false) AS brand_enabled,
+              to_jsonb(m)->>'brand_color' AS brand_color
        FROM users u
        LEFT JOIN merchants m ON m.id = u.merchant_id
        LEFT JOIN warehouses w ON w.id = u.warehouse_id
@@ -196,12 +206,41 @@ router.post('/login', async (req, res) => {
         warehouseName: user.warehouse_name,
       },
       merchant: user.merchant_id
-        ? { id: user.merchant_id, businessName: user.business_name, sector: user.sector, currency: user.currency }
+        ? { id: user.merchant_id, businessName: user.business_name, sector: user.sector, currency: user.currency, branding: brandingDepuisLigne(user.brand_enabled, user.brand_color) }
         : null,
     });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la connexion.' });
+  }
+});
+
+// GET /auth/branding
+// Charte personnalisée du commerçant connecté (couleurs + logo). Appelée au démarrage de l'application :
+// un changement fait par l'owner arrive donc sans que le commerçant ait à se reconnecter.
+// Le logo n'est renvoyé que si la personnalisation est active.
+router.get('/branding', authenticate, async (req, res) => {
+  if (!req.user.merchantId) return res.json({ enabled: false, palette: null, logo: null });
+  try {
+    const result = await pool.query(`SELECT to_jsonb(m) AS ligne FROM merchants m WHERE m.id = $1`, [req.user.merchantId]);
+    const ligne = result.rows[0] && result.rows[0].ligne;
+    const branding = brandingDepuisLigne(ligne && ligne.brand_enabled === true, ligne && ligne.brand_color);
+
+    let logo = null;
+    if (branding.enabled && ligne) {
+      // Le nom exact de la colonne du logo n'est pas supposé : on prend la première colonne « logo… » exploitable.
+      for (const [cle, valeur] of Object.entries(ligne)) {
+        if (!/logo/i.test(cle) || typeof valeur !== 'string') continue;
+        if (/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(valeur) || /^https:\/\//i.test(valeur)) {
+          logo = valeur;
+          break;
+        }
+      }
+    }
+    res.json({ ...branding, logo });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la lecture de la charte graphique.' });
   }
 });
 

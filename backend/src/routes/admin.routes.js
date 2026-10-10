@@ -9,6 +9,7 @@ const { logActivity } = require('../utils/activityLog');
 const { addLot } = require('../utils/lots');
 const { invalidateMaintenanceCache } = require('../middleware/maintenance');
 const { initialiserComptabilite } = require('../utils/accountingSetup');
+const { invaliderPalette } = require('../utils/brandingContext');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -68,6 +69,8 @@ router.get('/merchants', async (req, res) => {
       `SELECT m.id, m.business_name, m.sector, m.email, m.is_active, m.accounting_enabled,
               COALESCE((to_jsonb(m)->>'payroll_enabled')::boolean, false) AS payroll_enabled,
               COALESCE((to_jsonb(m)->>'fiscalite_enabled')::boolean, false) AS fiscalite_enabled,
+              COALESCE((to_jsonb(m)->>'brand_enabled')::boolean, false) AS brand_enabled,
+              to_jsonb(m)->>'brand_color' AS brand_color,
               m.max_team_members, m.max_warehouses, m.created_at,
               (SELECT COUNT(*)::int FROM users u WHERE u.merchant_id = m.id) AS member_count,
               (SELECT COUNT(*)::int FROM warehouses w WHERE w.merchant_id = m.id) AS warehouse_count
@@ -224,6 +227,33 @@ router.patch('/merchants/:id/fiscalite', async (req, res) => {
     console.error(err);
     if (err.code === '42703') return res.status(500).json({ error: "Migration manquante : exécutez 062_fiscalite_acces.sql puis réessayez." });
     res.status(500).json({ error: "Erreur lors de la mise à jour de l'accès fiscalité." });
+  }
+});
+
+// PATCH /admin/merchants/:id/branding — charte graphique personnalisée d'un commerçant : active ou retire
+// sa couleur principale (interface, logo dans la barre latérale et PDF). La couleur reste enregistrée quand
+// la personnalisation est retirée. Seul ce commerçant est concerné.
+router.patch('/merchants/:id/branding', async (req, res) => {
+  const { enabled, color } = req.body;
+  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled doit être un booléen.' });
+  const couleur = typeof color === 'string' ? color.trim().toUpperCase() : null;
+  if (couleur && !/^#[0-9A-F]{6}$/.test(couleur)) {
+    return res.status(400).json({ error: 'La couleur doit être un code hexadécimal du type #1F5FBF.' });
+  }
+  if (enabled && !couleur) return res.status(400).json({ error: 'Choisissez une couleur pour activer la personnalisation.' });
+  try {
+    const result = await pool.query(
+      `UPDATE merchants SET brand_enabled = $1, brand_color = COALESCE($2, brand_color)
+       WHERE id = $3 RETURNING id, business_name, brand_enabled, brand_color`,
+      [enabled, couleur, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Commerçant introuvable.' });
+    invaliderPalette(req.params.id);
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    if (err.code === '42703') return res.status(500).json({ error: "Migration manquante : exécutez branding_commercant.sql dans Neon puis réessayez." });
+    res.status(500).json({ error: 'Erreur lors de la mise à jour de la charte graphique.' });
   }
 });
 

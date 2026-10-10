@@ -38,7 +38,7 @@ const aBesoinDUnLieu = (roles) => roles.some((r) => ROLES_AVEC_LIEU.includes(r))
 router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.full_name, u.email, u.role, COALESCE(u.roles, ARRAY[u.role]) AS roles, u.is_active, u.last_login_at, u.created_at,
+      `SELECT u.id, u.full_name, u.email, u.role, COALESCE(u.roles, ARRAY[u.role::text]) AS roles, u.is_active, u.last_login_at, u.created_at,
               u.visible_modules, u.warehouse_id, w.name AS warehouse_name, w.type AS warehouse_type
        FROM users u
        LEFT JOIN warehouses w ON w.id = u.warehouse_id

@@ -5,18 +5,24 @@
 // Charte graphique Amaterasu v8 : texte Marine, en-têtes de tableau Marine, lignes alternées Brume,
 // totaux sur fond Azur clair, filet Soleil sous le titre, emblème Amaterasu.
 const { COULEURS: CH, mmEnPt, MENTION_EDITEUR, TAILLES } = require('./pdfTheme');
-const { enregistrerPolices, dessinerEmblem, dessinerMarqueAmaterasu } = require('./pdfHelpers');
+const { COULEURS: K, enregistrerPolices, dessinerEmblem, dessinerMarqueAmaterasu } = require('./pdfHelpers');
 
-const NOIR = CH.marine; // texte
-const GRIS = CH.ardoise; // texte secondaire
-const FILET = CH.trait;
-const FOND_ENTETE = CH.marine; // en-tête de tableau
-const FOND_TOTAL = CH.azurClair; // lignes de total
-const FOND_ALTERNE = CH.brume;
-const ACCENT = CH.marine; // titres de section
-const SOLEIL = CH.soleil;
+// Couleurs lues à chaque état : elles suivent la charte du commerçant (couleur personnalisée si l'owner l'a activée).
+function couleurs() {
+  return {
+    NOIR: K.encre, // texte
+    GRIS: K.muted, // texte secondaire
+    FILET: K.bordure,
+    FOND_ENTETE: K.marine, // en-tête de tableau
+    FOND_TOTAL: K.azurClair, // lignes de total
+    FOND_ALTERNE: K.fondAlterne,
+    ACCENT: K.marine, // titres de section
+    SOLEIL: K.soleil,
+  };
+}
 
 function dessinerEtatPdf(doc, { entreprise, titre, periode, sections }, nettoyer) {
+  const { NOIR, GRIS, FILET, FOND_ENTETE, FOND_TOTAL, FOND_ALTERNE, ACCENT, SOLEIL } = couleurs();
   const gauche = doc.page.margins.left;
   const largeur = doc.page.width - gauche - doc.page.margins.right;
   const bas = () => doc.page.height - doc.page.margins.bottom - 24;
@@ -133,6 +139,7 @@ function dessinerEtatPdf(doc, { entreprise, titre, periode, sections }, nettoyer
 // (le document doit avoir été créé avec bufferPages: true).
 function dessinerPiedsDePage(doc) {
   enregistrerPolices(doc);
+  const { GRIS, FILET } = couleurs();
   const gauche = doc.page.margins.left;
   const largeur = doc.page.width - gauche - doc.page.margins.right;
   const pages = doc.bufferedPageRange();

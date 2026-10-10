@@ -67,27 +67,20 @@ async function request(path, options = {}) {
 // Ouvre un PDF en aperçu dans un nouvel onglet (au lieu de le télécharger
 // directement) : l'utilisateur peut ensuite l'imprimer ou l'enregistrer
 // depuis la visionneuse PDF du navigateur.
-async function previewFile(path) {
-  const token = getToken();
-  const response = await fetch(`${API_URL}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (response.status === 401) {
-    signalerSessionExpiree();
-    throw new Error('Votre session a expiré. Veuillez vous reconnecter.');
-  }
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    if (response.status === 503 && body?.code === 'maintenance') {
-      signalerMaintenance(body);
-    }
-    throw new Error(body?.error || `Erreur ${response.status}`);
-  }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  window.open(url, '_blank');
-  // On laisse un délai avant de révoquer l'URL, le temps que l'onglet charge le fichier.
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
+//  - L'onglet est ouvert TOUT DE SUITE, pendant le clic : un onglet ouvert après l'attente du serveur est
+//    souvent bloqué par le navigateur (le document « ne vient pas »). Il affiche « Génération… » le temps du calcul.
+//  - Un second clic sur le même document pendant la génération est ignoré (il relançait un calcul lourd).
+//  - Au-delà de 90 secondes la demande est abandonnée avec un message clair.
+//  - Si le navigateur bloque quand même l'onglet, le PDF est téléchargé.
+const apercusEnCours = new Map();
+
+function declencherTelechargement(url, nom) {
+  const lien = document.createElement('a');
+  lien.href = url;
+  lien.download = nom;
+  document.body.appendChild(lien);
+  lien.click();
+  lien.remove();
 }
 
 // Télécharge un fichier (CSV d'export, par exemple) au lieu de l'ouvrir dans un onglet.
@@ -108,13 +101,71 @@ async function downloadFile(path, fallbackName) {
   const disposition = response.headers.get('content-disposition') || '';
   const nom = /filename="?([^";]+)"?/.exec(disposition)?.[1] || fallbackName || 'export.csv';
   const url = URL.createObjectURL(blob);
-  const lien = document.createElement('a');
-  lien.href = url;
-  lien.download = nom;
-  document.body.appendChild(lien);
-  lien.click();
-  lien.remove();
+  declencherTelechargement(url, nom);
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+function previewFile(path) {
+  if (apercusEnCours.has(path)) return apercusEnCours.get(path);
+
+  const onglet = window.open('', '_blank');
+  if (onglet) {
+    try {
+      onglet.document.title = 'Génération du document…';
+      onglet.document.body.style.cssText = 'font-family:sans-serif;padding:32px;color:#0f2747';
+      onglet.document.body.textContent = 'Génération du document en cours…';
+    } catch {
+      // onglet non scriptable : pas grave, il sera redirigé ensuite
+    }
+  }
+  const fermerOnglet = () => {
+    if (onglet && !onglet.closed) onglet.close();
+  };
+
+  const tache = (async () => {
+    const token = getToken();
+    const controleur = new AbortController();
+    const minuteur = setTimeout(() => controleur.abort(), 90000);
+    try {
+      const response = await fetch(`${API_URL}${path}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: controleur.signal,
+      });
+      if (response.status === 401) {
+        fermerOnglet();
+        signalerSessionExpiree();
+        throw new Error('Votre session a expiré. Veuillez vous reconnecter.');
+      }
+      if (!response.ok) {
+        fermerOnglet();
+        const body = await response.json().catch(() => null);
+        if (response.status === 503 && body?.code === 'maintenance') {
+          signalerMaintenance(body);
+        }
+        throw new Error(body?.error || `Erreur ${response.status}`);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      if (onglet && !onglet.closed) {
+        onglet.location.href = url;
+      } else {
+        declencherTelechargement(url, 'document.pdf');
+      }
+      // On laisse un délai avant de révoquer l'URL, le temps que l'onglet charge le fichier.
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      fermerOnglet();
+      if (err.name === 'AbortError') {
+        throw new Error('La génération du document a pris trop de temps. Réessayez dans un instant.');
+      }
+      throw err;
+    } finally {
+      clearTimeout(minuteur);
+      apercusEnCours.delete(path);
+    }
+  })();
+  apercusEnCours.set(path, tache);
+  return tache;
 }
 
 // Génère un PDF à partir de données envoyées (POST) et renvoie le Blob, pour un aperçu
@@ -395,6 +446,10 @@ export const api = {
     request(`/admin/merchants/${id}/payroll`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
   setMerchantFiscalite: (id, enabled) =>
     request(`/admin/merchants/${id}/fiscalite`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
+  // Charte graphique personnalisée d'un commerçant (owner) et charte du commerçant connecté.
+  setMerchantBranding: (id, data) =>
+    request(`/admin/merchants/${id}/branding`, { method: 'PATCH', body: JSON.stringify(data) }),
+  getBranding: () => request('/auth/branding'),
   getModulesAccess: () => request('/modules/access'),
 
   // Comptabilité (manager, si le module est activé).

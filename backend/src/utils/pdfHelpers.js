@@ -22,13 +22,23 @@
 const fs = require('fs');
 const path = require('path');
 const { COULEURS: C, FORMATS, TAILLES, MENTION_EDITEUR, mmEnPt } = require('./pdfTheme');
+const { paletteCourante } = require('./brandingContext');
 
-const MARINE = C.marine;
+const MARINE_DEFAUT = C.marine; // Marine d'Amaterasu (emblème, mentions de la marque)
 const SOLEIL = C.soleil;
 const ARDOISE = C.ardoise;
 const BRUME = C.brume;
 const TRAIT = C.trait;
 const BLANC = C.blanc;
+
+// Charte personnalisée du commerçant de la requête en cours (voir brandingContext.js). Sans personnalisation,
+// ou hors requête, c'est la charte Amaterasu : Marine, Azur clair, Soleil. L'emblème et la mention
+// « Édité avec Amaterasu » gardent toujours leurs couleurs d'origine.
+function pal() {
+  const p = paletteCourante();
+  if (p) return { principale: p.principale, accent: p.accent, accentClair: p.accentClair, montantBandeau: p.montantBandeau };
+  return { principale: MARINE_DEFAUT, accent: C.azur, accentClair: C.azurClair, montantBandeau: SOLEIL };
+}
 
 const TEXTE_GRAS = false;
 const ECHELLE_TEXTE = 1;
@@ -153,7 +163,7 @@ const EMBLEME = [
 // variante : 'clair' (fond clair : Marine + Soleil) · 'sombre' (fond Marine : Soleil) · 'noir' (reçus thermiques)
 function dessinerEmblem(doc, x, y, taille, variante = 'clair') {
   const teintes = {
-    clair: { anneau: MARINE, rayon: MARINE, facette: SOLEIL, centre: SOLEIL },
+    clair: { anneau: MARINE_DEFAUT, rayon: MARINE_DEFAUT, facette: SOLEIL, centre: SOLEIL },
     sombre: { anneau: SOLEIL, rayon: SOLEIL, facette: C.soleilClair, centre: SOLEIL },
     noir: { anneau: '#000000', rayon: '#000000', facette: '#FFFFFF', centre: '#000000' },
   }[variante] || {};
@@ -215,6 +225,7 @@ function dessinerMarqueAmaterasu(doc, x, y) {
 // `mentionPied` : texte à gauche du pied de page à la place des coordonnées (ex. « Document confidentiel »).
 // `logo` : logo du commerçant (Buffer PNG/JPEG), affiché à gauche du nom du commerce.
 function dessinerEntete(doc, { businessName, titre, sousTitre, merchant, marge = 50, mentionPied, logo }) {
+  const MARINE = pal().principale;
   enregistrerPolices(doc);
   const largeurPage = doc.page.width;
   const droite = largeurPage - marge;
@@ -353,6 +364,7 @@ function activerPiedCharte(doc, { marge, merchant, businessName, mentionPied }) 
 // bas de page, au-dessus du pied de la charte. N'affiche rien si aucune de ces informations
 // n'a été renseignée par le commerçant.
 function dessinerPiedDePage(doc, merchant) {
+  const MARINE = pal().principale;
   if (!merchant) return;
   const lignes = [
     merchant.bank_details && `Coordonnées bancaires : ${merchant.bank_details}`,
@@ -389,6 +401,7 @@ function activerPiedDePageAuto(doc, merchant) {
 // En-tête de tableau : bandeau Marine, libellés blancs en capitales.
 // `marge` : marge gauche/droite du tableau (50 pt par défaut, comme les rapports existants).
 function dessinerEnteteTableau(doc, y, colonnes, marge = 50) {
+  const MARINE = pal().principale;
   doc.rect(marge, y - 7, doc.page.width - 2 * marge, 24).fill(MARINE);
   doc.fillColor(BLANC).fontSize(TAILLES.libelle).font('Helvetica-Bold');
   colonnes.forEach((col) => {
@@ -400,10 +413,11 @@ function dessinerEnteteTableau(doc, y, colonnes, marge = 50) {
 
 // Bandeau de total : fond Marine, libellé blanc, montant en Soleil (le seul cas où le Soleil sert de texte).
 function dessinerBandeauTotal(doc, { x, y, largeur, label, texteMontant, hauteur = 30 }) {
+  const MARINE = pal().principale;
   doc.rect(x, y, largeur, hauteur).fill(MARINE);
   doc.fillColor(BLANC).font('Helvetica-Bold').fontSize(TAILLES.libelle + 1)
     .text(String(label).toUpperCase(), x + 14, y + (hauteur - 9) / 2, { width: largeur * 0.45, characterSpacing: 0.6, lineBreak: false });
-  doc.fillColor(SOLEIL).font('Titre').fontSize(TAILLES.total)
+  doc.fillColor(pal().montantBandeau).font('Titre').fontSize(TAILLES.total)
     .text(texteMontant, x + largeur * 0.4, y + (hauteur - TAILLES.total) / 2 - 0.5, { width: largeur * 0.6 - 14, align: 'right', lineBreak: false });
   doc.fillColor(MARINE).font('Helvetica');
   return y + hauteur;
@@ -423,10 +437,17 @@ function traitPointille(doc, x1, x2, y, couleur = '#000000') {
 }
 
 module.exports = {
+  // Valeurs lues à chaque utilisation : elles suivent la charte du commerçant de la requête en cours.
   COULEURS: {
-    encre: MARINE, muted: ARDOISE, mutedClair: ARDOISE, bordure: TRAIT, fondAlterne: BRUME, fondEntete: C.azurClair, accent: MARINE,
-    marine: MARINE, soleil: SOLEIL, azur: C.azur, azurClair: C.azurClair, soleilClair: C.soleilClair, brume: BRUME, blanc: BLANC, noir: '#000000',
-    brique: C.erreur, succes: C.succes, alerte: C.alerte,
+    get encre() { return pal().principale; },
+    get accent() { return pal().principale; },
+    get marine() { return pal().principale; },
+    get azur() { return pal().accent; },
+    get azurClair() { return pal().accentClair; },
+    get fondEntete() { return pal().accentClair; },
+    get brique() { return C.erreur; },
+    muted: ARDOISE, mutedClair: ARDOISE, bordure: TRAIT, fondAlterne: BRUME, brume: BRUME, blanc: BLANC, noir: '#000000',
+    soleil: SOLEIL, soleilClair: C.soleilClair, succes: C.succes, alerte: C.alerte,
   },
   formatMontant,
   dessinerEntete,

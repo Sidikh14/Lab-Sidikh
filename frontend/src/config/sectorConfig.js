@@ -55,15 +55,13 @@ export function getSecteurConfig(sector) {
   return SECTEURS[sector] || SECTEURS.grossiste;
 }
 
-const VARIABLES_THEME = ['--accent', '--accent-clair', '--accent-fonce', '--accent-transparent'];
 const THEME_COLOR = '#0f2747'; // Marine : couleur du navigateur (<meta name="theme-color">)
 
-// Charte v8 : l'identité visuelle est la même pour tous les secteurs. Cette fonction est
-// conservée (AuthContext.jsx l'appelle déjà) mais ne colore plus rien par secteur : elle retire
-// toute ancienne surcharge de couleur posée sur <html> et remet la couleur Marine du navigateur.
+// Charte v8 : l'identité visuelle ne dépend plus du secteur. Cette fonction est conservée
+// (AuthContext.jsx l'appelle déjà) : elle remet seulement la couleur Marine du navigateur, sauf si une charte
+// personnalisée de commerçant est appliquée (config/branding.js pose alors --marine sur la page).
 export function appliquerThemeSecteur() {
-  const root = document.documentElement;
-  VARIABLES_THEME.forEach((v) => root.style.removeProperty(v));
+  if (document.documentElement.style.getPropertyValue('--marine')) return;
   const metaTheme = document.querySelector('meta[name="theme-color"]');
   if (metaTheme) metaTheme.setAttribute('content', THEME_COLOR);
 }

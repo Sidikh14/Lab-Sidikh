@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { MaintenancePanel } from './MaintenancePanel';
+import { palettePourCouleur, COULEUR_PAR_DEFAUT } from '../config/brandingTheme';
 
 // Page réservée au propriétaire de la plateforme (rôle "owner"). Indépendante
 // du layout commerçant habituel (pas de Sidebar) puisqu'un owner n'a pas de
@@ -88,6 +89,13 @@ export function AdminPage() {
   const [modalePlafond, setModalePlafond] = useState(null); // { commercant, type: 'comptes' | 'boutiques' }
   const [valeurPlafond, setValeurPlafond] = useState('');
   const [enregistrementPlafond, setEnregistrementPlafond] = useState(false);
+
+  // Charte graphique personnalisée d'un commerçant (couleur principale, appliquée à son compte seul).
+  const [modaleCharte, setModaleCharte] = useState(null); // commerçant concerné
+  const [charteActive, setCharteActive] = useState(false);
+  const [charteCouleur, setCharteCouleur] = useState(COULEUR_PAR_DEFAUT);
+  const [erreurCharte, setErreurCharte] = useState('');
+  const [enregistrementCharte, setEnregistrementCharte] = useState(false);
 
   // Import de produits en masse depuis Excel, pour le commerçant déplié.
   const [boutiquesImport, setBoutiquesImport] = useState([]);
@@ -180,6 +188,32 @@ export function AdminPage() {
     } catch (err) {
       setErreur(err.message);
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
+
+  function ouvrirModaleCharte(commercant) {
+    setCharteActive(Boolean(commercant.brand_enabled));
+    setCharteCouleur(commercant.brand_color || COULEUR_PAR_DEFAUT);
+    setErreurCharte('');
+    setModaleCharte(commercant);
+  }
+
+  async function handleEnregistrerCharte(e) {
+    e.preventDefault();
+    if (charteActive && !palettePourCouleur(charteCouleur)) {
+      setErreurCharte('Saisissez une couleur valide, par exemple #1F5FBF.');
+      return;
+    }
+    setEnregistrementCharte(true);
+    setErreurCharte('');
+    try {
+      await api.setMerchantBranding(modaleCharte.id, { enabled: charteActive, color: palettePourCouleur(charteCouleur) ? charteCouleur : null });
+      setModaleCharte(null);
+      await charger();
+    } catch (err) {
+      setErreurCharte(err.message);
+    } finally {
+      setEnregistrementCharte(false);
     }
   }
 
@@ -373,6 +407,9 @@ export function AdminPage() {
                   <button type="button" className="btn" style={boutonPetit} onClick={() => basculerFiscalite(c)}>
                     {c.fiscalite_enabled ? 'Retirer la fiscalité' : 'Donner accès à la fiscalité'}
                   </button>
+                  <button type="button" className="btn" style={boutonPetit} onClick={() => ouvrirModaleCharte(c)}>
+                    {c.brand_enabled ? 'Charte personnalisée : active' : 'Charte graphique'}
+                  </button>
                   <button type="button" className="btn" style={boutonPetit} onClick={() => ouvrirModalePlafond(c, 'comptes')}>
                     <IconJauge />
                     Plafond comptes
@@ -500,6 +537,90 @@ export function AdminPage() {
           })}
         </div>
       )}
+
+      {modaleCharte && (() => {
+        const palette = palettePourCouleur(charteCouleur);
+        return (
+          <div className="modale-fond" onClick={() => setModaleCharte(null)}>
+            <div className="modale" onClick={(e) => e.stopPropagation()}>
+              <h2>Charte graphique — {modaleCharte.business_name}</h2>
+              <p className="etiquette" style={{ marginTop: 6 }}>
+                Cette couleur remplace le Marine d'Amaterasu pour ce commerçant seulement : interface, barre latérale
+                (avec son logo) et PDF. Les autres comptes ne sont pas touchés.
+              </p>
+              <form onSubmit={handleEnregistrerCharte}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '14px 0' }}>
+                  <input type="checkbox" checked={charteActive} onChange={(e) => setCharteActive(e.target.checked)} />
+                  Personnalisation active
+                </label>
+                <div className="champ-groupe">
+                  <label className="etiquette" htmlFor="a-charte-couleur">Couleur principale</label>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <input
+                      type="color"
+                      aria-label="Choisir la couleur principale"
+                      value={palette ? palette.couleur.toLowerCase() : COULEUR_PAR_DEFAUT.toLowerCase()}
+                      onChange={(e) => setCharteCouleur(e.target.value.toUpperCase())}
+                      style={{ width: 48, height: 40, padding: 2, border: '1px solid var(--trait-fort)', borderRadius: 8, background: 'var(--carte)' }}
+                    />
+                    <input
+                      id="a-charte-couleur"
+                      className="champ"
+                      value={charteCouleur}
+                      onChange={(e) => setCharteCouleur(e.target.value.trim().toUpperCase())}
+                      placeholder="#1F5FBF"
+                      maxLength={7}
+                      style={{ maxWidth: 140 }}
+                    />
+                    <button type="button" className="btn" onClick={() => { setCharteCouleur(COULEUR_PAR_DEFAUT); setCharteActive(false); }}>
+                      Revenir à Amaterasu
+                    </button>
+                  </div>
+                </div>
+
+                {!palette && <div className="erreur">Saisissez une couleur valide, par exemple #1F5FBF.</div>}
+                {palette && palette.ajustee && (
+                  <p className="etiquette" style={{ color: 'var(--warning)' }}>
+                    Cette couleur est trop claire pour un texte blanc : le logiciel l'utilisera foncée ({palette.principale}) pour
+                    rester lisible.
+                  </p>
+                )}
+
+                {palette && (
+                  <div style={{ display: 'flex', gap: 12, margin: '14px 0', flexWrap: 'wrap' }} aria-label="Aperçu de la charte">
+                    <div style={{ background: palette.principale, color: '#fff', borderRadius: 10, padding: '12px 14px', minWidth: 150 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 8 }}>{modaleCharte.business_name}</div>
+                      <div style={{ background: 'rgba(242,168,29,0.18)', boxShadow: 'inset 3px 0 0 #F2A81D', borderRadius: 6, padding: '5px 8px', fontSize: 13 }}>
+                        Tableau de bord
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, justifyContent: 'center' }}>
+                      <span style={{ background: palette.accent, color: '#fff', borderRadius: 9, padding: '8px 14px', fontSize: 13, fontWeight: 600 }}>
+                        Nouvelle vente
+                      </span>
+                      <span style={{ background: palette.accentClair, color: palette.principale, borderRadius: 9, padding: '6px 12px', fontSize: 12 }}>
+                        Message d'information
+                      </span>
+                    </div>
+                    <div style={{ background: palette.principale, borderRadius: 10, padding: '12px 16px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 160 }}>
+                      <span style={{ color: '#fff', fontSize: 10, letterSpacing: '0.08em' }}>TOTAL À PAYER</span>
+                      <span style={{ color: palette.montantBandeau, fontWeight: 800, fontSize: 18 }}>118 344 FCFA</span>
+                    </div>
+                  </div>
+                )}
+
+                {erreurCharte && <div className="erreur">{erreurCharte}</div>}
+                <div className="actions-modale">
+                  <button type="button" className="btn" onClick={() => setModaleCharte(null)}>Annuler</button>
+                  <button type="submit" className="btn btn-principal" disabled={enregistrementCharte}>
+                    {enregistrementCharte ? 'Enregistrement…' : 'Enregistrer'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      })()}
 
       {modalePlafond && (
         <div className="modale-fond" onClick={() => setModalePlafond(null)}>
