@@ -6,6 +6,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole, aRole } = require('../middleware/roles');
 const { requireModule } = require('../middleware/modules');
 const { requireOwnerModule } = require('../middleware/ownerModules');
+const { requireComptaOuFiscalite } = require('../middleware/financePermissions');
 const { logActivity } = require('../utils/activityLog');
 const { initialiserComptabilite } = require('../utils/accountingSetup');
 const { dessinerEtatPdf, dessinerPiedsDePage } = require('../utils/pdfEtat');
@@ -399,6 +400,8 @@ router.use('/attachments', piecesCaisse);
 const sauf = (drapeau, garde) => (req, res, next) => (req[drapeau] ? next() : garde(req, res, next));
 router.use(sauf('pieceCaisse', requireRole('manager', 'comptable')));
 router.use(sauf('pieceCaisse', requireModule('comptabilite')));
+// Un comptable n'ouvre que les pages que le manager lui a accordées (Comptabilité / Fiscalité).
+router.use(sauf('pieceCaisse', requireComptaOuFiscalite(['/state-dues', '/state-payments', '/tax-settings', '/tax-profile', '/declarations', '/filings', '/brs-entries'])));
 // Impôts, cotisations et paiements à l'État : module Fiscalité (activé séparément par l'owner).
 router.use(['/state-dues', '/state-payments', '/tax-settings', '/tax-profile', '/declarations', '/filings', '/brs-entries'], requireOwnerModule('fiscalite'));
 

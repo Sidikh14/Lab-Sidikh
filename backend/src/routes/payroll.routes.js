@@ -3,6 +3,7 @@ const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole, aRole } = require('../middleware/roles');
+const { requireFinancePage, peutVoirPageFinance } = require('../middleware/financePermissions');
 const { requireOwnerModule } = require('../middleware/ownerModules');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
@@ -24,7 +25,10 @@ router.use(authenticate);
 router.use(requireOwnerModule('paie'));
 
 const MOIS_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
-const GESTION = requireRole('manager', 'comptable');
+// Manager, ou comptable ayant la page Paie dans ses permissions.
+const GESTION = [requireRole('manager', 'comptable'), requireFinancePage('paie')];
+// Rappels de paie du tableau de bord : liste vide (et non une erreur) quand la page Paie n'est pas autorisée.
+const GESTION_ALERTES = [requireRole('manager', 'comptable'), requireFinancePage('paie', { '/alerts': { items: [] } })];
 
 function moisActuel() {
   const d = new Date();
@@ -61,8 +65,14 @@ async function estMonBulletin(req, empId) {
   return rows.length > 0;
 }
 
+// Peut gérer la paie des autres : manager, gérant, ou comptable ayant la page Paie.
+async function estGestionnairePaie(req) {
+  if (aRole(req.user, 'manager', 'gerant')) return true;
+  return aRole(req.user, 'comptable') && (await peutVoirPageFinance(req.user, 'paie'));
+}
+
 async function peutConsulter(req, empId) {
-  return aRole(req.user, 'manager', 'gerant', 'comptable') || (await estMonBulletin(req, empId));
+  return (await estGestionnairePaie(req)) || (await estMonBulletin(req, empId));
 }
 
 // Un employé qui consulte SON bulletin ne peut le tirer que si le mois est marqué payé.
@@ -485,7 +495,7 @@ router.get('/print', GESTION, async (req, res) => {
 });
 
 // GET /payroll/alerts — rappels de paie (bulletin non généré, avances en cours, fin de CDD).
-router.get('/alerts', GESTION, async (req, res) => {
+router.get('/alerts', GESTION_ALERTES, async (req, res) => {
   try {
     const merchantId = req.user.merchantId;
     const jour = new Date().getDate();
@@ -776,10 +786,10 @@ router.get('/:userId/:month', async (req, res) => {
     const empId = await idEmploye(req, req.params.userId);
     if (!(await peutConsulter(req, empId))) return res.status(403).json({ error: 'Accès refusé.' });
     const moi = await estMonBulletin(req, empId);
-    if (moi && !aRole(req.user, 'manager', 'gerant', 'comptable') && !(await moisEstPaye(empId, req.params.month))) {
+    if (moi && !(await estGestionnairePaie(req)) && !(await moisEstPaye(empId, req.params.month))) {
       return res.status(403).json({ error: "Ce mois n'est pas encore marqué payé." });
     }
-    const version = aRole(req.user, 'manager', 'gerant', 'comptable') && req.query.version ? Number(req.query.version) : null;
+    const version = (await estGestionnairePaie(req)) && req.query.version ? Number(req.query.version) : null;
     const { rows } = await pool.query(
       `SELECT p.*, e.full_name
        FROM payslips p JOIN employees e ON e.id = p.user_id
@@ -799,10 +809,10 @@ router.get('/:userId/:month/pdf', async (req, res) => {
     const empId = await idEmploye(req, req.params.userId);
     if (!(await peutConsulter(req, empId))) return res.status(403).json({ error: 'Accès refusé.' });
     const moi = await estMonBulletin(req, empId);
-    if (moi && !aRole(req.user, 'manager', 'gerant', 'comptable') && !(await moisEstPaye(empId, req.params.month))) {
+    if (moi && !(await estGestionnairePaie(req)) && !(await moisEstPaye(empId, req.params.month))) {
       return res.status(403).json({ error: "Ce mois n'est pas encore marqué payé." });
     }
-    const version = aRole(req.user, 'manager', 'gerant', 'comptable') && req.query.version ? Number(req.query.version) : null;
+    const version = (await estGestionnairePaie(req)) && req.query.version ? Number(req.query.version) : null;
     const { rows } = await pool.query(
       `SELECT p.*, e.full_name, COALESCE(e.job_title, u.role::text) AS role,
               m.business_name, m.ninea, m.rccm, m.address, m.bank_details, m.mobile_money_details, m.payment_terms

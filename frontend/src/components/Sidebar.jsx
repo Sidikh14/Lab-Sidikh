@@ -160,6 +160,17 @@ function IconCadenasMenu() {
   );
 }
 
+function IconChevronGroupe({ ouvert }) {
+  return (
+    <svg
+      width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+      style={{ transition: 'transform 0.2s', transform: ouvert ? 'rotate(180deg)' : 'none', flexShrink: 0 }}
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
 function IconReduire({ reduite }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -182,7 +193,7 @@ function IconDeconnexion() {
 
 function IconGroupeGestion() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="nav-icone">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
       <path d="M12 3l9 5-9 5-9-5 9-5z" />
       <path d="M3 13l9 5 9-5" />
     </svg>
@@ -191,7 +202,7 @@ function IconGroupeGestion() {
 
 function IconGroupeFinance() {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="nav-icone">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
       <path d="M3 10l9-6 9 6" />
       <path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8" />
       <path d="M3 20h18" />
@@ -221,13 +232,7 @@ const STYLES_RAIL = `
 .barre-laterale.reduite .nav-liste { padding-left: 0; padding-right: 0; }
 .barre-laterale.reduite .nav-lien { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; margin-left: 8px; margin-right: 8px; }
 .barre-laterale .separateur-rail { list-style: none; height: 1px; margin: 8px 18px; background: currentColor; opacity: .14; }
-.barre-laterale .nav-groupe-bouton {
-  width: 100%; background: transparent; border: none; cursor: pointer; text-align: left; font: inherit; font-weight: 600; color: inherit;
-}
-.barre-laterale .nav-groupe-bouton:hover { background: rgba(255,255,255,.07); }
-.barre-laterale .nav-groupe-bouton.ouvert { background: rgba(255,255,255,.10); }
-.barre-laterale .nav-groupe-bouton.ouvert:hover { background: rgba(255,255,255,.14); }
-.barre-laterale .nav-groupe-liens { margin: 2px 0 8px; padding: 0 0 0 10px; }
+.barre-laterale .titre-groupe-icone { display: inline-flex; align-items: center; gap: 8px; }
 .barre-laterale.reduite .pied-sidebar { flex-direction: column; align-items: center; justify-content: center; padding-left: 0; padding-right: 0; gap: 8px; }
 .barre-laterale .bouton-deconnexion-rail { display: none; }
 .barre-laterale.reduite .bouton-deconnexion-rail {
@@ -296,10 +301,10 @@ function IconFermer() {
   );
 }
 
-// Accordéon : un seul groupe est déplié à la fois. Ouvrir l'un referme l'autre.
+// Deux groupes repliables, indépendants : ouvrir ou fermer l'un ne touche pas à l'autre.
 const TITRES_GROUPES = { gestion: 'Gestion & Stock', finance: 'Finance & Administration' };
 const CHEMINS_FINANCE = ['/comptabilite', '/fiscalite', '/paie', '/entreprise', '/equipe'];
-const CLE_GROUPE = 'sidebarGroupeOuvert';
+const CLE_GROUPES = 'sidebarGroupesOuverts';
 
 function groupeDuChemin(pathname) {
   if (CHEMINS_FINANCE.some((c) => pathname === c || pathname.startsWith(`${c}/`))) return 'finance';
@@ -307,15 +312,14 @@ function groupeDuChemin(pathname) {
   return 'gestion';
 }
 
-// Au chargement : le dernier choix mémorisé (« aucun » = tout est replié), sinon le groupe de la page affichée.
-function lireGroupeOuvert(pathname) {
+// Par défaut les deux groupes sont ouverts : rien n'est caché tant qu'on ne le replie pas soi-même.
+function lireGroupesOuverts() {
   try {
-    const v = localStorage.getItem(CLE_GROUPE);
-    if (v === 'aucun' || v === 'gestion' || v === 'finance') return v;
+    const v = JSON.parse(localStorage.getItem(CLE_GROUPES));
+    return { gestion: v?.gestion !== false, finance: v?.finance !== false };
   } catch {
-    // lecture facultative
+    return { gestion: true, finance: true };
   }
-  return groupeDuChemin(pathname) || 'gestion';
 }
 
 export function Sidebar({ ouvert = false, onFermer }) {
@@ -342,6 +346,10 @@ export function Sidebar({ ouvert = false, onFermer }) {
   const estManager = user?.role === 'manager';
   // Le comptable gère la comptabilité, la fiscalité et la paie, comme le manager (qui garde en plus l'entreprise).
   const voitFinance = aRole('manager', 'comptable');
+  // Un comptable n'ouvre que les pages de finance cochées dans ses permissions (rien de coché = comportement
+  // par défaut du rôle : les trois pages). Le manager voit tout.
+  const pageFinancePermise = (page) =>
+    aRole('manager') || !Array.isArray(user.visibleModules) || user.visibleModules.includes(page);
 
   if (voitEquipe) {
     liensGestion.push({ to: '/boutiques', label: estManager ? `${secteurConfig.libelleBoutique}s` : 'Transferts', icone: IconBoutique });
@@ -351,9 +359,9 @@ export function Sidebar({ ouvert = false, onFermer }) {
   // Le manager voit toujours Comptabilité, Fiscalité et Paie ; sans activation par l'owner, le clic
   // affiche un message au lieu d'ouvrir la page (verrouillé = cadenas).
   if (voitFinance) {
-    liensFinance.push({ to: '/comptabilite', label: 'Comptabilité', icone: IconComptabilite, verrouille: modulesCharges && !comptaActive });
-    liensFinance.push({ to: '/fiscalite', label: 'Fiscalité', icone: IconFiscalite, verrouille: modulesCharges && !(comptaActive && fiscaliteActive) });
-    liensFinance.push({ to: '/paie', label: 'Paie', icone: IconSalaires, verrouille: modulesCharges && !paieActive });
+    if (pageFinancePermise('comptabilite')) liensFinance.push({ to: '/comptabilite', label: 'Comptabilité', icone: IconComptabilite, verrouille: modulesCharges && !comptaActive });
+    if (pageFinancePermise('fiscalite')) liensFinance.push({ to: '/fiscalite', label: 'Fiscalité', icone: IconFiscalite, verrouille: modulesCharges && !(comptaActive && fiscaliteActive) });
+    if (pageFinancePermise('paie')) liensFinance.push({ to: '/paie', label: 'Paie', icone: IconSalaires, verrouille: modulesCharges && !paieActive });
   }
   if (estManager) liensFinance.push({ to: '/entreprise', label: 'Entreprise', icone: IconEntreprise });
   if (voitEquipe) liensFinance.push({ to: '/equipe', label: 'Équipe', icone: IconEquipe });
@@ -363,7 +371,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
     { id: 'finance', liens: liensFinance },
   ].filter((g) => g.liens.length > 0);
 
-  const [groupeOuvert, setGroupeOuvert] = useState(() => lireGroupeOuvert(pathname));
+  const [ouverts, setOuverts] = useState(lireGroupesOuverts);
   const [reduiteChoisie, setReduiteChoisie] = useState(lireReduite);
   // Le tiroir mobile (ouvert) reste toujours complet ; le rail ne concerne que la barre fixe.
   const rail = reduiteChoisie && !ouvert;
@@ -397,18 +405,17 @@ export function Sidebar({ ouvert = false, onFermer }) {
     setInfobulle({ texte, y: r.top + r.height / 2 });
   };
   const cacherInfobulle = () => setInfobulle(null);
-  // Quand on change de page, le groupe de cette page s'ouvre et l'autre se referme.
+  // Si la page affichée appartient à un groupe replié, ce groupe se rouvre (sans toucher à l'autre).
   useEffect(() => {
     const g = groupeDuChemin(pathname);
-    if (g) setGroupeOuvert(g);
+    if (g) setOuverts((o) => (o[g] ? o : { ...o, [g]: true }));
   }, [pathname]);
 
-  // Clic sur un groupe : il s'ouvre (l'autre se referme) ; un second clic le referme.
   function basculerGroupe(id) {
-    setGroupeOuvert((courant) => {
-      const suivant = courant === id ? 'aucun' : id;
+    setOuverts((o) => {
+      const suivant = { ...o, [id]: !o[id] };
       try {
-        localStorage.setItem(CLE_GROUPE, suivant);
+        localStorage.setItem(CLE_GROUPES, JSON.stringify(suivant));
       } catch {
         // mémorisation facultative
       }
@@ -465,6 +472,12 @@ export function Sidebar({ ouvert = false, onFermer }) {
     );
   };
 
+  const styleTitre = {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%',
+    padding: '10px 14px 6px', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer',
+    fontSize: 11.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.7, textAlign: 'left',
+  };
+
   return (
     <nav className={'barre-laterale' + (ouvert ? ' ouverte' : '') + (rail ? ' reduite' : '')}>
       <style>{STYLES_RAIL}</style>
@@ -505,19 +518,19 @@ export function Sidebar({ ouvert = false, onFermer }) {
           </li>
         ))}
         {groupes.length > 1 && !rail && groupes.map((g) => {
-          const ouvertG = groupeOuvert === g.id;
+          const ouvertG = ouverts[g.id];
           return (
             <li key={g.id} style={{ listStyle: 'none' }}>
               <button
-                type="button"
-                className={'nav-lien nav-groupe-bouton' + (ouvertG ? ' ouvert' : '')}
-                aria-expanded={ouvertG}
-                onClick={() => basculerGroupe(g.id)}
+                type="button" style={styleTitre} aria-expanded={ouvertG} onClick={() => basculerGroupe(g.id)}
               >
-                {g.id === 'finance' ? <IconGroupeFinance /> : <IconGroupeGestion />}
-                <span className="nav-texte">{TITRES_GROUPES[g.id]}</span>
+                <span className="titre-groupe-icone">
+                  {g.id === 'finance' ? <IconGroupeFinance /> : <IconGroupeGestion />}
+                  {TITRES_GROUPES[g.id]}
+                </span>
+                <IconChevronGroupe ouvert={ouvertG} />
               </button>
-              {ouvertG && <ul className="nav-liste nav-groupe-liens">{g.liens.map(lienNav)}</ul>}
+              {ouvertG && <ul className="nav-liste" style={{ margin: 0, padding: 0 }}>{g.liens.map(lienNav)}</ul>}
             </li>
           );
         })}

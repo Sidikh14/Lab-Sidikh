@@ -131,13 +131,17 @@ const MODULES = [
   { value: 'fournisseurs', label: 'Fournisseurs' },
   { value: 'achats', label: 'Commandes fournisseurs' },
   { value: 'caisse', label: 'Caisse' },
+  // Pages de finance : proposées pour un comptable (le manager choisit lesquelles il peut ouvrir).
+  { value: 'comptabilite', label: 'Comptabilité', finance: true },
+  { value: 'fiscalite', label: 'Fiscalité', finance: true },
+  { value: 'paie', label: 'Paie', finance: true },
 ];
 
 const MODULES_PAR_ROLE = {
   gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   vendeur: ['stock', 'ventes', 'clients'],
   caissier: ['ventes', 'caisse'],
-  comptable: [],
+  comptable: ['comptabilite', 'fiscalite', 'paie'],
 };
 // Modules visibles par défaut : ceux de tous les rôles de la personne réunis.
 const modulesParDefaut = (roles) => MODULES.map((m) => m.value).filter((m) => roles.some((r) => (MODULES_PAR_ROLE[r] || []).includes(m)));
@@ -656,9 +660,10 @@ function EquipeTab() {
             <h2>Permissions de {membrePermissions.full_name}</h2>
             <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
               Cochez les pages que ce membre peut voir dans son compte.
+              {rolesDe(membrePermissions).includes('comptable') ? ' Pour un comptable, choisissez aussi parmi Comptabilité, Fiscalité et Paie.' : ''}
             </p>
             <form onSubmit={handleSavePermissions}>
-              {MODULES.map((m) => (
+              {MODULES.filter((m) => !m.finance || rolesDe(membrePermissions).includes('comptable')).map((m) => (
                 <label key={m.value} className="case-a-cocher" style={{ marginBottom: 10 }}>
                   <input
                     type="checkbox"

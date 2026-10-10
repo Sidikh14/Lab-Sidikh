@@ -3,6 +3,7 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { requireOwnerModule } = require('../middleware/ownerModules');
+const { requireFinancePage } = require('../middleware/financePermissions');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
 const { UUID_RE, MODES_CAISSE, erreurMetier, verifierBoutique, verifierCaisse } = require('../utils/payrollCash');
@@ -11,6 +12,7 @@ const router = express.Router();
 router.use(authenticate);
 // Module Paie : activé par l'owner commerçant par commerçant.
 router.use(requireOwnerModule('paie'));
+router.use(requireFinancePage('paie'));
 
 // Manager et comptable : saisies de paie (absences, heures, avances) et liste. Manager seul : données
 // personnelles de la fiche (adresse, numéros, contrat), création, archivage.
