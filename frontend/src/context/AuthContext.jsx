@@ -14,8 +14,9 @@ export function AuthProvider({ children }) {
     const stored = localStorage.getItem('merchant');
     return stored ? JSON.parse(stored) : null;
   });
-  // Charte graphique personnalisée du commerçant (réglée par l'owner) : { enabled, palette, logo } ou null.
-  // La palette vient de la connexion ; le logo (volumineux) est chargé séparément, au démarrage.
+  // Charte du commerçant : { enabled, palette, logo } ou null. `enabled`/`palette` = couleurs personnalisées (réglées par
+  // l'owner) ; `logo` = logo de l'entreprise, affiché dans la barre latérale dès qu'il existe. La palette vient de la
+  // connexion ; le logo (volumineux) est chargé séparément, au démarrage.
   const [branding, setBranding] = useState(() => (merchant?.branding?.enabled ? { ...merchant.branding, logo: null } : null));
   const [sessionExpiredMessage, setSessionExpiredMessage] = useState(null);
 
@@ -90,7 +91,7 @@ export function AuthProvider({ children }) {
     if (!user || !merchant) return undefined;
     let annule = false;
     api.getBranding()
-      .then((b) => { if (!annule) setBranding(b && b.enabled ? b : null); })
+      .then((b) => { if (!annule) setBranding(b || null); })
       .catch(() => { /* la charte Amaterasu par défaut reste en place */ });
     return () => { annule = true; };
   }, [user?.id, merchant?.id]);

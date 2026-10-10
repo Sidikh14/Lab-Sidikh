@@ -182,7 +182,7 @@ function IconDeconnexion() {
 
 function IconGroupeGestion() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="nav-icone">
       <path d="M12 3l9 5-9 5-9-5 9-5z" />
       <path d="M3 13l9 5 9-5" />
     </svg>
@@ -191,7 +191,7 @@ function IconGroupeGestion() {
 
 function IconGroupeFinance() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="nav-icone">
       <path d="M3 10l9-6 9 6" />
       <path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8" />
       <path d="M3 20h18" />
@@ -221,7 +221,13 @@ const STYLES_RAIL = `
 .barre-laterale.reduite .nav-liste { padding-left: 0; padding-right: 0; }
 .barre-laterale.reduite .nav-lien { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; margin-left: 8px; margin-right: 8px; }
 .barre-laterale .separateur-rail { list-style: none; height: 1px; margin: 8px 18px; background: currentColor; opacity: .14; }
-.barre-laterale .titre-groupe-icone { display: inline-flex; align-items: center; gap: 8px; }
+.barre-laterale .nav-groupe-bouton {
+  width: 100%; background: transparent; border: none; cursor: pointer; text-align: left; font: inherit; font-weight: 600; color: inherit;
+}
+.barre-laterale .nav-groupe-bouton:hover { background: rgba(255,255,255,.07); }
+.barre-laterale .nav-groupe-bouton.ouvert { background: rgba(255,255,255,.10); }
+.barre-laterale .nav-groupe-bouton.ouvert:hover { background: rgba(255,255,255,.14); }
+.barre-laterale .nav-groupe-liens { margin: 2px 0 8px; padding: 0 0 0 10px; }
 .barre-laterale.reduite .pied-sidebar { flex-direction: column; align-items: center; justify-content: center; padding-left: 0; padding-right: 0; gap: 8px; }
 .barre-laterale .bouton-deconnexion-rail { display: none; }
 .barre-laterale.reduite .bouton-deconnexion-rail {
@@ -234,9 +240,7 @@ const STYLES_RAIL = `
   background: var(--encre); color: #fff; font-size: 12.5px; padding: 6px 10px; border-radius: 7px;
   box-shadow: 0 4px 14px rgba(0,0,0,.28);
 }
-/* Charte personnalisée : logo du client sous celui d'Amaterasu, sur une pastille blanche (lisible quelle que soit sa couleur) */
-.barre-laterale .marque-client { margin-top: 14px; }
-.barre-laterale.reduite .marque-client { display: flex; justify-content: center; }
+/* Logo de l'entreprise sur une pastille blanche (lisible quelle que soit sa couleur) */
 .barre-laterale .marque-logo-pastille {
   display: inline-flex; align-items: center; justify-content: center; background: #fff; border-radius: 10px;
   padding: 7px 12px; height: 46px; max-width: 160px;
@@ -300,10 +304,10 @@ function IconFermer() {
   );
 }
 
-// Deux groupes repliables, indépendants : ouvrir ou fermer l'un ne touche pas à l'autre.
+// Accordéon : un seul groupe est déplié à la fois. Ouvrir l'un referme l'autre.
 const TITRES_GROUPES = { gestion: 'Gestion & Stock', finance: 'Finance & Administration' };
 const CHEMINS_FINANCE = ['/comptabilite', '/fiscalite', '/paie', '/entreprise', '/equipe'];
-const CLE_GROUPE_OUVERT = 'sidebarGroupeOuvert';
+const CLE_GROUPE = 'sidebarGroupeOuvert';
 
 function groupeDuChemin(pathname) {
   if (CHEMINS_FINANCE.some((c) => pathname === c || pathname.startsWith(`${c}/`))) return 'finance';
@@ -311,24 +315,22 @@ function groupeDuChemin(pathname) {
   return 'gestion';
 }
 
-// Accordéon : un seul groupe est ouvert à la fois. Au chargement, c'est celui de la page affichée ; sinon le dernier
-// groupe ouvert mémorisé (ou « Gestion & Stock » la toute première fois).
-function lireGroupeOuvert() {
-  const duChemin = groupeDuChemin(window.location.pathname);
-  if (duChemin) return duChemin;
+// Au chargement : le dernier choix mémorisé (« aucun » = tout est replié), sinon le groupe de la page affichée.
+function lireGroupeOuvert(pathname) {
   try {
-    const v = localStorage.getItem(CLE_GROUPE_OUVERT);
-    if (v === 'gestion' || v === 'finance' || v === '') return v || null;
+    const v = localStorage.getItem(CLE_GROUPE);
+    if (v === 'aucun' || v === 'gestion' || v === 'finance') return v;
   } catch {
-    // mémorisation facultative
+    // lecture facultative
   }
-  return 'gestion';
+  return groupeDuChemin(pathname) || 'gestion';
 }
 
 export function Sidebar({ ouvert = false, onFermer }) {
   const { user, merchant, logout, aRole, branding } = useAuth();
-  // Charte personnalisée du commerçant (réglée par l'owner) : son logo remplace celui d'Amaterasu en haut de la barre.
-  const logoClient = branding?.enabled && branding.logo ? branding.logo : null;
+  // Logo de l'entreprise : il remplace celui d'Amaterasu en haut de la barre, pour tous les secteurs.
+  // Sans logo enregistré, le logo Amaterasu reste affiché.
+  const logoClient = branding?.logo || null;
   const { pathname } = useLocation();
   const secteurConfig = getSecteurConfig(merchant?.sector);
   // Comptabilité, Fiscalité et Paie : visibles seulement si l'owner a donné l'accès.
@@ -376,7 +378,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
     { id: 'finance', liens: liensFinance },
   ].filter((g) => g.liens.length > 0);
 
-  const [groupeOuvert, setGroupeOuvert] = useState(lireGroupeOuvert);
+  const [groupeOuvert, setGroupeOuvert] = useState(() => lireGroupeOuvert(pathname));
   const [reduiteChoisie, setReduiteChoisie] = useState(lireReduite);
   // Le tiroir mobile (ouvert) reste toujours complet ; le rail ne concerne que la barre fixe.
   const rail = reduiteChoisie && !ouvert;
@@ -410,18 +412,18 @@ export function Sidebar({ ouvert = false, onFermer }) {
     setInfobulle({ texte, y: r.top + r.height / 2 });
   };
   const cacherInfobulle = () => setInfobulle(null);
-  // Quand on change de page, le groupe de cette page s'ouvre (et l'autre se referme).
+  // Quand on change de page, le groupe de cette page s'ouvre et l'autre se referme.
   useEffect(() => {
     const g = groupeDuChemin(pathname);
     if (g) setGroupeOuvert(g);
   }, [pathname]);
 
-  // Un clic sur un groupe l'ouvre et referme l'autre ; un second clic le referme.
+  // Clic sur un groupe : il s'ouvre (l'autre se referme) ; un second clic le referme.
   function basculerGroupe(id) {
     setGroupeOuvert((courant) => {
-      const suivant = courant === id ? null : id;
+      const suivant = courant === id ? 'aucun' : id;
       try {
-        localStorage.setItem(CLE_GROUPE_OUVERT, suivant || '');
+        localStorage.setItem(CLE_GROUPE, suivant);
       } catch {
         // mémorisation facultative
       }
@@ -478,23 +480,22 @@ export function Sidebar({ ouvert = false, onFermer }) {
     );
   };
 
-  // Titre de groupe : un bouton pleine largeur, sans flèche. Ouvert = fond plus marqué.
-  const styleTitre = (ouvertG) => ({
-    display: 'flex', alignItems: 'center', gap: 8, width: 'calc(100% - 16px)', margin: '8px 8px 2px', padding: '10px 12px',
-    background: ouvertG ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.06)',
-    border: '1px solid ' + (ouvertG ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.08)'),
-    borderRadius: 10, color: 'inherit', cursor: 'pointer', textAlign: 'left',
-    fontSize: 12, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase',
-  });
-
   return (
     <nav className={'barre-laterale' + (ouvert ? ' ouverte' : '') + (rail ? ' reduite' : '')}>
       <style>{STYLES_RAIL}</style>
       <div className="marque">
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
           <span className="marque-logo">
-            <img src="/amaterasu-emblem.svg" alt="" width="28" height="28" />
-            <span className="nav-texte">Amaterasu</span>
+            {logoClient ? (
+              <span className="marque-logo-pastille">
+                <img src={logoClient} alt={merchant?.businessName || 'Logo'} />
+              </span>
+            ) : (
+              <>
+                <img src="/amaterasu-emblem.svg" alt="" width="28" height="28" />
+                <span className="nav-texte">Amaterasu</span>
+              </>
+            )}
           </span>
           <button
             type="button" className="bouton-reduire" onClick={basculerRail}
@@ -507,13 +508,6 @@ export function Sidebar({ ouvert = false, onFermer }) {
             <IconFermer />
           </button>
         </div>
-        {logoClient && (
-          <div className="marque-client">
-            <span className="marque-logo-pastille">
-              <img src={logoClient} alt={merchant?.businessName || 'Logo'} />
-            </span>
-          </div>
-        )}
       </div>
       <ul className="nav-liste">
         <li>
@@ -534,18 +528,19 @@ export function Sidebar({ ouvert = false, onFermer }) {
           </li>
         ))}
         {groupes.length > 1 && !rail && groupes.map((g) => {
-          const ouvertG = g.id === groupeOuvert;
+          const ouvertG = groupeOuvert === g.id;
           return (
             <li key={g.id} style={{ listStyle: 'none' }}>
               <button
-                type="button" style={styleTitre(ouvertG)} aria-expanded={ouvertG} onClick={() => basculerGroupe(g.id)}
+                type="button"
+                className={'nav-lien nav-groupe-bouton' + (ouvertG ? ' ouvert' : '')}
+                aria-expanded={ouvertG}
+                onClick={() => basculerGroupe(g.id)}
               >
-                <span className="titre-groupe-icone">
-                  {g.id === 'finance' ? <IconGroupeFinance /> : <IconGroupeGestion />}
-                  {TITRES_GROUPES[g.id]}
-                </span>
+                {g.id === 'finance' ? <IconGroupeFinance /> : <IconGroupeGestion />}
+                <span className="nav-texte">{TITRES_GROUPES[g.id]}</span>
               </button>
-              {ouvertG && <ul className="nav-liste" style={{ margin: 0, padding: 0 }}>{g.liens.map(lienNav)}</ul>}
+              {ouvertG && <ul className="nav-liste nav-groupe-liens">{g.liens.map(lienNav)}</ul>}
             </li>
           );
         })}

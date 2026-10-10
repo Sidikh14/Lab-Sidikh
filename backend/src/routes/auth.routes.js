@@ -218,7 +218,8 @@ router.post('/login', async (req, res) => {
 // GET /auth/branding
 // Charte personnalisée du commerçant connecté (couleurs + logo). Appelée au démarrage de l'application :
 // un changement fait par l'owner arrive donc sans que le commerçant ait à se reconnecter.
-// Le logo n'est renvoyé que si la personnalisation est active.
+// Le logo de l'entreprise est renvoyé dès qu'il existe, que la personnalisation des couleurs soit active ou non :
+// il remplace le logo Amaterasu dans la barre latérale, pour tous les secteurs.
 router.get('/branding', authenticate, async (req, res) => {
   if (!req.user.merchantId) return res.json({ enabled: false, palette: null, logo: null });
   try {
@@ -227,7 +228,7 @@ router.get('/branding', authenticate, async (req, res) => {
     const branding = brandingDepuisLigne(ligne && ligne.brand_enabled === true, ligne && ligne.brand_color);
 
     let logo = null;
-    if (branding.enabled && ligne) {
+    if (ligne) {
       // Le nom exact de la colonne du logo n'est pas supposé : on prend la première colonne « logo… » exploitable.
       for (const [cle, valeur] of Object.entries(ligne)) {
         if (!/logo/i.test(cle) || typeof valeur !== 'string') continue;
