@@ -160,17 +160,6 @@ function IconCadenasMenu() {
   );
 }
 
-function IconChevronGroupe({ ouvert }) {
-  return (
-    <svg
-      width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-      style={{ transition: 'transform 0.2s', transform: ouvert ? 'rotate(180deg)' : 'none', flexShrink: 0 }}
-    >
-      <path d="M6 9l6 6 6-6" />
-    </svg>
-  );
-}
-
 function IconReduire({ reduite }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -245,7 +234,9 @@ const STYLES_RAIL = `
   background: var(--encre); color: #fff; font-size: 12.5px; padding: 6px 10px; border-radius: 7px;
   box-shadow: 0 4px 14px rgba(0,0,0,.28);
 }
-/* Charte personnalisée : logo du client sur une pastille blanche (lisible quelle que soit sa couleur) */
+/* Charte personnalisée : logo du client sous celui d'Amaterasu, sur une pastille blanche (lisible quelle que soit sa couleur) */
+.barre-laterale .marque-client { margin-top: 14px; }
+.barre-laterale.reduite .marque-client { display: flex; justify-content: center; }
 .barre-laterale .marque-logo-pastille {
   display: inline-flex; align-items: center; justify-content: center; background: #fff; border-radius: 10px;
   padding: 7px 12px; height: 46px; max-width: 160px;
@@ -253,11 +244,6 @@ const STYLES_RAIL = `
 .barre-laterale .marque-logo-pastille img { display: block; max-height: 32px; max-width: 136px; object-fit: contain; }
 .barre-laterale.reduite .marque-logo-pastille { padding: 4px; width: 44px; height: 44px; }
 .barre-laterale.reduite .marque-logo-pastille img { max-height: 34px; max-width: 34px; }
-.barre-laterale .propulse-par {
-  display: flex; align-items: center; gap: 6px; margin: 0; padding: 0 20px 12px; font-size: 11px; opacity: .6;
-}
-.barre-laterale.reduite .propulse-par { justify-content: center; padding-left: 0; padding-right: 0; }
-.barre-laterale.reduite .propulse-par .texte-pied { display: none; }
 `;
 
 const CLE_REDUITE = 'sidebarReduite';
@@ -317,7 +303,7 @@ function IconFermer() {
 // Deux groupes repliables, indépendants : ouvrir ou fermer l'un ne touche pas à l'autre.
 const TITRES_GROUPES = { gestion: 'Gestion & Stock', finance: 'Finance & Administration' };
 const CHEMINS_FINANCE = ['/comptabilite', '/fiscalite', '/paie', '/entreprise', '/equipe'];
-const CLE_GROUPES = 'sidebarGroupesOuverts';
+const CLE_GROUPE_OUVERT = 'sidebarGroupeOuvert';
 
 function groupeDuChemin(pathname) {
   if (CHEMINS_FINANCE.some((c) => pathname === c || pathname.startsWith(`${c}/`))) return 'finance';
@@ -325,14 +311,18 @@ function groupeDuChemin(pathname) {
   return 'gestion';
 }
 
-// Par défaut les deux groupes sont ouverts : rien n'est caché tant qu'on ne le replie pas soi-même.
-function lireGroupesOuverts() {
+// Accordéon : un seul groupe est ouvert à la fois. Au chargement, c'est celui de la page affichée ; sinon le dernier
+// groupe ouvert mémorisé (ou « Gestion & Stock » la toute première fois).
+function lireGroupeOuvert() {
+  const duChemin = groupeDuChemin(window.location.pathname);
+  if (duChemin) return duChemin;
   try {
-    const v = JSON.parse(localStorage.getItem(CLE_GROUPES));
-    return { gestion: v?.gestion !== false, finance: v?.finance !== false };
+    const v = localStorage.getItem(CLE_GROUPE_OUVERT);
+    if (v === 'gestion' || v === 'finance' || v === '') return v || null;
   } catch {
-    return { gestion: true, finance: true };
+    // mémorisation facultative
   }
+  return 'gestion';
 }
 
 export function Sidebar({ ouvert = false, onFermer }) {
@@ -386,7 +376,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
     { id: 'finance', liens: liensFinance },
   ].filter((g) => g.liens.length > 0);
 
-  const [ouverts, setOuverts] = useState(lireGroupesOuverts);
+  const [groupeOuvert, setGroupeOuvert] = useState(lireGroupeOuvert);
   const [reduiteChoisie, setReduiteChoisie] = useState(lireReduite);
   // Le tiroir mobile (ouvert) reste toujours complet ; le rail ne concerne que la barre fixe.
   const rail = reduiteChoisie && !ouvert;
@@ -420,17 +410,18 @@ export function Sidebar({ ouvert = false, onFermer }) {
     setInfobulle({ texte, y: r.top + r.height / 2 });
   };
   const cacherInfobulle = () => setInfobulle(null);
-  // Si la page affichée appartient à un groupe replié, ce groupe se rouvre (sans toucher à l'autre).
+  // Quand on change de page, le groupe de cette page s'ouvre (et l'autre se referme).
   useEffect(() => {
     const g = groupeDuChemin(pathname);
-    if (g) setOuverts((o) => (o[g] ? o : { ...o, [g]: true }));
+    if (g) setGroupeOuvert(g);
   }, [pathname]);
 
+  // Un clic sur un groupe l'ouvre et referme l'autre ; un second clic le referme.
   function basculerGroupe(id) {
-    setOuverts((o) => {
-      const suivant = { ...o, [id]: !o[id] };
+    setGroupeOuvert((courant) => {
+      const suivant = courant === id ? null : id;
       try {
-        localStorage.setItem(CLE_GROUPES, JSON.stringify(suivant));
+        localStorage.setItem(CLE_GROUPE_OUVERT, suivant || '');
       } catch {
         // mémorisation facultative
       }
@@ -487,11 +478,14 @@ export function Sidebar({ ouvert = false, onFermer }) {
     );
   };
 
-  const styleTitre = {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, width: '100%',
-    padding: '10px 14px 6px', background: 'none', border: 'none', color: 'inherit', cursor: 'pointer',
-    fontSize: 11.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', opacity: 0.7, textAlign: 'left',
-  };
+  // Titre de groupe : un bouton pleine largeur, sans flèche. Ouvert = fond plus marqué.
+  const styleTitre = (ouvertG) => ({
+    display: 'flex', alignItems: 'center', gap: 8, width: 'calc(100% - 16px)', margin: '8px 8px 2px', padding: '10px 12px',
+    background: ouvertG ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.06)',
+    border: '1px solid ' + (ouvertG ? 'rgba(255,255,255,0.22)' : 'rgba(255,255,255,0.08)'),
+    borderRadius: 10, color: 'inherit', cursor: 'pointer', textAlign: 'left',
+    fontSize: 12, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase',
+  });
 
   return (
     <nav className={'barre-laterale' + (ouvert ? ' ouverte' : '') + (rail ? ' reduite' : '')}>
@@ -499,16 +493,8 @@ export function Sidebar({ ouvert = false, onFermer }) {
       <div className="marque">
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
           <span className="marque-logo">
-            {logoClient ? (
-              <span className="marque-logo-pastille">
-                <img src={logoClient} alt={merchant?.businessName || 'Logo'} />
-              </span>
-            ) : (
-              <>
-                <img src="/amaterasu-emblem.svg" alt="" width="28" height="28" />
-                <span className="nav-texte">Amaterasu</span>
-              </>
-            )}
+            <img src="/amaterasu-emblem.svg" alt="" width="28" height="28" />
+            <span className="nav-texte">Amaterasu</span>
           </span>
           <button
             type="button" className="bouton-reduire" onClick={basculerRail}
@@ -521,6 +507,13 @@ export function Sidebar({ ouvert = false, onFermer }) {
             <IconFermer />
           </button>
         </div>
+        {logoClient && (
+          <div className="marque-client">
+            <span className="marque-logo-pastille">
+              <img src={logoClient} alt={merchant?.businessName || 'Logo'} />
+            </span>
+          </div>
+        )}
       </div>
       <ul className="nav-liste">
         <li>
@@ -541,17 +534,16 @@ export function Sidebar({ ouvert = false, onFermer }) {
           </li>
         ))}
         {groupes.length > 1 && !rail && groupes.map((g) => {
-          const ouvertG = ouverts[g.id];
+          const ouvertG = g.id === groupeOuvert;
           return (
             <li key={g.id} style={{ listStyle: 'none' }}>
               <button
-                type="button" style={styleTitre} aria-expanded={ouvertG} onClick={() => basculerGroupe(g.id)}
+                type="button" style={styleTitre(ouvertG)} aria-expanded={ouvertG} onClick={() => basculerGroupe(g.id)}
               >
                 <span className="titre-groupe-icone">
                   {g.id === 'finance' ? <IconGroupeFinance /> : <IconGroupeGestion />}
                   {TITRES_GROUPES[g.id]}
                 </span>
-                <IconChevronGroupe ouvert={ouvertG} />
               </button>
               {ouvertG && <ul className="nav-liste" style={{ margin: 0, padding: 0 }}>{g.liens.map(lienNav)}</ul>}
             </li>
@@ -560,12 +552,6 @@ export function Sidebar({ ouvert = false, onFermer }) {
       </ul>
       {infobulle && <div className="infobulle-rail" style={{ top: infobulle.y }} role="tooltip">{infobulle.texte}</div>}
       {moduleBloque && <ModuleNonActive nom={moduleBloque} onFermer={() => setModuleBloque('')} />}
-      {logoClient && (
-        <p className="propulse-par">
-          <img src="/amaterasu-emblem.svg" alt="" width="12" height="12" />
-          <span className="texte-pied">Propulsé par Amaterasu</span>
-        </p>
-      )}
       {user && (
         <div className="pied-sidebar">
           <span
