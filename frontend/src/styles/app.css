@@ -462,9 +462,9 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  /* Fond en carreaux losanges (même dessin que la barre latérale, en trait marine très fin) */
+  /* Fond en carreaux losanges (même dessin que la barre latérale ; rendre plus ou moins visible : changer 0.11) */
   background-color: var(--fond);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44'%3E%3Cpath d='M22 3 L41 22 L22 41 L3 22 Z' fill='none' stroke='rgba(15,39,71,0.05)' stroke-width='1'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44'%3E%3Cpath d='M22 3 L41 22 L22 41 L3 22 Z' fill='none' stroke='rgba(15,39,71,0.11)' stroke-width='1'/%3E%3C/svg%3E");
   background-repeat: repeat;
 }
 
@@ -621,7 +621,7 @@
   width: 230px;
   flex-shrink: 0;
   background-color: var(--encre);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44'%3E%3Cpath d='M22 3 L41 22 L22 41 L3 22 Z' fill='none' stroke='rgba(244,244,247,0.045)' stroke-width='1'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44'%3E%3Cpath d='M22 3 L41 22 L22 41 L3 22 Z' fill='none' stroke='rgba(244,244,247,0.13)' stroke-width='1'/%3E%3C/svg%3E");
   background-repeat: repeat;
   color: #f4f4f7;
   display: flex;
@@ -667,15 +667,15 @@
 .nav-lien {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  margin-bottom: 2px;
-  border-radius: var(--rayon-petit);
-  color: rgba(244, 244, 247, 0.68);
+  gap: 12px;
+  padding: 6px 10px 6px 8px;
+  margin-bottom: 3px;
+  border-radius: 12px;
+  color: rgba(244, 244, 247, 0.72);
   text-decoration: none;
   font-size: 14px;
   font-weight: 500;
-  transition: background var(--transition), color var(--transition);
+  transition: background var(--transition), color var(--transition), transform 0.18s ease, filter var(--transition);
 }
 
 .nav-lien svg {
@@ -683,15 +683,64 @@
   opacity: 0.85;
 }
 
+/* Icône dans une pastille arrondie (style « marine à pastilles ») */
+.nav-lien .nav-icone {
+  box-sizing: content-box;
+  width: 18px;
+  height: 18px;
+  padding: 7px;
+  border-radius: 10px;
+  background: rgba(244, 244, 247, 0.1);
+  opacity: 1;
+  transition: background var(--transition), color var(--transition), transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
 .nav-lien:hover {
   color: #ffffff;
   background: rgba(244, 244, 247, 0.08);
 }
 
+/* Survol : le lien glisse légèrement, sa pastille passe en Azur et se soulève */
+.nav-lien:hover .nav-icone {
+  background: rgba(244, 244, 247, 0.18);
+}
+
+.nav-lien:not(.actif):hover .nav-icone {
+  background: var(--accent);
+  color: #ffffff;
+  transform: scale(1.1) rotate(-5deg);
+}
+
+.barre-laterale:not(.reduite) .nav-lien:not(.actif):hover {
+  transform: translateX(4px);
+}
+
+.nav-lien.actif:hover {
+  filter: brightness(1.1);
+}
+
+.nav-lien:active {
+  transform: scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-lien,
+  .nav-lien .nav-icone {
+    transition: none;
+    transform: none !important;
+  }
+}
+
+/* Page active : fond Azur, pastille Soleil */
 .nav-lien.actif {
   color: #ffffff;
-  background: var(--soleil-transparent);
-  box-shadow: inset 3px 0 0 var(--soleil);
+  background: var(--accent);
+  box-shadow: 0 2px 10px rgba(31, 95, 191, 0.45);
+}
+
+.nav-lien.actif .nav-icone {
+  background: var(--soleil);
+  color: var(--marine);
 }
 
 .nav-lien.actif svg {

@@ -230,7 +230,7 @@ const STYLES_RAIL = `
 .barre-laterale.reduite .icone-cadenas,
 .barre-laterale.reduite .pied-sidebar .texte-pied { display: none; }
 .barre-laterale.reduite .nav-liste { padding-left: 0; padding-right: 0; }
-.barre-laterale.reduite .nav-lien { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; margin-left: 10px; margin-right: 10px; }
+.barre-laterale.reduite .nav-lien { justify-content: center; gap: 0; padding-left: 0; padding-right: 0; margin-left: 8px; margin-right: 8px; }
 .barre-laterale .separateur-rail { list-style: none; height: 1px; margin: 8px 18px; background: currentColor; opacity: .14; }
 .barre-laterale .titre-groupe-icone { display: inline-flex; align-items: center; gap: 8px; }
 .barre-laterale.reduite .pied-sidebar { flex-direction: column; align-items: center; justify-content: center; padding-left: 0; padding-right: 0; gap: 8px; }
@@ -248,13 +248,12 @@ const STYLES_RAIL = `
 `;
 
 const CLE_REDUITE = 'sidebarReduite';
-// Par défaut la barre est réduite à ses icônes ; le choix de la personne est mémorisé.
+// Par défaut la barre est complète (icônes + libellés) ; la personne peut la réduire, son choix est mémorisé.
 function lireReduite() {
   try {
-    const v = localStorage.getItem(CLE_REDUITE);
-    return v === null ? true : v === '1';
+    return localStorage.getItem(CLE_REDUITE) === '1';
   } catch {
-    return true;
+    return false;
   }
 }
 
