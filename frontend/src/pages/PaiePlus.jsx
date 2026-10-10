@@ -90,24 +90,25 @@ export function AlertesPaie() {
 }
 
 // ---------------------------------------------------------------------------
-// Actions du mois (onglet Salaires) : génération en masse, masse salariale, paiement groupé, envoi, exports
+// Action du mois (onglet Salaires) : « Payer tout »
 // ---------------------------------------------------------------------------
 export function ActionsMois({ mois, onChange }) {
   const boutiques = useBoutiques();
   const [occupe, setOccupe] = useState(false);
   const [erreur, setErreur] = useState('');
   const [message, setMessage] = useState('');
-  const [apercu, setApercu] = useState(null);
   const [paiement, setPaiement] = useState(false);
   const [boutique, setBoutique] = useState('');
-  const [retour, setRetour] = useState(null);
 
-  async function lancer(action) {
+  async function payerTout() {
     setOccupe(true);
     setErreur('');
     setMessage('');
     try {
-      await action();
+      const r = await api.payAllSalaries({ month: mois, warehouseId: boutique });
+      setPaiement(false);
+      setMessage(`${r.paid.length} salaire(s) payé(s) pour ${fcfa(r.total)} FCFA.${r.withoutPayslip.length ? ` Sans bulletin : ${r.withoutPayslip.join(', ')}.` : ''}`);
+      onChange();
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -115,72 +116,14 @@ export function ActionsMois({ mois, onChange }) {
     }
   }
 
-  const genererTout = () => lancer(async () => {
-    const r = await api.generateAllPayslips(mois);
-    setMessage(`${r.generated.length} bulletin(s) généré(s), ${r.skipped.length} ignoré(s)${r.errors.length ? `, ${r.errors.length} en erreur : ${r.errors.map((e) => `${e.name} (${e.error})`).join(' ; ')}` : ''}.`);
-    onChange();
-  });
-
-  const voirApercu = () => lancer(async () => setApercu(await api.previewPayrollMonth(mois)));
-
-  const payerTout = () => lancer(async () => {
-    const r = await api.payAllSalaries({ month: mois, warehouseId: boutique });
-    setPaiement(false);
-    setMessage(`${r.paid.length} salaire(s) payé(s) pour ${fcfa(r.total)} FCFA.${r.withoutPayslip.length ? ` Sans bulletin : ${r.withoutPayslip.join(', ')}.` : ''}`);
-    onChange();
-  });
-
-  const envoyer = () => lancer(async () => {
-    const r = await api.sendPayslips(mois);
-    setRetour(r);
-    onChange();
-  });
-
   return (
     <div style={{ marginBottom: 16 }}>
-      <div className="md-outils" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <button className="btn btn-principal" disabled={occupe} onClick={genererTout}>Générer tous les bulletins</button>
-        <button className="btn" disabled={occupe} onClick={voirApercu}>Masse salariale du mois</button>
-        <button className="btn" disabled={occupe} onClick={() => setPaiement(true)}>Payer tout</button>
-        <button className="btn" disabled={occupe} onClick={envoyer}>Envoyer les bulletins</button>
-        <button className="btn" disabled={occupe} onClick={() => lancer(() => api.printPayslipsPdf(mois))}>Imprimer (sans e-mail)</button>
-        <button className="btn" disabled={occupe} onClick={() => lancer(() => api.downloadSalaryExport(mois, 'virement'))}>Export virements</button>
-        <button className="btn" disabled={occupe} onClick={() => lancer(() => api.downloadSalaryExport(mois, 'mobile'))}>Export mobile money</button>
+      <div className="md-outils">
+        <button className="btn btn-principal" disabled={occupe} onClick={() => { setErreur(''); setPaiement(true); }}>Payer tout</button>
       </div>
 
-      {erreur && <div className="erreur" style={{ marginTop: 8 }}>{erreur}</div>}
+      {erreur && !paiement && <div className="erreur" style={{ marginTop: 8 }}>{erreur}</div>}
       {message && <div className="md-info" style={{ marginTop: 8 }}>{message}</div>}
-
-      {retour && (
-        <div className="md-info" style={{ marginTop: 8 }}>
-          <p>{retour.sent.length} bulletin(s) envoyé(s) par e-mail.</p>
-          {retour.toPrint.length > 0 && <p>À imprimer (ni compte ni e-mail) : {retour.toPrint.map((e) => e.name).join(', ')}.</p>}
-          {retour.accounts.length > 0 && <p>À télécharger par l'employé depuis son compte : {retour.accounts.map((e) => e.name).join(', ')}.</p>}
-          {retour.errors.length > 0 && <p className="erreur">Échecs : {retour.errors.map((e) => `${e.name} (${e.error})`).join(' ; ')}</p>}
-          <button className="btn" onClick={() => setRetour(null)}>Fermer</button>
-        </div>
-      )}
-
-      {apercu && (
-        <div className="md-fiche-section" style={{ marginTop: 12 }}>
-          <h3>Masse salariale — {formatMois(apercu.month)}</h3>
-          <div className="md-liste">
-            {apercu.employees.map((l) => (
-              <div key={l.id} className="md-ligne">
-                <div className="md-bloc"><p className="md-titre">{l.name}</p>
-                  <p className="md-sous">{l.error ? l.error : `${l.paid ? 'Payé' : l.hasPayslip ? 'Bulletin généré' : 'Estimation'}${l.number ? ` · ${l.number}` : ''}`}</p></div>
-                <div className="md-bloc md-bloc--montant">
-                  <p className="md-sous">Brut {fcfa(l.gross)} · Net {fcfa(l.net)} · Coût employeur {fcfa(l.employerCost)} FCFA</p>
-                </div>
-              </div>
-            ))}
-          </div>
-          <p className="md-titre" style={{ marginTop: 8 }}>
-            Total : brut {fcfa(apercu.totals.gross)} · net {fcfa(apercu.totals.net)} · coût employeur {fcfa(apercu.totals.employerCost)} FCFA
-          </p>
-          <button className="btn" onClick={() => setApercu(null)}>Fermer</button>
-        </div>
-      )}
 
       {paiement && (
         <div className="modale-fond" onClick={() => setPaiement(false)}>
