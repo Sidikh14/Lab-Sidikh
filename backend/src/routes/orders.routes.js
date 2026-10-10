@@ -5,7 +5,11 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
-const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerPiedDePage, traitSeparateur, enregistrerPolices } = require('../utils/pdfHelpers');
+const {
+  COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerBandeauTotal, dessinerPiedDePage, traitSeparateur, traitPointille,
+  enregistrerPolices, dessinerEmblem, lireLogoCommercant, dessinerLogoCommercant,
+} = require('../utils/pdfHelpers');
+const { FORMATS, TAILLES, MENTION_EDITEUR, mmEnPt, nomFichierPdf, metadonneesPdf } = require('../utils/pdfTheme');
 const { creerAlerte, getSeuilVenteElevee, getNomUtilisateur } = require('../services/alerts.service');
 const { consumeFEFO } = require('../utils/lots');
 
@@ -1584,6 +1588,7 @@ async function getOrderReceiptDetail(merchantId, id) {
             c.full_name AS client_name, c.phone AS client_phone, c.address AS client_address,
             m.business_name, m.currency, m.ninea, m.rccm,
             m.address AS merchant_address, m.bank_details, m.mobile_money_details, m.payment_terms,
+            to_jsonb(m) AS merchant_json,
             uv.full_name AS vendeur_name,
             uc.full_name AS caissier_name,
             EXISTS (SELECT 1 FROM product_returns pr WHERE pr.order_id = o.id) AS has_return
@@ -1628,7 +1633,7 @@ const LABEL_STATUT_PDF = {
 // d'activité) — une ligne par commande, pagination automatique.
 function genererListeVentesPdf(res, orders, from, to, businessName) {
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="ventes-${from}-au-${to}.pdf"`);
+  res.setHeader('Content-Disposition', `inline; filename="${nomFichierPdf('Ventes', `${from}-au-${to}`)}"`);
 
   const doc = new PDFDocument({ margin: 50, size: 'A4' });
   attacherFiletSecuritePdf(doc, res, 'liste des ventes');
@@ -1689,13 +1694,17 @@ function genererListeVentesPdf(res, orders, from, to, businessName) {
 // Mesure la hauteur réelle nécessaire pour le ticket (gère les noms de
 // produits qui passent sur plusieurs lignes) via un document PDFKit
 // jetable, jamais envoyé nulle part — juste utilisé pour heightOfString.
+// Les polices de la charte sont activées sur ce document jetable pour que la mesure
+// corresponde exactement au ticket réellement dessiné.
 function mesurerHauteurTicket(order, largeurContenu) {
   const mesure = new PDFDocument({ margin: 0 });
+  enregistrerPolices(mesure);
 
-  let hauteur = 176; // en-tête + bloc totaux fixe + marge basse (sans pied de page)
+  let hauteur = 232; // emblème + en-tête + bloc totaux fixe + mention « Édité avec Amaterasu » + marge basse
   if (order.tva_applicable) hauteur += 13;
   if (Number(order.change_given) > 0) hauteur += 12;
   if (order.has_return) hauteur += 18;
+  if (order.caissier_name) hauteur += 12;
 
   order.items.forEach((item) => {
     mesure.font('Helvetica').fontSize(8.5);
@@ -1710,21 +1719,27 @@ function mesurerHauteurTicket(order, largeurContenu) {
   return hauteur;
 }
 
-// Ticket de caisse étroit (format imprimante thermique 80mm), pour un
-// client de passage. La hauteur de page est mesurée à l'avance en
-// fonction du texte réel (avec ses retours à la ligne), PDFKit ne
-// supportant pas les pages à hauteur "automatique".
+// Reçu de caisse étroit (format imprimante thermique 80 mm, marges de 4 mm), pour un
+// client de passage. Charte v8 : noir sur blanc uniquement, emblème en version noire,
+// séparateurs en pointillés, total en gras. La hauteur de page est mesurée à l'avance en
+// fonction du texte réel (avec ses retours à la ligne), PDFKit ne supportant pas les
+// pages à hauteur "automatique".
 function genererTicketEtroit(res, order) {
-  const LARGEUR = 227; // 80mm
-  const MARGE = 14;
+  const LARGEUR = FORMATS.ticket.largeur; // 80 mm
+  const MARGE = FORMATS.ticket.marge; // 4 mm
   const largeurContenu = LARGEUR - MARGE * 2;
+  const NOIR = '#000000';
 
   const hauteur = mesurerHauteurTicket(order, largeurContenu) + MARGE + 20; // marge de sécurité
 
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="ticket-${order.order_number}.pdf"`);
+  res.setHeader('Content-Disposition', `inline; filename="${nomFichierPdf('Recu', order.order_number)}"`);
 
-  const doc = new PDFDocument({ margin: MARGE, size: [LARGEUR, hauteur] });
+  const doc = new PDFDocument({
+    margin: MARGE,
+    size: [LARGEUR, hauteur],
+    ...metadonneesPdf({ titre: `Reçu de caisse ${order.order_number}`, commercant: order.business_name }),
+  });
   attacherFiletSecuritePdf(doc, res, 'ticket de caisse');
   // Le ticket doit impérativement tenir sur une seule page : si un
   // débordement se produit malgré la marge de sécurité ci-dessus, on
@@ -1734,81 +1749,103 @@ function genererTicketEtroit(res, order) {
   doc.pipe(res);
   enregistrerPolices(doc);
 
+  const pointille = (yy) => traitPointille(doc, MARGE, LARGEUR - MARGE, yy, NOIR);
+
   let y = MARGE;
-  doc.fillColor(COULEURS.encre).font('Titre').fontSize(13)
+  const tailleEmbleme = 24;
+  dessinerEmblem(doc, (LARGEUR - tailleEmbleme) / 2, y, tailleEmbleme, 'noir');
+  y += tailleEmbleme + 8;
+
+  doc.fillColor(NOIR).font('Titre').fontSize(12)
     .text((order.business_name || 'Commerce').toUpperCase(), MARGE, y, { width: largeurContenu, align: 'center' });
-  y += 20;
-  doc.fillColor(COULEURS.muted).font('Helvetica').fontSize(7.5)
-    .text('TICKET DE CAISSE', MARGE, y, { width: largeurContenu, align: 'center', characterSpacing: 1 });
-  y += 16;
-  doc.fillColor(COULEURS.encre).fontSize(9).font('Helvetica-Bold')
-    .text(order.order_number, MARGE, y, { width: largeurContenu, align: 'center' });
+  y += 17;
+  doc.fillColor(NOIR).font('Helvetica-Bold').fontSize(7.5)
+    .text('REÇU DE CAISSE', MARGE, y, { width: largeurContenu, align: 'center', characterSpacing: 1 });
+  y += 14;
+  doc.fillColor(NOIR).font('Helvetica').fontSize(8.5)
+    .text(`N° ${order.order_number}  ·  ${new Date(order.validated_at || order.created_at).toLocaleString('fr-FR')}`, MARGE, y, { width: largeurContenu, align: 'center' });
   y += 13;
-  doc.fillColor(COULEURS.muted).font('Helvetica').fontSize(7.5)
-    .text(new Date(order.validated_at || order.created_at).toLocaleString('fr-FR'), MARGE, y, { width: largeurContenu, align: 'center' });
-  y += 18;
+  if (order.caissier_name) {
+    doc.fontSize(8).text(`Caissier : ${order.caissier_name}`, MARGE, y, { width: largeurContenu, align: 'center' });
+    y += 12;
+  }
+  y += 4;
 
   if (order.has_return) {
-    doc.fillColor(COULEURS.brique || '#B84A3E').font('Helvetica-Bold').fontSize(9)
+    doc.fillColor(NOIR).font('Helvetica-Bold').fontSize(9)
       .text('FACTURE RETOURNÉE', MARGE, y, { width: largeurContenu, align: 'center', characterSpacing: 1 });
     y += 16;
   }
 
-  traitSeparateur(doc, y);
+  pointille(y);
   y += 10;
 
   order.items.forEach((item) => {
-    doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(8.5);
+    doc.fillColor(NOIR).font('Helvetica').fontSize(8.5);
     const hNom = doc.heightOfString(item.product_name, { width: largeurContenu });
     doc.text(item.product_name, MARGE, y, { width: largeurContenu });
     y += hNom + 3;
 
     if (item.packaging_label) {
-      doc.fillColor(COULEURS.muted).fontSize(7.5);
+      doc.fillColor(NOIR).fontSize(7.5);
       const hLabel = doc.heightOfString(item.packaging_label, { width: largeurContenu });
       doc.text(item.packaging_label, MARGE, y, { width: largeurContenu });
       y += hLabel + 3;
     }
 
     const quantiteAffichee = item.packaging_label ? item.packaging_quantity : item.quantity;
-    doc.fillColor(COULEURS.muted).fontSize(8)
+    doc.fillColor(NOIR).font('Helvetica').fontSize(8)
       .text(`${Math.round(quantiteAffichee)} × ${formatMontant(item.unit_price * (item.packaging_label ? item.quantity / item.packaging_quantity : 1))}`, MARGE, y, { width: largeurContenu - 70 });
-    doc.fillColor(COULEURS.encre).font('Helvetica-Bold')
+    doc.fillColor(NOIR).font('Helvetica-Bold')
       .text(formatMontant(item.line_total), MARGE, y, { width: largeurContenu, align: 'right' });
     y += 14;
   });
 
-  traitSeparateur(doc, y);
+  pointille(y);
   y += 10;
 
-  doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted);
+  doc.font('Helvetica').fontSize(8.5).fillColor(NOIR);
   doc.text('Sous-total', MARGE, y, { width: largeurContenu - 70 });
-  doc.fillColor(COULEURS.encre).text(`${formatMontant(order.subtotal_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
+  doc.text(`${formatMontant(order.subtotal_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
   y += 13;
 
   if (order.tva_applicable) {
-    doc.fillColor(COULEURS.muted).text(`TVA (${TVA_RATE} %)`, MARGE, y, { width: largeurContenu - 70 });
-    doc.fillColor(COULEURS.encre).text(`${formatMontant(order.tva_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
+    doc.text(`TVA (${TVA_RATE} %)`, MARGE, y, { width: largeurContenu - 70 });
+    doc.text(`${formatMontant(order.tva_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
     y += 13;
   }
 
   y += 3;
-  doc.font('Helvetica-Bold').fontSize(11).fillColor(COULEURS.encre);
+  doc.font('Helvetica-Bold').fontSize(11).fillColor(NOIR);
   doc.text('TOTAL', MARGE, y, { width: largeurContenu - 90 });
   doc.text(`${formatMontant(order.total_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
   y += 20;
 
-  doc.font('Helvetica').fontSize(8).fillColor(COULEURS.muted);
+  doc.font('Helvetica').fontSize(8).fillColor(NOIR);
   doc.text(MOYENS_PAIEMENT_LABEL[order.payment_method] || order.payment_method || '', MARGE, y, { width: largeurContenu - 90 });
-  doc.text(`Reçu : ${formatMontant(order.amount_received)}`, MARGE, y, { width: largeurContenu, align: 'right' });
+  doc.text(formatMontant(order.amount_received), MARGE, y, { width: largeurContenu, align: 'right' });
   y += 12;
   if (Number(order.change_given) > 0) {
-    doc.text('Monnaie rendue', MARGE, y, { width: largeurContenu - 90 });
+    doc.text('Rendu', MARGE, y, { width: largeurContenu - 90 });
     doc.text(formatMontant(order.change_given), MARGE, y, { width: largeurContenu, align: 'right' });
     y += 12;
   }
 
-  y += 14;
+  y += 6;
+  pointille(y);
+  y += 10;
+
+  doc.font('Helvetica').fontSize(8.5).fillColor(NOIR)
+    .text('Merci de votre visite', MARGE, y, { width: largeurContenu, align: 'center' });
+  y += 16;
+
+  // Mention « Édité avec Amaterasu » avec l'emblème noir à 3 mm.
+  doc.font('Helvetica').fontSize(TAILLES.pied);
+  const texteMention = MENTION_EDITEUR;
+  const largeurMention = doc.widthOfString(texteMention);
+  const xDepart = (LARGEUR - (TAILLES.logoPied + 4 + largeurMention)) / 2;
+  dessinerEmblem(doc, xDepart, y - 0.5, TAILLES.logoPied, 'noir');
+  doc.fillColor(NOIR).text(texteMention, xDepart + TAILLES.logoPied + 4, y, { lineBreak: false });
 
   doc.end();
 }
@@ -1846,16 +1883,16 @@ async function calculerAvanceFacture(merchantId, clientId, orderId) {
 
 function genererFactureA4(res, order, creditInfo) {
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="facture-${order.order_number}.pdf"`);
+  res.setHeader('Content-Disposition', `inline; filename="${nomFichierPdf('Facture', order.order_number)}"`);
 
-  const doc = new PDFDocument({ margin: 50, size: 'A4' });
+  // Charte v8 : A4 portrait, marges de 20 mm.
+  const M = FORMATS.marge;
+  const doc = new PDFDocument({
+    margin: M,
+    size: 'A4',
+    ...metadonneesPdf({ titre: `Facture ${order.order_number}`, commercant: order.business_name }),
+  });
   attacherFiletSecuritePdf(doc, res, 'facture A4');
-  // La facture doit tenir sur une seule page : PDFKit ajoute automatiquement
-  // une page dès qu'un texte positionné (même avec x/y explicites) risque
-  // de déborder du bas de la page en cours — même bug déjà rencontré et
-  // corrigé sur le ticket de caisse (voir genererTicketEtroit). On préfère
-  // un léger débordement en bas plutôt que des pages parasites quasi vides.
-  doc.addPage = function () { return this; };
   doc.pipe(res);
   enregistrerPolices(doc);
 
@@ -1867,179 +1904,197 @@ function genererFactureA4(res, order, creditInfo) {
     mobile_money_details: order.mobile_money_details,
     payment_terms: order.payment_terms,
   };
+  const logoCommercant = lireLogoCommercant(order.merchant_json);
 
   const largeurPage = doc.page.width;
-  const largeurContenu = largeurPage - 100;
+  const droite = largeurPage - M;
+  const largeurContenu = droite - M;
+  const devise = order.currency;
+  const dateEmission = new Date(order.validated_at || order.created_at).toLocaleDateString('fr-FR');
 
-  // Titre "FACTURE" seul en haut de page, très grand, en gras sans-serif —
-  // exactement comme sur la maquette envoyée par l'utilisateur.
-  doc.font('Helvetica-Bold').fontSize(24).fillColor(COULEURS.encre)
-    .text('FACTURE', 50, 45, { width: largeurContenu, align: 'right', characterSpacing: 1 });
-  doc.font('Helvetica').fontSize(11).fillColor(COULEURS.muted)
-    .text(order.order_number, 50, 78, { width: largeurContenu, align: 'right' });
+  const libelle = (texte, x, yy, w) => doc.font('Helvetica-Bold').fontSize(TAILLES.libelle).fillColor(COULEURS.muted)
+    .text(texte, x, yy, { width: w, characterSpacing: 0.6, lineBreak: false });
+
+  // En-tête : emblème Amaterasu à gauche, titre « Facture » à droite avec filet Soleil.
+  // Seules les infos légales passent par l'en-tête : les coordonnées de paiement sont écrites dans le corps.
+  const entetePage = () => dessinerEntete(doc, {
+    businessName: order.business_name,
+    titre: 'Facture',
+    sousTitre: `N° ${order.order_number}  ·  ${dateEmission}`,
+    merchant: { ninea: merchant.ninea, rccm: merchant.rccm, address: merchant.address },
+    marge: M,
+  });
+  let y = entetePage();
 
   if (order.has_return) {
-    doc.font('Helvetica-Bold').fontSize(10).fillColor(COULEURS.brique || '#B84A3E')
-      .text('FACTURE RETOURNÉE', 50, 98, { width: largeurContenu, align: 'right', characterSpacing: 0.5 });
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.brique)
+      .text('FACTURE RETOURNÉE', M, 108, { width: largeurContenu, align: 'right', characterSpacing: 0.5, lineBreak: false });
   }
+  y += 10;
 
-  // Les deux blocs (émetteur à gauche, client à droite) démarrent tous les
-  // deux SOUS le titre, avec un espace net entre les deux zones.
-  let yG = 160;
-  doc.font('Helvetica-Bold').fontSize(13).fillColor(COULEURS.encre)
-    .text(order.business_name || 'Commerce', 50, yG, { width: 260 });
-  yG += 22;
-  doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
+  // Bloc émetteur (gauche) et client (droite), sur deux colonnes.
+  const largeurCol = (largeurContenu - 28) / 2;
+  const xG = M;
+  const xD = M + largeurCol + 28;
+  libelle('ÉMETTEUR', xG, y, largeurCol);
+  libelle('CLIENT', xD, y, largeurCol);
+  let yG = y + 13;
+  let yD = y + 13;
+
+  // Logo du commerçant dans le bloc Émetteur, s'il existe.
+  if (logoCommercant && dessinerLogoCommercant(doc, logoCommercant, xG, yG, mmEnPt(30), mmEnPt(14))) {
+    yG += mmEnPt(14) + 6;
+  }
+  doc.font('Helvetica-Bold').fontSize(TAILLES.texte + 1).fillColor(COULEURS.encre)
+    .text(order.business_name || 'Commerce', xG, yG, { width: largeurCol });
+  yG += 16;
+  doc.font('Helvetica').fontSize(TAILLES.texte).fillColor(COULEURS.encre);
   [merchant.address, merchant.ninea && `NINEA ${merchant.ninea}`, merchant.rccm && `RCCM ${merchant.rccm}`]
     .filter(Boolean)
-    .forEach((ligne) => { doc.text(ligne, 50, yG, { width: 260 }); yG += 15; });
+    .forEach((ligne) => { doc.text(ligne, xG, yG, { width: largeurCol }); yG += 14; });
 
-  let yD = 160;
-  const droite = (texte, opts = {}) => {
-    doc.text(texte, 320, yD, { width: 225, align: 'right', ...opts });
-    yD += opts.hauteur || 15;
-  };
-  doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
-  droite(`Date d'émission : ${new Date(order.validated_at || order.created_at).toLocaleDateString('fr-FR')}`, { hauteur: 18 });
-  doc.font('Helvetica-Bold').fontSize(11).fillColor(COULEURS.encre);
-  droite(order.client_name, { hauteur: 17 });
-  doc.font('Helvetica').fontSize(10).fillColor(COULEURS.encre);
-  if (order.client_phone) droite(order.client_phone);
-  if (order.client_address) droite(order.client_address);
-  droite(`Vendeur : ${order.vendeur_name || '—'}`);
-  droite(`Caissier : ${order.caissier_name || '—'}`);
-  droite(`Paiement : ${MOYENS_PAIEMENT_LABEL[order.payment_method] || '—'}`);
-  droite(`Livraison : ${order.needs_delivery ? 'à livrer' : 'remise en main propre'}`);
+  doc.font('Helvetica-Bold').fontSize(TAILLES.texte + 1).fillColor(COULEURS.encre)
+    .text(order.client_name, xD, yD, { width: largeurCol });
+  yD += 16;
+  doc.font('Helvetica').fontSize(TAILLES.texte).fillColor(COULEURS.encre);
+  if (order.client_phone) { doc.text(order.client_phone, xD, yD, { width: largeurCol }); yD += 14; }
+  if (order.client_address) { doc.text(order.client_address, xD, yD, { width: largeurCol }); yD += doc.heightOfString(order.client_address, { width: largeurCol }) + 3; }
+  doc.fontSize(9).fillColor(COULEURS.muted);
+  [
+    `Vendeur : ${order.vendeur_name || '—'}`,
+    `Caissier : ${order.caissier_name || '—'}`,
+    `Paiement : ${MOYENS_PAIEMENT_LABEL[order.payment_method] || '—'}`,
+    `Livraison : ${order.needs_delivery ? 'à livrer' : 'remise en main propre'}`,
+  ].forEach((ligne) => { doc.text(ligne, xD, yD, { width: largeurCol }); yD += 13; });
 
-  let y = Math.max(yG, yD) + 30;
+  y = Math.max(yG, yD) + 18;
 
-  // Encart "Adresse de livraison" bien visible, juste avant les articles —
-  // uniquement si une livraison est prévue sur cette commande.
+  // Encart « Adresse de livraison », juste avant les articles — uniquement si une livraison est prévue.
   if (order.needs_delivery && order.delivery_address) {
     const largeurTexte = largeurContenu - 24;
     doc.font('Helvetica').fontSize(10.5);
     const hauteurTexte = doc.heightOfString(order.delivery_address, { width: largeurTexte });
     const hauteurEncart = 28 + hauteurTexte;
-    doc.roundedRect(50, y, largeurContenu, hauteurEncart, 4).fillAndStroke('#f6f6f6', COULEURS.bordure);
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.muted)
-      .text('ADRESSE DE LIVRAISON', 62, y + 8, { characterSpacing: 0.5 });
+    doc.roundedRect(M, y, largeurContenu, hauteurEncart, 4).fillAndStroke(COULEURS.fondAlterne, COULEURS.bordure);
+    libelle('ADRESSE DE LIVRAISON', M + 12, y + 9, largeurContenu - 24);
     doc.font('Helvetica').fontSize(10.5).fillColor(COULEURS.encre)
-      .text(order.delivery_address, 62, y + 21, { width: largeurTexte });
-    y += hauteurEncart + 20;
+      .text(order.delivery_address, M + 12, y + 21, { width: largeurTexte });
+    y += hauteurEncart + 18;
   }
 
-  // Grand titre de section, gras sans-serif, comme sur la maquette.
-  doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.muted).text('DESCRIPTION', 50, y, { characterSpacing: 0.8 });
-  y += 20;
-  traitSeparateur(doc, y);
-  y += 22;
+  // Tableau : en-tête Marine, lignes alternées Brume, montants alignés à droite.
+  const COLONNES = [
+    { texte: 'Désignation', x: M + 8, largeur: 215 },
+    { texte: 'Qté', x: M + 232, largeur: 50, aligner: 'right' },
+    { texte: 'Prix unitaire', x: M + 292, largeur: 90, aligner: 'right' },
+    { texte: 'Montant', x: M + 392, largeur: largeurContenu - 392 - 8, aligner: 'right' },
+  ];
+  const limiteBas = () => doc.page.height - 90;
+  const nouvellePage = () => { doc.addPage(); y = entetePage() + 8; };
 
+  y += 4;
+  y = dessinerEnteteTableau(doc, y, COLONNES, M);
   let contientReliquat = false;
 
-  order.items.forEach((item) => {
+  order.items.forEach((item, index) => {
     const quantiteAffichee = item.packaging_label ? item.packaging_quantity : item.quantity;
     const prixUnitaire = item.line_total / quantiteAffichee;
-    const sousLigne = item.packaging_label
-      ? `${item.packaging_label} · ${Math.round(quantiteAffichee)} × ${formatMontant(prixUnitaire)} ${order.currency}`
-      : `${Math.round(quantiteAffichee)} × ${formatMontant(prixUnitaire)} ${order.currency}`;
+    const reliquat = Number(item.quantite_reliquat) > 0;
+    const hauteurLigne = 24 + (item.packaging_label ? 11 : 0) + (reliquat ? 11 : 0);
 
-    doc.font('Helvetica').fontSize(10.5).fillColor(COULEURS.encre)
-      .text(item.product_name, 50, y, { width: 320 });
-    doc.font('Helvetica').fontSize(10.5).fillColor(COULEURS.encre)
-      .text(`${formatMontant(item.line_total)} ${order.currency}`, 350, y, { width: 195, align: 'right' });
-    doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted).text(sousLigne, 50, y + 15, { width: 320 });
-
-    if (Number(item.quantite_reliquat) > 0) {
-      contientReliquat = true;
-      doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.brique || '#B84A3E')
-        .text(`En attente de réapprovisionnement : ${item.quantite_reliquat} unité(s)`, 50, y + 27, { width: 320 });
-      y += 12;
+    if (y + hauteurLigne > limiteBas()) {
+      nouvellePage();
+      y = dessinerEnteteTableau(doc, y, COLONNES, M);
     }
+    if (index % 2 === 1) doc.rect(M, y - 6, largeurContenu, hauteurLigne).fill(COULEURS.fondAlterne);
 
-    y += 38;
+    doc.font('Helvetica').fontSize(TAILLES.tableau).fillColor(COULEURS.encre);
+    doc.text(item.product_name, COLONNES[0].x, y, { width: COLONNES[0].largeur, lineBreak: false, ellipsis: true });
+    doc.text(String(Math.round(quantiteAffichee)), COLONNES[1].x, y, { width: COLONNES[1].largeur, align: 'right', lineBreak: false });
+    doc.text(formatMontant(prixUnitaire), COLONNES[2].x, y, { width: COLONNES[2].largeur, align: 'right', lineBreak: false });
+    doc.font('Helvetica-Bold').text(formatMontant(item.line_total), COLONNES[3].x, y, { width: COLONNES[3].largeur, align: 'right', lineBreak: false });
+
+    let yLigne = y + 12;
+    if (item.packaging_label) {
+      doc.font('Helvetica').fontSize(8).fillColor(COULEURS.muted)
+        .text(item.packaging_label, COLONNES[0].x, yLigne, { width: COLONNES[0].largeur, lineBreak: false, ellipsis: true });
+      yLigne += 11;
+    }
+    if (reliquat) {
+      contientReliquat = true;
+      doc.font('Helvetica').fontSize(8).fillColor(COULEURS.brique)
+        .text(`En attente de réapprovisionnement : ${item.quantite_reliquat} unité(s)`, COLONNES[0].x, yLigne, { width: COLONNES[0].largeur + 120, lineBreak: false });
+    }
+    y += hauteurLigne;
   });
 
-  traitSeparateur(doc, y);
-  y += 20;
+  doc.moveTo(M, y - 2).lineTo(droite, y - 2).strokeColor(COULEURS.bordure).lineWidth(0.8).stroke();
+  y += 14;
 
-  // Bloc des totaux, aligné à droite, en gras — même esprit que la maquette
-  // (libellé directement collé à sa valeur, hiérarchie par la taille).
-  const xLabel = 280, wLabel = 165, xValeur = 445, wValeur = 100;
-  const ligneTotal = (label, valeur, { grand = false, discret = false } = {}) => {
-    const taille = grand ? 14 : 10.5;
-    const xLbl = grand ? 260 : xLabel;
-    const wLbl = grand ? 115 : wLabel;
-    const xVal = grand ? 380 : xValeur;
-    const wVal = grand ? 165 : wValeur;
-    // Gras réservé au total à payer ; les autres lignes restent en texte normal.
-    doc.font(grand ? 'Helvetica-Bold' : 'Helvetica').fontSize(taille).fillColor(discret ? COULEURS.muted : COULEURS.encre)
-      .text(label, xLbl, y, { width: wLbl, align: 'right' });
-    doc.font(grand ? 'Helvetica-Bold' : 'Helvetica').fontSize(taille).fillColor(discret ? COULEURS.muted : COULEURS.encre)
-      .text(`${formatMontant(valeur)} ${order.currency}`, xVal, y, { width: wVal, align: 'right' });
-    y += grand ? 26 : 18;
+  // Bloc des totaux : il reste groupé sur une même page.
+  if (y + 210 > doc.page.height - 70) nouvellePage();
+
+  const xLibelle = droite - 250;
+  const ligneTotal = (label, texteValeur, { discret = false, fort = false } = {}) => {
+    doc.font(fort ? 'Helvetica-Bold' : 'Helvetica').fontSize(TAILLES.texte).fillColor(discret ? COULEURS.muted : COULEURS.encre)
+      .text(label, xLibelle, y, { width: 120, lineBreak: false });
+    doc.text(texteValeur, droite - 130, y, { width: 130, align: 'right', lineBreak: false });
+    y += 17;
   };
+  const montant = (valeur) => `${formatMontant(valeur)} ${devise}`;
 
-  ligneTotal('Sous total :', order.subtotal_amount);
-  if (order.tva_applicable) ligneTotal(`TVA (${TVA_RATE}%) :`, order.tva_amount);
+  ligneTotal('Sous-total', montant(order.subtotal_amount));
+  if (order.tva_applicable) ligneTotal(`TVA (${TVA_RATE} %)`, montant(order.tva_amount));
   if (order.discount_type && Number(order.discount_amount) > 0) {
     const labelReduction = { remise: 'Remise', rabais: 'Rabais', ristourne: 'Ristourne', escompte: 'Escompte' }[order.discount_type] || 'Réduction';
-    const detailReduction = order.discount_mode === 'pourcentage' ? ` (${order.discount_value}%)` : '';
-    ligneTotal(`${labelReduction}${detailReduction} :`, -Math.round(Number(order.discount_amount)), { discret: true });
+    const detailReduction = order.discount_mode === 'pourcentage' ? ` (${order.discount_value} %)` : '';
+    ligneTotal(`${labelReduction}${detailReduction}`, montant(-Math.round(Number(order.discount_amount))), { discret: true });
   }
   if (order.needs_delivery && Number(order.delivery_fee) > 0) {
-    ligneTotal('Frais de livraison :', order.delivery_fee);
+    ligneTotal('Frais de livraison', montant(order.delivery_fee));
   }
-  y += 4;
-  ligneTotal('TOTAL :', order.total_amount, { grand: true });
-  y += 8;
+  y += 6;
+
+  // Total à payer : bandeau Marine, montant en Soleil.
+  y = dessinerBandeauTotal(doc, { x: droite - 260, y, largeur: 260, label: 'Total à payer', texteMontant: montant(order.total_amount), hauteur: 32 }) + 14;
 
   if (order.payment_method === 'a_credit' && creditInfo) {
-    ligneTotal('Déjà réglé :', creditInfo.avance, { discret: true });
-    ligneTotal('Reste à payer :', creditInfo.reste);
+    ligneTotal('Déjà réglé', montant(creditInfo.avance), { discret: true });
+    ligneTotal('Reste à payer', montant(creditInfo.reste), { fort: true });
   } else {
-    ligneTotal('Montant reçu :', order.amount_received, { discret: true });
-    if (Number(order.change_given) > 0) ligneTotal('Monnaie rendue :', order.change_given, { discret: true });
+    ligneTotal('Montant reçu', montant(order.amount_received), { discret: true });
+    if (Number(order.change_given) > 0) ligneTotal('Monnaie rendue', montant(order.change_given), { discret: true });
   }
-
-  y += 34;
+  y += 14;
 
   if (contientReliquat) {
-    doc.roundedRect(50, y, largeurContenu, 34, 4).fillAndStroke('#FBEAE7', COULEURS.brique || '#B84A3E');
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.brique || '#B84A3E')
-      .text('Cette facture comprend un ou plusieurs articles en attente de réapprovisionnement. Vous serez contacté(e) dès réception.', 62, y + 11, { width: largeurContenu - 24 });
+    if (y + 50 > doc.page.height - 70) nouvellePage();
+    doc.roundedRect(M, y, largeurContenu, 34, 4).fillAndStroke('#FDE9E7', COULEURS.brique);
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.brique)
+      .text('Cette facture comprend un ou plusieurs articles en attente de réapprovisionnement. Vous serez contacté(e) dès réception.', M + 12, y + 11, { width: largeurContenu - 24 });
     y += 34 + 16;
   }
 
-  // Pied de page en deux colonnes (informations de paiement / conditions),
-  // comme sur la maquette — seulement si le commerçant a renseigné l'un ou
-  // l'autre.
-  const infosPaiement = [merchant.bank_details && `Coordonnées bancaires : ${merchant.bank_details}`, merchant.mobile_money_details && `Mobile Money : ${merchant.mobile_money_details}`].filter(Boolean);
-  const conditions = merchant.payment_terms;
-
-  if (infosPaiement.length > 0 || conditions) {
-    traitSeparateur(doc, y);
-    y += 16;
-
-    let yFG = y;
-    let yFD = y;
-    const largeurCol = 240;
-    if (infosPaiement.length > 0) {
-      doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.encre).text('Informations de paiement', 50, yFG, { width: largeurCol });
-      yFG += 15;
-      doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted);
-      infosPaiement.forEach((ligne) => {
-        doc.text(ligne, 50, yFG, { width: largeurCol });
-        yFG += doc.heightOfString(ligne, { width: largeurCol }) + 3;
-      });
-    }
-    if (conditions) {
-      doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.encre).text('Conditions et termes', 305, yFD, { width: largeurCol, align: 'right' });
-      yFD += 15;
-      doc.font('Helvetica').fontSize(8.5).fillColor(COULEURS.muted)
-        .text(conditions, 305, yFD, { width: largeurCol, align: 'right' });
-    }
+  // Conditions de paiement : seulement si le commerçant a renseigné l'une de ces informations.
+  const lignesPaiement = [
+    merchant.payment_terms,
+    merchant.bank_details && `Coordonnées bancaires : ${merchant.bank_details}`,
+    merchant.mobile_money_details && `Mobile Money : ${merchant.mobile_money_details}`,
+  ].filter(Boolean);
+  if (lignesPaiement.length > 0) {
+    doc.font('Helvetica').fontSize(9);
+    const hauteurBloc = 18 + lignesPaiement.reduce((somme, ligne) => somme + doc.heightOfString(ligne, { width: largeurContenu }) + 3, 0);
+    if (y + hauteurBloc > doc.page.height - 70) nouvellePage();
+    libelle('CONDITIONS DE PAIEMENT', M, y, largeurContenu);
+    y += 14;
+    doc.font('Helvetica').fontSize(9).fillColor(COULEURS.encre);
+    lignesPaiement.forEach((ligne) => {
+      doc.text(ligne, M, y, { width: largeurContenu });
+      y += doc.heightOfString(ligne, { width: largeurContenu }) + 3;
+    });
   }
 
+  // Le pied de page « Édité avec Amaterasu · n / total » est ajouté par pdfHelpers à la fin du document.
   doc.font('Helvetica').fillColor(COULEURS.encre);
   doc.end();
 }
@@ -2050,7 +2105,7 @@ function genererFactureA4(res, order, creditInfo) {
 // utilisable dans tous les secteurs (pas de logique spécifique à un métier).
 function genererBonDeLivraison(res, order, merchant) {
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `inline; filename="bon-livraison-${order.order_number}.pdf"`);
+  res.setHeader('Content-Disposition', `inline; filename="${nomFichierPdf('Bon-livraison', order.order_number)}"`);
 
   const doc = new PDFDocument({ margin: 50, size: 'A4' });
   attacherFiletSecuritePdf(doc, res, 'bon de livraison');
@@ -2083,7 +2138,7 @@ function genererBonDeLivraison(res, order, merchant) {
     doc.font('Helvetica').fontSize(10.5);
     const hauteurTexte = doc.heightOfString(order.delivery_address, { width: largeurTexte });
     const hauteurEncart = 28 + hauteurTexte;
-    doc.roundedRect(xGauche, y, largeurContenu, hauteurEncart, 4).fillAndStroke('#f6f6f6', COULEURS.bordure);
+    doc.roundedRect(xGauche, y, largeurContenu, hauteurEncart, 4).fillAndStroke(COULEURS.fondAlterne, COULEURS.bordure);
     doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.muted)
       .text('ADRESSE DE LIVRAISON', xGauche + 12, y + 8, { characterSpacing: 0.5 });
     doc.font('Helvetica').fontSize(10.5).fillColor(COULEURS.encre)

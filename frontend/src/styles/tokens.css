@@ -1,37 +1,60 @@
-/* Charte graphique Amaterasu v7 — jetons de design.
-   Nuit #14151f · Indigo #5b4fe9 · Ardoise #6b7280 · Brume #f7f8fa
-   Indigo clair #dedcfb · Indigo survol #4a3fd1
-   Succès #0e7490 · Alerte #92400e · Erreur #b91c1c
-   Poppins (marque, titres) · Inter (interface dense, chiffres) */
+/* Charte graphique Amaterasu v8 — jetons de design.
+   Marine #0F2747 · Azur #1F5FBF · Soleil #F2A81D · Ardoise #5A6678 · Brume #F4F6FA
+   Azur survol #174C9C · Azur clair #DCE8FA · Soleil clair #FDEFC8
+   Succès #157347 · Alerte #9C4A06 · Erreur #B42318
+   Plus Jakarta Sans (marque, titres) · Inter (interface dense, chiffres)
+   Les polices viennent des paquets npm @fontsource (aucun fichier à héberger). */
+
+@import '@fontsource/plus-jakarta-sans/500.css';
+@import '@fontsource/plus-jakarta-sans/600.css';
+@import '@fontsource/plus-jakarta-sans/700.css';
+@import '@fontsource/plus-jakarta-sans/800.css';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
 
 :root {
-  --fond: #f7f8fa;
+  /* Palette de la charte */
+  --marine: #0f2747;
+  --azur: #1f5fbf;
+  --soleil: #f2a81d;
+  --ardoise: #5a6678;
+  --brume: #f4f6fa;
+
+  --fond: var(--brume);
   --carte: #ffffff;
-  --encre: #14151f;
-  --encre-douce: #6b7280;
-  --trait: #e5e7eb;
-  --trait-fort: #d1d5db;
+  --encre: var(--marine);
+  --encre-douce: var(--ardoise);
+  --trait: #e2e8f0;
+  --trait-fort: #cbd5e1;
 
-  --accent: #5b4fe9;
-  --accent-fonce: #4a3fd1;
-  --accent-clair: #dedcfb;
+  /* Actions, liens, boutons : Azur */
+  --accent: var(--azur);
+  --accent-fonce: #174c9c;
+  --accent-clair: #dce8fa;
 
-  --vif: #0e7490;
-  --vif-clair: #e0f5f8;
+  /* Signature : Soleil (jamais en texte sur fond clair) */
+  --soleil-clair: #fdefc8;
+  --soleil-transparent: rgba(242, 168, 29, 0.18);
 
-  --danger: #b91c1c;
-  --danger-clair: #fce8e6;
+  /* États */
+  --vif: #157347;
+  --vif-clair: #e1f3e9;
 
-  --warning: #92400e;
-  --warning-clair: #fef3c7;
+  --danger: #b42318;
+  --danger-clair: #fde9e7;
+
+  --warning: #9c4a06;
+  --warning-clair: var(--soleil-clair);
 
   --rayon: 14px;
   --rayon-petit: 9px;
-  --ombre-legere: 0 1px 2px rgba(20, 21, 31, 0.04), 0 2px 8px rgba(20, 21, 31, 0.06);
-  --ombre-flottante: 0 8px 24px rgba(20, 21, 31, 0.14), 0 2px 6px rgba(20, 21, 31, 0.08);
+  --ombre-legere: 0 1px 2px rgba(15, 39, 71, 0.04), 0 2px 8px rgba(15, 39, 71, 0.06);
+  --ombre-flottante: 0 8px 24px rgba(15, 39, 71, 0.16), 0 2px 6px rgba(15, 39, 71, 0.08);
   --transition: 0.15s ease;
 
-  --font-marque: 'Poppins', sans-serif;
+  --font-marque: 'Plus Jakarta Sans', sans-serif;
   --font-ui: 'Inter', sans-serif;
   --font-chiffres: 'Inter', sans-serif;
 }
@@ -66,6 +89,11 @@ h3 {
   color: var(--encre);
 }
 
+/* Titre de page : Plus Jakarta Sans ExtraBold */
+h1 {
+  font-weight: 800;
+}
+
 table {
   font-variant-numeric: tabular-nums;
 }
@@ -86,6 +114,7 @@ textarea {
   font-family: var(--font-ui);
 }
 
+/* Bouton secondaire : fond blanc, bordure fine */
 .btn {
   border: 1px solid var(--trait-fort);
   background: var(--carte);
@@ -105,18 +134,19 @@ textarea {
   border-color: var(--encre-douce);
 }
 
+/* Bouton principal : Azur, une seule fois par écran */
 .btn-principal {
   background: var(--accent);
   border-color: var(--accent);
   color: #ffffff;
-  box-shadow: 0 2px 8px rgba(91, 79, 233, 0.35);
+  box-shadow: 0 2px 8px rgba(31, 95, 191, 0.3);
 }
 
 .btn-principal:hover {
   background: var(--accent-fonce);
   border-color: var(--accent-fonce);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(91, 79, 233, 0.4);
+  box-shadow: 0 4px 12px rgba(31, 95, 191, 0.38);
 }
 
 .btn:disabled {
@@ -136,6 +166,7 @@ textarea {
   border-color: var(--danger);
 }
 
+/* Champs : au clic, bordure Azur et halo clair */
 .champ {
   width: 100%;
   padding: 12px 14px;
@@ -150,7 +181,7 @@ textarea {
 .champ:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(91, 79, 233, 0.16);
+  box-shadow: 0 0 0 3px var(--accent-clair);
 }
 
 .etiquette {
@@ -160,6 +191,7 @@ textarea {
   margin-bottom: 6px;
 }
 
+/* Statuts : Payée / En attente / Impayée (le texte porte l'information, pas la couleur seule) */
 .tampon {
   display: inline-flex;
   align-items: center;

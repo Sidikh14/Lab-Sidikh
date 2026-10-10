@@ -6,11 +6,7 @@
 export const SECTEURS = {
   grossiste: {
     label: 'Grossiste',
-    // Pas de surcharge : on ne connaît pas les valeurs exactes définies
-    // dans le CSS d'origine (--accent/--accent-clair/--accent-fonce), donc
-    // plutôt que de deviner et risquer un léger décalage de couleur, le
-    // secteur grossiste n'écrit aucune variable — l'app garde le thème
-    // CSS par défaut, pixel pour pixel.
+    // Charte v8 : un seul thème (Marine/Azur/Soleil) pour tous les secteurs.
     theme: null,
     libelleProduit: 'Produit',
     libelleBoutique: 'Boutique',
@@ -19,12 +15,7 @@ export const SECTEURS = {
   },
   pharmacie: {
     label: 'Pharmacie',
-    theme: {
-      accent: '#059669',
-      accentClair: '#d1fae5',
-      accentFonce: '#047857',
-      accentTransparent: 'rgba(5, 150, 105, 0.18)', // même usage que le fond de lien actif en sidebar
-    },
+    theme: null,
     libelleProduit: 'Médicament',
     libelleBoutique: 'Pharmacie',
     libelleClient: 'Patient',
@@ -38,12 +29,7 @@ export const SECTEURS = {
   },
   electromenager: {
     label: 'Électroménager',
-    theme: {
-      accent: '#D9A404',
-      accentClair: '#FDF3C7',
-      accentFonce: '#8A6A02',
-      accentTransparent: 'rgba(217, 164, 4, 0.18)',
-    },
+    theme: null,
     libelleProduit: 'Article',
     libelleBoutique: 'Boutique',
     libelleClient: 'Client',
@@ -54,12 +40,7 @@ export const SECTEURS = {
   },
   textile: {
     label: 'Textile',
-    theme: {
-      accent: '#dc2626',
-      accentClair: '#fee2e2',
-      accentFonce: '#b91c1c',
-      accentTransparent: 'rgba(220, 38, 38, 0.18)',
-    },
+    theme: null,
     libelleProduit: 'Article',
     libelleBoutique: 'Boutique',
     libelleClient: 'Client',
@@ -75,29 +56,14 @@ export function getSecteurConfig(sector) {
 }
 
 const VARIABLES_THEME = ['--accent', '--accent-clair', '--accent-fonce', '--accent-transparent'];
-const THEME_COLOR_ORIGINE = '#7c3aed'; // valeur d'origine du <meta name="theme-color"> dans index.html
+const THEME_COLOR = '#0f2747'; // Marine : couleur du navigateur (<meta name="theme-color">)
 
-// À appeler une fois dans AuthContext.jsx (au chargement + à chaque login/
-// déconnexion), avec le secteur du commerçant connecté.
-// - Secteur avec thème défini (pharmacie/electromenager/textile) : surcharge
-//   --accent/--accent-clair/--accent-fonce/--accent-transparent, plus le
-//   meta "theme-color" (couleur de la barre système en PWA).
-// - Secteur sans thème (grossiste, ou déconnecté) : retire toute surcharge
-//   précédente pour retomber exactement sur les valeurs définies dans le CSS.
-export function appliquerThemeSecteur(sector) {
-  const config = getSecteurConfig(sector);
+// Charte v8 : l'identité visuelle est la même pour tous les secteurs. Cette fonction est
+// conservée (AuthContext.jsx l'appelle déjà) mais ne colore plus rien par secteur : elle retire
+// toute ancienne surcharge de couleur posée sur <html> et remet la couleur Marine du navigateur.
+export function appliquerThemeSecteur() {
   const root = document.documentElement;
+  VARIABLES_THEME.forEach((v) => root.style.removeProperty(v));
   const metaTheme = document.querySelector('meta[name="theme-color"]');
-
-  if (!config.theme) {
-    VARIABLES_THEME.forEach((v) => root.style.removeProperty(v));
-    if (metaTheme) metaTheme.setAttribute('content', THEME_COLOR_ORIGINE);
-    return;
-  }
-
-  root.style.setProperty('--accent', config.theme.accent);
-  root.style.setProperty('--accent-clair', config.theme.accentClair);
-  root.style.setProperty('--accent-fonce', config.theme.accentFonce);
-  root.style.setProperty('--accent-transparent', config.theme.accentTransparent);
-  if (metaTheme) metaTheme.setAttribute('content', config.theme.accent);
+  if (metaTheme) metaTheme.setAttribute('content', THEME_COLOR);
 }

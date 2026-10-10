@@ -106,10 +106,10 @@ function IconSecteurTextile() {
 }
 
 const SECTEURS_VITRINE = [
-  { nom: 'Grossiste', tagline: 'Distribution & gros volumes', couleur: '#DEDCFB', couleurClaire: 'rgba(222, 220, 251, 0.16)', Icone: IconSecteurGrossiste },
-  { nom: 'Pharmacie', tagline: 'Lots & péremption', couleur: '#DEDCFB', couleurClaire: 'rgba(222, 220, 251, 0.16)', Icone: IconSecteurPharmacie },
-  { nom: 'Électroménager', tagline: 'Références & garanties', couleur: '#DEDCFB', couleurClaire: 'rgba(222, 220, 251, 0.16)', Icone: IconSecteurElectromenager },
-  { nom: 'Textile', tagline: 'Tailles & coloris', couleur: '#DEDCFB', couleurClaire: 'rgba(222, 220, 251, 0.16)', Icone: IconSecteurTextile },
+  { nom: 'Grossiste', tagline: 'Distribution & gros volumes', couleur: '#F2A81D', couleurClaire: 'rgba(242, 168, 29, 0.16)', Icone: IconSecteurGrossiste },
+  { nom: 'Pharmacie', tagline: 'Lots & péremption', couleur: '#F2A81D', couleurClaire: 'rgba(242, 168, 29, 0.16)', Icone: IconSecteurPharmacie },
+  { nom: 'Électroménager', tagline: 'Références & garanties', couleur: '#F2A81D', couleurClaire: 'rgba(242, 168, 29, 0.16)', Icone: IconSecteurElectromenager },
+  { nom: 'Textile', tagline: 'Tailles & coloris', couleur: '#F2A81D', couleurClaire: 'rgba(242, 168, 29, 0.16)', Icone: IconSecteurTextile },
 ];
 
 export function LoginPage() {
@@ -227,8 +227,8 @@ export function LoginPage() {
 
         <p className="eyebrow-marque">Plateforme de gestion commerçante</p>
         <h1 className="titre-marque">
-          Votre gestion de stock,<br />
-          <span className="titre-marque-accent">simplifiée</span>.
+          La gestion<br />
+          <span className="titre-marque-accent">qui s'éclaire</span>.
         </h1>
         <p className="tagline-marque">
           Pilotez votre stock, vos ventes, vos clients et vos fournisseurs

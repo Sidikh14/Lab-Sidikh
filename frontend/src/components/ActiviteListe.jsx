@@ -1,18 +1,22 @@
-const PALETTE_AVATARS = ['#5b4fe9', '#0891b2', '#db2777', '#2563eb', '#7c3aed', '#0d9488', '#c2410c'];
+// Charte v8 : couleurs de la palette, toutes à plus de 4,5:1 de contraste avec des initiales blanches.
+const PALETTE_AVATARS = ['#0F2747', '#1F5FBF', '#5A6678', '#157347', '#9C4A06', '#B42318', '#174C9C'];
 const LABEL_MOUVEMENT = { entree: 'ajouté', sortie: 'sorti', ajustement: 'ajusté' };
 const LABEL_PAIEMENT = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', cheque: 'Chèque', virement: 'Virement' };
 
+// Charte v8 : couleurs du texte de la palette (contraste de 4,5:1 minimum sur fond blanc).
+// Le sens de chaque action est aussi écrit en toutes lettres (« a créé », « a annulé »…) :
+// aucune information ne repose sur la couleur seule.
 const COULEUR_ACTION = {
-  vente: '#16a34a',        // vert — vente créée
-  encaissement: '#2563eb', // bleu — argent encaissé
-  livraison: '#0891b2',    // cyan — livraison marquée
-  entree: '#16a34a',       // vert — entrée de stock
-  sortie: '#ea580c',       // orange — sortie de stock
-  ajustement: '#ca8a04',   // ambre — ajustement de stock
-  annulation: '#dc2626',   // rouge — action critique
-  suppression: '#991b1b',  // bordeaux — action critique irréversible
-  modification: '#ea580c', // orange — modification produit
-  neutre: '#6b7280',       // gris — info neutre (connexion, etc.)
+  vente: '#157347',        // Succès — vente créée
+  encaissement: '#1F5FBF', // Azur — argent encaissé
+  livraison: '#174C9C',    // Azur survol — livraison marquée
+  entree: '#157347',       // Succès — entrée de stock
+  sortie: '#9C4A06',       // Alerte — sortie de stock
+  ajustement: '#9C4A06',   // Alerte — ajustement de stock
+  annulation: '#B42318',   // Erreur — action critique
+  suppression: '#B42318',  // Erreur — action critique irréversible
+  modification: '#9C4A06', // Alerte — modification produit
+  neutre: '#5A6678',       // Ardoise — info neutre (connexion, etc.)
 };
 
 export function initiales(nom) {
