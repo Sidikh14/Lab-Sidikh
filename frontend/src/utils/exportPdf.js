@@ -74,9 +74,10 @@ ${reglesPolices()}
   * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body { font-family: 'Inter', Arial, Helvetica, sans-serif; font-size: 10px; color: #0F2747; margin: 0; }
   header { margin-bottom: 14px; }
-  .marque { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
-  .marque span { font-family: 'Plus Jakarta Sans', Arial, sans-serif; font-weight: 800; font-size: 14px; }
-  header h1 { font-family: 'Plus Jakarta Sans', Arial, sans-serif; font-weight: 800; font-size: 22px; margin: 0; padding-bottom: 6px; position: relative; }
+  .marque { display: flex; align-items: center; gap: 5px; margin-bottom: 10px; color: #5A6678; }
+  .marque span { font-size: 6.5px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; }
+  .entreprise { font-family: 'Plus Jakarta Sans', Arial, sans-serif; font-weight: 800; font-size: 20px; margin: 0 0 8px; }
+  header h1 { font-family: 'Plus Jakarta Sans', Arial, sans-serif; font-weight: 700; font-size: 15px; margin: 0; padding-bottom: 6px; position: relative; }
   header h1::after { content: ''; position: absolute; left: 0; bottom: 0; width: 12mm; height: 2px; background: #F2A81D; }
   header p { margin: 8px 0 0; color: #5A6678; font-size: 9px; }
   h2 { font-family: 'Plus Jakarta Sans', Arial, sans-serif; font-weight: 700; font-size: 12px; margin: 16px 0 6px; }
@@ -92,9 +93,10 @@ ${reglesPolices()}
   footer { margin-top: 18px; padding-top: 6px; border-top: 1px solid #E2E8F0; color: #5A6678; font-size: 8px; display: flex; align-items: center; gap: 5px; }
 </style></head><body>
 <header>
-  <div class="marque">${EMBLEME_SVG(26)}<span>Amaterasu</span></div>
+  <div class="marque">${EMBLEME_SVG(11)}<span>Amaterasu</span></div>
+  <div class="entreprise">${esc(entreprise)}</div>
   <h1>${esc(titre)}</h1>
-  <p>${esc(entreprise)}${periode ? ` · ${esc(periode)}` : ''}</p>
+  ${periode ? `<p>${esc(periode)}</p>` : ''}
 </header>
 ${corps}
 <footer>${EMBLEME_SVG(11)}<span>Édité avec Amaterasu · le ${aujourdhui} · montants en FCFA</span></footer>

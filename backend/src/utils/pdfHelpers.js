@@ -200,26 +200,57 @@ function dessinerLogoCommercant(doc, logo, x, y, largeurMax, hauteurMax) {
 // En-tête, pied de page, tableaux
 // ---------------------------------------------------------------------------
 
-// En-tête : emblème et nom Amaterasu à gauche, titre du document à droite (Plus Jakarta Sans
-// ExtraBold 22 pt, souligné d'un filet Soleil de 12 mm), nom du commerce et informations
-// légales sous l'emblème. Retourne l'ordonnée à laquelle le contenu peut commencer (toujours 122).
+// Repère discret de la marque : petit emblème + « AMATERASU » en petites capitales (Ardoise).
+function dessinerMarqueAmaterasu(doc, x, y) {
+  const taille = 11;
+  dessinerEmblem(doc, x, y, taille, 'clair');
+  doc.fillColor(ARDOISE).font('Helvetica-Bold').fontSize(6.5)
+    .text('AMATERASU', x + taille + 5, y + 2.2, { characterSpacing: 1.2, lineBreak: false });
+}
+
+// En-tête : nom du commerce (et son logo) en grand à gauche, avec un petit repère Amaterasu au-dessus ;
+// titre du document à droite (Plus Jakarta Sans ExtraBold 22 pt, souligné d'un filet Soleil de 12 mm) ;
+// informations légales du commerce sous son nom. Retourne l'ordonnée à laquelle le contenu peut commencer (toujours 122).
 // `marge` : marge gauche/droite du document (50 pt par défaut, mmEnPt(20) pour les gabarits A4 de la charte).
 // `mentionPied` : texte à gauche du pied de page à la place des coordonnées (ex. « Document confidentiel »).
-function dessinerEntete(doc, { businessName, titre, sousTitre, merchant, marge = 50, mentionPied }) {
+// `logo` : logo du commerçant (Buffer PNG/JPEG), affiché à gauche du nom du commerce.
+function dessinerEntete(doc, { businessName, titre, sousTitre, merchant, marge = 50, mentionPied, logo }) {
   enregistrerPolices(doc);
   const largeurPage = doc.page.width;
   const droite = largeurPage - marge;
   const largeurUtile = droite - marge;
 
-  // Emblème (version claire) + nom de la marque.
-  const hauteurEmbleme = Math.max(TAILLES.logoMin, 26);
-  dessinerEmblem(doc, marge, 34, hauteurEmbleme, 'clair');
-  doc.fillColor(MARINE).font('Titre').fontSize(13)
-    .text('Amaterasu', marge + hauteurEmbleme + 8, 41, { lineBreak: false });
+  // Repère discret de la marque Amaterasu (petit emblème + nom), tout en haut à gauche.
+  dessinerMarqueAmaterasu(doc, marge, 24);
 
-  // Nom du commerce et informations légales (sous l'emblème).
-  doc.fillColor(ARDOISE).font('Helvetica').fontSize(TAILLES.libelle + 0.5)
-    .text((businessName || 'Commerce').toUpperCase(), marge, 70, { characterSpacing: 0.5, width: largeurUtile * 0.5, height: 11, lineBreak: false, ellipsis: true });
+  // Logo du commerçant (s'il existe) et nom du commerce : l'identité du commerce domine l'en-tête.
+  const hautBloc = 36;
+  let xNom = marge;
+  if (logo) {
+    try {
+      const image = doc.openImage(logo);
+      const echelle = Math.min(hautBloc / image.height, 90 / image.width);
+      const largeurLogo = image.width * echelle;
+      const hauteurLogo = image.height * echelle;
+      doc.image(image, marge, 40 + (hautBloc - hauteurLogo) / 2, { width: largeurLogo, height: hauteurLogo });
+      xNom = marge + largeurLogo + 12;
+    } catch (err) {
+      console.error('Logo commerçant ignoré :', err.message);
+    }
+  }
+  const nomCommerce = businessName || 'Commerce';
+  const largeurNom = marge + largeurUtile * 0.5 - xNom;
+  let tailleNom = 18;
+  doc.font('Titre');
+  while (tailleNom > 11) {
+    doc.fontSize(tailleNom);
+    if (doc.widthOfString(nomCommerce) <= largeurNom) break;
+    tailleNom -= 1;
+  }
+  doc.fillColor(MARINE).font('Titre').fontSize(tailleNom)
+    .text(nomCommerce, xNom, 40 + (hautBloc - tailleNom * 1.2) / 2, { width: largeurNom, lineBreak: false, ellipsis: true });
+
+  // Informations légales du commerce, sous son nom.
   if (merchant && (merchant.ninea || merchant.rccm || merchant.address)) {
     const parts = [merchant.address, merchant.ninea && `NINEA ${merchant.ninea}`, merchant.rccm && `RCCM ${merchant.rccm}`].filter(Boolean);
     doc.fillColor(ARDOISE).font('Helvetica').fontSize(TAILLES.libelle)
@@ -406,6 +437,7 @@ module.exports = {
   activerPiedCharte,
   marquerDebutDocument,
   dessinerEmblem,
+  dessinerMarqueAmaterasu,
   lireLogoCommercant,
   dessinerLogoCommercant,
   traitSeparateur,

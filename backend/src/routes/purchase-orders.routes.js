@@ -195,6 +195,7 @@ router.get('/:id/pdf', async (req, res) => {
       sousTitre: `Réf. ${reference}  ·  ${new Date(po.created_at).toLocaleDateString('fr-FR')}`,
       merchant,
       marge: M,
+      logo: logoCommercant,
     });
     let y = entetePage() + 10;
 
@@ -207,9 +208,6 @@ router.get('/:id/pdf', async (req, res) => {
     let yG = y + 13;
     let yD = y + 13;
 
-    if (logoCommercant && dessinerLogoCommercant(doc, logoCommercant, xG, yG, mmEnPt(30), mmEnPt(14))) {
-      yG += mmEnPt(14) + 6;
-    }
     doc.font('Helvetica-Bold').fontSize(TAILLES.texte + 1).fillColor(COULEURS.encre)
       .text(po.business_name || 'Commerce', xG, yG, { width: largeurCol });
     yG += 16;

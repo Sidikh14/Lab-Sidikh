@@ -1,6 +1,6 @@
 // payrollReports.js — sortie des états de paie en PDF (tableau paginé) ou CSV (ouvrable dans Excel).
 const PDFDocument = require('pdfkit');
-const { COULEURS, enregistrerPolices, activerPiedCharte, dessinerEmblem } = require('./pdfHelpers');
+const { COULEURS, enregistrerPolices, activerPiedCharte, dessinerMarqueAmaterasu } = require('./pdfHelpers');
 const { mmEnPt, metadonneesPdf, nomFichierPdf } = require('./pdfTheme');
 
 function montant(n) {
@@ -46,13 +46,12 @@ function genererPdf(res, { titre, sousTitre, entreprise, colonnes, lignes, totau
   const limiteBas = () => doc.page.height - 72;
 
   function entete() {
-    const tailleEmbleme = 22;
-    dessinerEmblem(doc, MARGE, 28, tailleEmbleme, 'clair');
-    doc.font('Titre').fontSize(12).fillColor(COULEURS.encre).text('Amaterasu', MARGE + tailleEmbleme + 8, 33, { lineBreak: false });
-    doc.font('Titre').fontSize(16).fillColor(COULEURS.encre).text(titre, MARGE, 58, { width: largeurUtile, lineBreak: false, ellipsis: true });
-    doc.rect(MARGE, 80, mmEnPt(12), 2.2).fill(COULEURS.soleil);
+    dessinerMarqueAmaterasu(doc, MARGE, 22);
+    doc.font('Titre').fontSize(16).fillColor(COULEURS.encre).text(entreprise || '', MARGE, 38, { width: largeurUtile, lineBreak: false, ellipsis: true });
+    doc.font('Titre-Bold').fontSize(12).fillColor(COULEURS.encre).text(titre, MARGE, 60, { width: largeurUtile, lineBreak: false, ellipsis: true });
+    doc.rect(MARGE, 78, mmEnPt(12), 2.2).fill(COULEURS.soleil);
     doc.font('Helvetica').fontSize(9).fillColor(COULEURS.muted)
-      .text([entreprise, sousTitre].filter(Boolean).join(' — '), MARGE, 87, { width: largeurUtile, lineBreak: false, ellipsis: true });
+      .text(sousTitre || '', MARGE, 86, { width: largeurUtile, lineBreak: false, ellipsis: true });
     // En-tête du tableau : bandeau Marine, libellés blancs.
     const y = 108;
     doc.rect(MARGE, y - 6, largeurUtile, 20).fill(COULEURS.marine);

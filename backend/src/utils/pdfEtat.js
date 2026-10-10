@@ -5,7 +5,7 @@
 // Charte graphique Amaterasu v8 : texte Marine, en-têtes de tableau Marine, lignes alternées Brume,
 // totaux sur fond Azur clair, filet Soleil sous le titre, emblème Amaterasu.
 const { COULEURS: CH, mmEnPt, MENTION_EDITEUR, TAILLES } = require('./pdfTheme');
-const { enregistrerPolices, dessinerEmblem } = require('./pdfHelpers');
+const { enregistrerPolices, dessinerEmblem, dessinerMarqueAmaterasu } = require('./pdfHelpers');
 
 const NOIR = CH.marine; // texte
 const GRIS = CH.ardoise; // texte secondaire
@@ -23,17 +23,13 @@ function dessinerEtatPdf(doc, { entreprise, titre, periode, sections }, nettoyer
 
   enregistrerPolices(doc);
 
-  // ----- En-tête du document : emblème + nom de la marque, puis titre avec filet Soleil -----
-  const yEmbleme = doc.y;
-  const tailleEmbleme = Math.max(TAILLES.logoMin, 24);
-  dessinerEmblem(doc, gauche, yEmbleme, tailleEmbleme, 'clair');
-  doc.font('Titre').fontSize(12).fillColor(NOIR)
-    .text('Amaterasu', gauche + tailleEmbleme + 8, yEmbleme + 6, { lineBreak: false });
-  doc.y = yEmbleme + tailleEmbleme + 12;
-  doc.font('Helvetica').fontSize(8).fillColor(GRIS)
-    .text(nettoyer(entreprise).toUpperCase(), gauche, doc.y, { width: largeur, characterSpacing: 0.5 });
-  doc.moveDown(0.35);
-  doc.font('Titre').fontSize(18).fillColor(NOIR).text(nettoyer(titre), gauche, doc.y, { width: largeur });
+  // ----- En-tête du document : petit repère Amaterasu, nom du commerce en grand, puis titre avec filet Soleil -----
+  const yMarque = doc.y;
+  dessinerMarqueAmaterasu(doc, gauche, yMarque);
+  doc.y = yMarque + 20;
+  doc.font('Titre').fontSize(17).fillColor(NOIR).text(nettoyer(entreprise), gauche, doc.y, { width: largeur });
+  doc.moveDown(0.45);
+  doc.font('Titre-Bold').fontSize(13).fillColor(NOIR).text(nettoyer(titre), gauche, doc.y, { width: largeur });
   if (periode) {
     doc.moveDown(0.2);
     doc.font('Helvetica').fontSize(8.5).fillColor(GRIS).text(nettoyer(periode), gauche, doc.y, { width: largeur });

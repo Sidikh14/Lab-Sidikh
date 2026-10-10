@@ -1752,13 +1752,21 @@ function genererTicketEtroit(res, order) {
   const pointille = (yy) => traitPointille(doc, MARGE, LARGEUR - MARGE, yy, NOIR);
 
   let y = MARGE;
-  const tailleEmbleme = 24;
+  const tailleEmbleme = 14;
   dessinerEmblem(doc, (LARGEUR - tailleEmbleme) / 2, y, tailleEmbleme, 'noir');
   y += tailleEmbleme + 8;
 
-  doc.fillColor(NOIR).font('Titre').fontSize(12)
-    .text((order.business_name || 'Commerce').toUpperCase(), MARGE, y, { width: largeurContenu, align: 'center' });
-  y += 17;
+  const nomTicket = (order.business_name || 'Commerce').toUpperCase();
+  let tailleNomTicket = 15;
+  doc.font('Titre');
+  while (tailleNomTicket > 9) {
+    doc.fontSize(tailleNomTicket);
+    if (doc.widthOfString(nomTicket) <= largeurContenu) break;
+    tailleNomTicket -= 1;
+  }
+  doc.fillColor(NOIR).font('Titre').fontSize(tailleNomTicket)
+    .text(nomTicket, MARGE, y, { width: largeurContenu, align: 'center', lineBreak: false });
+  y += 21;
   doc.fillColor(NOIR).font('Helvetica-Bold').fontSize(7.5)
     .text('REÇU DE CAISSE', MARGE, y, { width: largeurContenu, align: 'center', characterSpacing: 1 });
   y += 14;
@@ -1915,7 +1923,7 @@ function genererFactureA4(res, order, creditInfo) {
   const libelle = (texte, x, yy, w) => doc.font('Helvetica-Bold').fontSize(TAILLES.libelle).fillColor(COULEURS.muted)
     .text(texte, x, yy, { width: w, characterSpacing: 0.6, lineBreak: false });
 
-  // En-tête : emblème Amaterasu à gauche, titre « Facture » à droite avec filet Soleil.
+  // En-tête : nom et logo du commerçant à gauche (petit repère Amaterasu au-dessus), titre « Facture » à droite avec filet Soleil.
   // Seules les infos légales passent par l'en-tête : les coordonnées de paiement sont écrites dans le corps.
   const entetePage = () => dessinerEntete(doc, {
     businessName: order.business_name,
@@ -1923,6 +1931,7 @@ function genererFactureA4(res, order, creditInfo) {
     sousTitre: `N° ${order.order_number}  ·  ${dateEmission}`,
     merchant: { ninea: merchant.ninea, rccm: merchant.rccm, address: merchant.address },
     marge: M,
+    logo: logoCommercant,
   });
   let y = entetePage();
 
@@ -1941,10 +1950,6 @@ function genererFactureA4(res, order, creditInfo) {
   let yG = y + 13;
   let yD = y + 13;
 
-  // Logo du commerçant dans le bloc Émetteur, s'il existe.
-  if (logoCommercant && dessinerLogoCommercant(doc, logoCommercant, xG, yG, mmEnPt(30), mmEnPt(14))) {
-    yG += mmEnPt(14) + 6;
-  }
   doc.font('Helvetica-Bold').fontSize(TAILLES.texte + 1).fillColor(COULEURS.encre)
     .text(order.business_name || 'Commerce', xG, yG, { width: largeurCol });
   yG += 16;
