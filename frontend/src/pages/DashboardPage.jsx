@@ -85,6 +85,50 @@ function IconCloche() {
   );
 }
 
+function IconCheck() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 12.5l3 3 5-6" />
+    </svg>
+  );
+}
+
+function IconChevron() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+// Péremptions : nombre de jours entre aujourd'hui et la date de péremption (négatif = déjà périmé).
+function joursRestants(dateStr) {
+  const fin = new Date(dateStr);
+  const auj = new Date(dateAujourdHui());
+  return Math.ceil((fin - auj) / 86400000);
+}
+
+function libelleDelai(j) {
+  if (j < 0) return `Périmé depuis ${-j} j`;
+  if (j === 0) return "Périme aujourd'hui";
+  if (j < 60) return `Dans ${j} j`;
+  return `Dans ${Math.round(j / 30)} mois`;
+}
+
+function niveauDelai(j) {
+  if (j <= 90) return 'urgent';
+  if (j <= 180) return 'moyen';
+  return 'faible';
+}
+
+const HORIZONS_PEREMPTION = {
+  '3_mois': { titre: 'Moins de 3 mois', niveau: 'urgent' },
+  '6_mois': { titre: 'Entre 3 et 6 mois', niveau: 'moyen' },
+  '12_mois': { titre: 'Entre 6 et 12 mois', niveau: 'faible' },
+};
+const infoHorizon = (h) => HORIZONS_PEREMPTION[h] || HORIZONS_PEREMPTION['12_mois'];
+
 // Convertit la clé publique VAPID (base64 URL-safe) en Uint8Array, format
 // attendu par pushManager.subscribe().
 function urlBase64ToUint8Array(base64String) {
@@ -171,6 +215,50 @@ const CSS_DASHBOARD = `
 .db-barre-rempli{height:100%;border-radius:999px;background:var(--accent)}
 .db-barre-montant{margin:0;font-size:14px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
 .db-barre-sous{display:block;font-size:11px;font-weight:400;color:var(--encre-douce)}
+.db-niveau--urgent{--n:var(--danger,#b91c1c)}
+.db-niveau--moyen{--n:#c2410c}
+.db-niveau--faible{--n:#a16207}
+.db-chip{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--n,var(--danger,#b91c1c));background:rgba(185,28,28,.1);background:color-mix(in srgb,var(--n,var(--danger,#b91c1c)) 12%,transparent)}
+.db-perime{margin-bottom:20px;border:1px solid var(--trait,#e5e7eb);border-left:4px solid var(--danger,#b91c1c);border-radius:16px;background:var(--surface,#fff);overflow:hidden}
+.db-perime-tete{display:flex;align-items:center;flex-wrap:wrap;gap:14px;padding:16px 18px;background:var(--danger-clair,#fef2f2)}
+.db-perime-icone{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:38px;height:38px;border-radius:11px;background:var(--danger,#b91c1c);color:#fff}
+.db-perime-titre{flex:1;min-width:220px}
+.db-perime-titre h2{margin:0;font-size:15px;color:var(--danger,#b91c1c)}
+.db-perime-titre p{margin:3px 0 0;font-size:12px;color:var(--encre-douce)}
+.db-perime-total{margin:0;text-align:right;font-size:20px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--danger,#b91c1c)}
+.db-perime-total small{display:block;margin-top:3px;font-size:11px;font-weight:500;color:var(--encre-douce)}
+.db-perime-liste{list-style:none;margin:0;padding:2px 18px}
+.db-perime-ligne{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px 14px;align-items:center;padding:12px 0;border-top:1px solid var(--trait,#e5e7eb)}
+.db-perime-ligne:first-child{border-top:none}
+.db-perime-nom{margin:0;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-perime-meta{margin:2px 0 0;font-size:12px;color:var(--encre-douce)}
+.db-hz-tete{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.db-hz-tete h2{margin:0;font-size:16px}
+.db-hz-tete span{font-size:13px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.db-seg{display:flex;gap:3px;height:10px;margin-bottom:14px}
+.db-seg span{display:block;min-width:8px;border-radius:999px;background:var(--n)}
+.db-hz-grille{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.db-hz{display:flex;flex-direction:column;gap:3px;width:100%;margin:0;text-align:left;font:inherit;color:inherit;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-top:3px solid var(--n);border-radius:14px;padding:14px 16px;transition:box-shadow .15s}
+button.db-hz:not(:disabled){cursor:pointer}
+button.db-hz:not(:disabled):hover{box-shadow:0 6px 18px rgba(17,24,39,.08)}
+.db-hz:focus-visible{outline:2px solid var(--n);outline-offset:2px}
+.db-hz:disabled{opacity:.55}
+.db-hz-delai{margin:0;font-size:13px;font-weight:600;color:var(--n)}
+.db-hz-nombre{margin:2px 0 0;font-size:26px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.db-hz-nombre small{font-size:13px;font-weight:500;color:var(--encre-douce)}
+.db-hz-valeur{margin:0;font-size:12px;color:var(--encre-douce)}
+.db-hz-voir{display:inline-flex;align-items:center;gap:4px;margin-top:8px;font-size:13px;font-weight:600;color:var(--n)}
+.db-ok{display:flex;align-items:center;gap:12px;padding:14px 16px;border:1px solid var(--trait,#e5e7eb);border-radius:14px;background:var(--surface,#fff);font-size:14px;color:var(--encre-douce)}
+.db-ok-icone{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:34px;height:34px;border-radius:10px;background:#dcfce7;color:#15803d}
+.db-modal-sous{margin:-4px 0 14px;font-size:13px;color:var(--encre-douce)}
+.db-modal-table{overflow-x:auto;margin-bottom:16px}
+.db-modal-table table{margin-bottom:0 !important}
+@media (prefers-reduced-motion:reduce){.db-hz{transition:none}}
+@media (max-width:560px){
+  .db-perime-ligne{grid-template-columns:minmax(0,1fr) auto}
+  .db-perime-ligne .btn{grid-column:1 / -1}
+  .db-perime-total{text-align:left}
+}
 @media (max-width:860px){
   .db-grille,.db-cols{grid-template-columns:1fr}
   .db-barre-ligne{grid-template-columns:minmax(0,1fr) auto}
@@ -712,25 +800,35 @@ function DashboardCommerce() {
             )}
 
             {estPharmacie && lotsPerimes && lotsPerimes.count > 0 && (
-              <div className="erreur" style={{ marginBottom: 20 }}>
-                <p style={{ fontWeight: 700, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <IconAlerte />
-                  {lotsPerimes.count} lot{lotsPerimes.count > 1 ? 's' : ''} périmé{lotsPerimes.count > 1 ? 's' : ''} encore en stock — {Math.round(lotsPerimes.totalValue).toLocaleString('fr-FR')} FCFA à retirer
-                </p>
-                <p style={{ fontSize: 12, marginBottom: 10 }}>Ces produits ne peuvent plus être vendus. Détruisez-les pour les sortir du stock.</p>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <section className="db-perime db-niveau--urgent" role="alert">
+                <header className="db-perime-tete">
+                  <span className="db-perime-icone"><IconAlerte /></span>
+                  <div className="db-perime-titre">
+                    <h2>{lotsPerimes.count} lot{lotsPerimes.count > 1 ? 's' : ''} périmé{lotsPerimes.count > 1 ? 's' : ''} encore en stock</h2>
+                    <p>Ces produits ne peuvent plus être vendus. Détruisez-les pour les sortir du stock.</p>
+                  </div>
+                  <p className="db-perime-total">
+                    {fcfa(lotsPerimes.totalValue)} FCFA
+                    <small>à retirer du stock</small>
+                  </p>
+                </header>
+                <ul className="db-perime-liste">
                   {lotsPerimes.lots.map((l) => (
-                    <div key={l.lot_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                      <span>
-                        <strong>{l.product_name}</strong> · lot {l.lot_number || '—'} · périmé le {new Date(l.expiry_date).toLocaleDateString('fr-FR')} ({l.days_expired} j) · {Math.round(Number(l.quantity))} unité(s)
-                      </span>
+                    <li key={l.lot_id} className="db-perime-ligne">
+                      <div style={{ minWidth: 0 }}>
+                        <p className="db-perime-nom">{l.product_name}</p>
+                        <p className="db-perime-meta">
+                          Lot {l.lot_number || '—'} · {Math.round(Number(l.quantity))} unité(s) · périmé le {new Date(l.expiry_date).toLocaleDateString('fr-FR')}
+                        </p>
+                      </div>
+                      <span className="db-chip">{l.days_expired} j de retard</span>
                       <button className="btn btn-principal" disabled={destructionEnCours === l.lot_id} onClick={() => detruireLotPerime(l)}>
                         {destructionEnCours === l.lot_id ? 'Destruction…' : 'Détruire'}
                       </button>
-                    </div>
+                    </li>
                   ))}
-                </div>
-              </div>
+                </ul>
+              </section>
             )}
 
             {vueEquipe && <RappelsFiscaux lien={estManager ? '/fiscalite' : undefined} />}
@@ -999,28 +1097,50 @@ function DashboardCommerce() {
 
           {estPharmacie && (
             <div style={{ marginBottom: 24 }}>
-              <div className="db-carte-tete">
-                <h2 style={{ margin: 0, fontSize: 16 }}>Périmés imminents</h2>
+              <div className="db-hz-tete">
+                <h2>Périmés imminents</h2>
+                {!lotsBientotPerimes.every((h) => h.count === 0) && (
+                  <span>
+                    {lotsBientotPerimes.reduce((t, h) => t + h.count, 0)} lot(s) à surveiller · {fcfa(lotsBientotPerimes.reduce((t, h) => t + (Number(h.totalValue) || 0), 0))} FCFA en jeu
+                  </span>
+                )}
               </div>
               {lotsBientotPerimes.every((h) => h.count === 0) ? (
-                <p className="etat-vide">Aucun lot bientôt périmé.</p>
-              ) : (
-                <div className="db-kpis">
-                  {lotsBientotPerimes.map((h) => (
-                    <div
-                      key={h.horizon}
-                      className={'db-kpi' + (h.count > 0 ? ' db-kpi--clic db-kpi--alerte' : '')}
-                      onClick={() => h.count > 0 && setHorizonOuvert(h)}
-                    >
-                      <span className="db-kpi-icone"><IconAlerte /></span>
-                      <p className="db-kpi-label">
-                        {h.horizon === '3_mois' ? '≤ 3 mois' : h.horizon === '6_mois' ? '3 à 6 mois' : '6 à 12 mois'}
-                      </p>
-                      <p className="db-kpi-valeur">{h.count}</p>
-                      {h.count > 0 && <p className="db-kpi-sous">{fcfa(h.totalValue)} FCFA en jeu · voir le détail</p>}
-                    </div>
-                  ))}
+                <div className="db-ok">
+                  <span className="db-ok-icone"><IconCheck /></span>
+                  Aucun lot ne périme dans les 12 prochains mois.
                 </div>
+              ) : (
+                <>
+                  <div className="db-seg" aria-hidden="true">
+                    {lotsBientotPerimes
+                      .filter((h) => h.count > 0)
+                      .map((h) => (
+                        <span key={h.horizon} className={'db-niveau--' + infoHorizon(h.horizon).niveau} style={{ flex: h.count }} />
+                      ))}
+                  </div>
+                  <div className="db-hz-grille">
+                    {lotsBientotPerimes.map((h) => {
+                      const info = infoHorizon(h.horizon);
+                      return (
+                        <button
+                          key={h.horizon}
+                          type="button"
+                          className={'db-hz db-niveau--' + info.niveau}
+                          disabled={h.count === 0}
+                          onClick={() => setHorizonOuvert(h)}
+                        >
+                          <p className="db-hz-delai">{info.titre}</p>
+                          <p className="db-hz-nombre">{h.count} <small>lot{h.count > 1 ? 's' : ''}</small></p>
+                          <p className="db-hz-valeur">{h.count > 0 ? `${fcfa(h.totalValue)} FCFA en jeu` : 'Rien à signaler'}</p>
+                          {h.count > 0 && (
+                            <span className="db-hz-voir">Voir le détail <IconChevron /></span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -1208,31 +1328,41 @@ function DashboardCommerce() {
       {horizonOuvert && (
         <div className="modale-fond" onClick={() => setHorizonOuvert(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
-            <h2>
-              Périmés {horizonOuvert.horizon === '3_mois' ? 'sous 3 mois' : horizonOuvert.horizon === '6_mois' ? 'entre 3 et 6 mois' : 'entre 6 et 12 mois'}
-            </h2>
-            <table className="registre" style={{ marginBottom: 16 }}>
-              <thead>
-                <tr>
-                  <th>Produit</th>
-                  <th>N° de lot</th>
-                  <th>Péremption</th>
-                  <th>Qté</th>
-                  <th>Valeur</th>
-                </tr>
-              </thead>
-              <tbody>
-                {horizonOuvert.lots.map((l) => (
-                  <tr key={l.lot_id}>
-                    <td>{l.product_name}</td>
-                    <td>{l.lot_number || '—'}</td>
-                    <td>{new Date(l.expiry_date).toLocaleDateString('fr-FR')}</td>
-                    <td className="chiffre">{Math.round(Number(l.quantity))}</td>
-                    <td className="chiffre">{Math.round(Number(l.quantity) * Number(l.unit_price)).toLocaleString('fr-FR')} FCFA</td>
+            <h2>Périmés : {infoHorizon(horizonOuvert.horizon).titre.toLowerCase()}</h2>
+            <p className="db-modal-sous">
+              {horizonOuvert.count} lot{horizonOuvert.count > 1 ? 's' : ''} · {fcfa(horizonOuvert.totalValue)} FCFA en jeu
+            </p>
+            <div className="db-modal-table">
+              <table className="registre">
+                <thead>
+                  <tr>
+                    <th>Produit</th>
+                    <th>N° de lot</th>
+                    <th>Péremption</th>
+                    <th>Qté</th>
+                    <th>Valeur</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {horizonOuvert.lots.map((l) => {
+                    const j = joursRestants(l.expiry_date);
+                    return (
+                      <tr key={l.lot_id}>
+                        <td>{l.product_name}</td>
+                        <td>{l.lot_number || '—'}</td>
+                        <td>
+                          {new Date(l.expiry_date).toLocaleDateString('fr-FR')}
+                          <br />
+                          <span className={'db-chip db-niveau--' + niveauDelai(j)}>{libelleDelai(j)}</span>
+                        </td>
+                        <td className="chiffre">{Math.round(Number(l.quantity))}</td>
+                        <td className="chiffre">{Math.round(Number(l.quantity) * Number(l.unit_price)).toLocaleString('fr-FR')} FCFA</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
             <div className="actions-modale">
               <button className="btn" onClick={() => setHorizonOuvert(null)}>Fermer</button>
             </div>

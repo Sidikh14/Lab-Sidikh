@@ -19,10 +19,11 @@
     <meta name="apple-mobile-web-app-title" content="Amaterasu" />
 
     <!-- Charte personnalisée du commerçant connecté : appliquée avant le premier affichage, pour éviter un éclair aux
-         couleurs d'Amaterasu au rechargement. Sans effet sur l'écran de connexion (personne n'est connecté). -->
+         couleurs d'Amaterasu au rechargement. Jamais appliquée sur la page de connexion, qui garde la charte Amaterasu. -->
     <script>
       try {
-        var cache = localStorage.getItem('token') && JSON.parse(localStorage.getItem('brandingCache') || 'null');
+        var surConnexion = location.pathname.indexOf('/connexion') === 0;
+        var cache = !surConnexion && localStorage.getItem('token') && JSON.parse(localStorage.getItem('brandingCache') || 'null');
         if (cache && cache.enabled && cache.palette) {
           var racine = document.documentElement.style;
           racine.setProperty('--marine', cache.palette.principale);

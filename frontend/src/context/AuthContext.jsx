@@ -92,9 +92,9 @@ export function AuthProvider({ children }) {
   // (l'écran de connexion garde donc toujours les couleurs d'Amaterasu).
   // useLayoutEffect : appliqué avant l'affichage, donc sans éclair aux couleurs d'Amaterasu.
   useLayoutEffect(() => {
-    if (branding?.enabled && branding.palette) appliquerBranding(branding.palette);
+    if (user && branding?.enabled && branding.palette) appliquerBranding(branding.palette);
     else retirerBranding();
-  }, [branding]);
+  }, [branding, user]);
 
   // Au démarrage de l'application : relit la charte (couleurs + logo), pour qu'un changement fait par l'owner
   // arrive sans reconnexion.

@@ -144,6 +144,16 @@ export function LoginPage() {
   return (
     <div className="ecran-connexion-partage">
       <style>{`
+        /* L'écran de connexion garde TOUJOURS la charte Amaterasu par défaut : même si la charte d'un
+           commerçant est appliquée sur la page (juste après la connexion, session expirée…), elle ne
+           change rien ici. */
+        .ecran-connexion-partage {
+          --marine: #0f2747;
+          --encre: #0f2747;
+          --accent: #1f5fbf;
+          --accent-fonce: #174c9c;
+          --accent-clair: #dce8fa;
+        }
         .secteurs-vitrine {
           margin: 30px 0 6px;
           position: relative;
