@@ -5,6 +5,11 @@ import { appliquerBranding, retirerBranding, lireCacheBranding, ecrireCacheBrand
 
 const AuthContext = createContext(null);
 
+// Déconnexion automatique après 3 h sans activité (clic, frappe, défilement, toucher).
+// L'horodatage est partagé via localStorage : l'activité dans un onglet compte pour tous.
+const DELAI_INACTIVITE_MS = 3 * 60 * 60 * 1000;
+const CLE_ACTIVITE = 'derniereActivite';
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     const stored = localStorage.getItem('user');
@@ -39,6 +44,7 @@ export function AuthProvider({ children }) {
     }
     localStorage.setItem('token', data.token);
     localStorage.setItem('user', JSON.stringify(data.user));
+    localStorage.setItem(CLE_ACTIVITE, String(Date.now()));
     setUser(data.user);
     if (data.merchant) {
       localStorage.setItem('merchant', JSON.stringify(data.merchant));
@@ -68,6 +74,7 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('user');
     localStorage.removeItem('merchant');
     localStorage.removeItem('boutiqueActiveId');
+    localStorage.removeItem(CLE_ACTIVITE);
     setUser(null);
     setMerchant(null);
     setBranding(null);
@@ -124,6 +131,45 @@ export function AuthProvider({ children }) {
     window.addEventListener('session-expired', gererSessionExpiree);
     return () => window.removeEventListener('session-expired', gererSessionExpiree);
   }, [logout]);
+
+  // Inactivité : déconnecte après 3 h sans action de la personne (les requêtes automatiques en arrière-plan
+  // ne comptent pas). Contrôlé à l'ouverture, toutes les 30 s et au retour sur l'onglet (veille du PC).
+  useEffect(() => {
+    if (!user) return undefined;
+    const lire = () => Number(localStorage.getItem(CLE_ACTIVITE)) || 0;
+    let dernierEcrit = 0;
+
+    function verifier() {
+      const derniere = lire();
+      if (derniere && Date.now() - derniere > DELAI_INACTIVITE_MS) {
+        logout();
+        setSessionExpiredMessage("Vous avez été déconnecté après 3 heures d'inactivité. Veuillez vous reconnecter.");
+        return true;
+      }
+      return false;
+    }
+
+    if (verifier()) return undefined;
+    if (!lire()) { try { localStorage.setItem(CLE_ACTIVITE, String(Date.now())); } catch { /* ignoré */ } }
+
+    function marquerActivite() {
+      const maintenant = Date.now();
+      if (maintenant - dernierEcrit < 15000) return; // limite les écritures
+      dernierEcrit = maintenant;
+      try { localStorage.setItem(CLE_ACTIVITE, String(maintenant)); } catch { /* ignoré */ }
+    }
+    function auRetour() { if (document.visibilityState === 'visible') verifier(); }
+
+    const evenements = ['mousedown', 'keydown', 'touchstart', 'wheel', 'scroll'];
+    evenements.forEach((e) => window.addEventListener(e, marquerActivite, { passive: true, capture: true }));
+    document.addEventListener('visibilitychange', auRetour);
+    const minuteur = setInterval(verifier, 30000);
+    return () => {
+      evenements.forEach((e) => window.removeEventListener(e, marquerActivite, { capture: true }));
+      document.removeEventListener('visibilitychange', auRetour);
+      clearInterval(minuteur);
+    };
+  }, [user?.id, logout]);
 
   const clearSessionExpiredMessage = useCallback(() => setSessionExpiredMessage(null), []);
 

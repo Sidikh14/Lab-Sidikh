@@ -250,14 +250,17 @@ function dessinerEntete(doc, { businessName, titre, sousTitre, merchant, marge =
     }
   }
   const nomCommerce = businessName || 'Commerce';
-  const largeurNom = marge + largeurUtile * 0.5 - xNom;
+  const largeurNomMax = marge + largeurUtile * 0.5 - xNom;
   let tailleNom = 18;
   doc.font('Titre');
   while (tailleNom > 11) {
     doc.fontSize(tailleNom);
-    if (doc.widthOfString(nomCommerce) <= largeurNom) break;
+    if (doc.widthOfString(nomCommerce) <= largeurNomMax) break;
     tailleNom -= 1;
   }
+  doc.font('Titre').fontSize(tailleNom);
+  // Largeur réellement occupée par le nom : le titre du document ne doit jamais empiéter dessus.
+  const largeurNom = Math.min(largeurNomMax, doc.widthOfString(nomCommerce) + 2);
   doc.fillColor(MARINE).font('Titre').fontSize(tailleNom)
     .text(nomCommerce, xNom, 40 + (hautBloc - tailleNom * 1.2) / 2, { width: largeurNom, lineBreak: false, ellipsis: true });
 
@@ -268,11 +271,11 @@ function dessinerEntete(doc, { businessName, titre, sousTitre, merchant, marge =
       .text(parts.join('  ·  '), marge, 82, { width: largeurUtile * 0.5, height: 10, lineBreak: false, ellipsis: true });
   }
 
-  // Titre du document, aligné à droite ; réduit si trop long pour tenir dans la moitié droite.
-  const largeurTitre = largeurUtile * 0.58;
+  // Titre du document, aligné à droite ; réduit si trop long pour la place restante à droite du nom du commerce.
+  const largeurTitre = Math.max(largeurUtile * 0.3, Math.min(largeurUtile * 0.58, droite - (xNom + largeurNom + 16)));
   let tailleTitre = TAILLES.titreDocument;
   doc.font('Titre');
-  while (tailleTitre > 13) {
+  while (tailleTitre > 11) {
     doc.fontSize(tailleTitre);
     if (doc.widthOfString(titre || '') <= largeurTitre) break;
     tailleTitre -= 1;
@@ -285,7 +288,15 @@ function dessinerEntete(doc, { businessName, titre, sousTitre, merchant, marge =
   doc.rect(droite - largeurFilet, 67, largeurFilet, 2.2).fill(SOLEIL);
 
   if (sousTitre) {
-    doc.fillColor(ARDOISE).font('Helvetica').fontSize(8.5)
+    // Sous-titre réduit (jusqu'à 6,5 pt) pour tenir en entier au lieu d'être coupé par « … ».
+    let tailleSous = 8.5;
+    doc.font('Helvetica');
+    while (tailleSous > 6.5) {
+      doc.fontSize(tailleSous);
+      if (doc.widthOfString(sousTitre) <= largeurTitre) break;
+      tailleSous -= 0.5;
+    }
+    doc.fillColor(ARDOISE).font('Helvetica').fontSize(tailleSous)
       .text(sousTitre, droite - largeurTitre, 75, { width: largeurTitre, height: 12, align: 'right', lineBreak: false, ellipsis: true });
   }
 

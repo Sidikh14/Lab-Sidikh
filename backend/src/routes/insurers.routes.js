@@ -159,16 +159,29 @@ router.get('/:id/statement-pdf', async (req, res) => {
     doc.text(`${formatMontant(totalDu)} FCFA`, 400, y, { width: 145, align: 'right' });
     y += 28;
 
+    // Colonnes alignées dans les marges de la page (50 → 545) : plus aucun débordement à droite.
+    const COL = {
+      date: { x: 56, largeur: 70 },
+      commande: { x: 130, largeur: 60 },
+      client: { x: 196, largeur: 140 },
+      total: { x: 340, largeur: 95 },
+      prise: { x: 440, largeur: 99 },
+    };
+
     function entete() {
       y = dessinerEnteteTableau(doc, y, [
-        { texte: 'Date', x: 56, largeur: 80 },
-        { texte: 'Commande', x: 140, largeur: 90 },
-        { texte: 'Client', x: 235, largeur: 170 },
-        { texte: 'Total vente', x: 410, largeur: 70, aligner: 'right' },
-        { texte: 'Pris en charge', x: 485, largeur: 65, aligner: 'right' },
+        { texte: 'Date', ...COL.date },
+        { texte: 'Commande', ...COL.commande },
+        { texte: 'Client', ...COL.client },
+        { texte: 'Total vente', ...COL.total, aligner: 'right' },
+        { texte: 'Pris en charge', ...COL.prise, aligner: 'right' },
       ]);
     }
     entete();
+
+    // Une seule ligne par cellule, tronquée par « … » si trop longue (la hauteur de ligne reste fixe).
+    const cellule = (texte, col, yy, options = {}) =>
+      doc.text(texte, col.x, yy, { width: col.largeur, lineBreak: false, ellipsis: true, ...options });
 
     prisesEnCharge.forEach((p, index) => {
       if (y > 760) {
@@ -181,11 +194,14 @@ router.get('/:id/statement-pdf', async (req, res) => {
         doc.fillColor(COULEURS.encre);
       }
       doc.fontSize(9);
-      doc.fillColor(COULEURS.encre).text(new Date(p.created_at).toLocaleDateString('fr-FR'), 56, y + 5, { width: 80 });
-      doc.text(`#${p.order_seq}`, 140, y + 5, { width: 90 });
-      doc.fillColor(COULEURS.muted).text(p.client_name, 235, y + 5, { width: 170 });
-      doc.fillColor(COULEURS.encre).text(`${formatMontant(p.order_total)} FCFA`, 410, y + 5, { width: 70, align: 'right' });
-      doc.text(`${formatMontant(p.amount)} FCFA`, 485, y + 5, { width: 65, align: 'right' });
+      doc.fillColor(COULEURS.encre);
+      cellule(new Date(p.created_at).toLocaleDateString('fr-FR'), COL.date, y + 5);
+      cellule(`#${p.order_seq}`, COL.commande, y + 5);
+      doc.fillColor(COULEURS.muted);
+      cellule(p.client_name, COL.client, y + 5);
+      doc.fillColor(COULEURS.encre);
+      cellule(`${formatMontant(p.order_total)} FCFA`, COL.total, y + 5, { align: 'right' });
+      cellule(`${formatMontant(p.amount)} FCFA`, COL.prise, y + 5, { align: 'right' });
       y += 20;
     });
 
