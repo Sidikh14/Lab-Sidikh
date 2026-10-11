@@ -4,6 +4,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { MOYENS_PAIEMENT, LABEL_METHODE, getSoldeActuel } = require('../utils/cashBalance');
+const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -291,6 +292,18 @@ router.post('/requests', requireRole('caissier', 'vendeur_caissier'), async (req
       description: `a demandé un retour à valider sur la commande #${order.id} (${reason})`,
     });
 
+    getNomUtilisateur(req.user.id).then((nom) => {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'retour_a_valider',
+        titre: 'Retour à valider',
+        message: `${nom || 'Un caissier'} demande la validation d'un retour de ${Math.round(Number(refundAmount)).toLocaleString('fr-FR')} FCFA (${reason}).`,
+        montant: Number(refundAmount),
+        referenceId: result.rows[0].id,
+        roles: ['manager', 'gerant'],
+      }).catch((err) => console.error('Erreur alerte retour_a_valider :', err));
+    }).catch((err) => console.error('Erreur getNomUtilisateur (retour_a_valider) :', err));
+
     res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
@@ -360,6 +373,18 @@ router.patch('/requests/:id/approve', requireRole('manager', 'gerant'), async (r
       description: `a validé la demande de retour sur la commande #${order.id} (${demande.reason})`,
     });
 
+    if (demande.requested_by) {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'retour_traite',
+        titre: 'Retour validé',
+        message: `Votre demande de retour de ${Math.round(refundAmount).toLocaleString('fr-FR')} FCFA a été validée.`,
+        montant: refundAmount,
+        referenceId: demande.id,
+        userIds: [demande.requested_by],
+      }).catch((err) => console.error('Erreur alerte retour_traite (validation) :', err));
+    }
+
     res.json(retoursEnregistres);
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -399,6 +424,18 @@ router.patch('/requests/:id/reject', requireRole('manager', 'gerant'), async (re
       action: 'return_request_rejected',
       description: `a refusé la demande de retour #${demande.id}${rejectionReason ? ` (${rejectionReason})` : ''}`,
     });
+
+    if (demande.requested_by) {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'retour_traite',
+        titre: 'Retour refusé',
+        message: `Votre demande de retour de ${Math.round(Number(demande.refund_amount)).toLocaleString('fr-FR')} FCFA a été refusée${rejectionReason ? ` : ${rejectionReason}` : '.'}`,
+        montant: Number(demande.refund_amount),
+        referenceId: demande.id,
+        userIds: [demande.requested_by],
+      }).catch((err) => console.error('Erreur alerte retour_traite (refus) :', err));
+    }
 
     res.json({ ok: true });
   } catch (err) {

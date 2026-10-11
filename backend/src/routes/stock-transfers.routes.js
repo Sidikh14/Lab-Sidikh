@@ -4,6 +4,15 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
+const {
+  COULEURS: CH,
+  dessinerEntete,
+  dessinerEnteteTableau,
+  dessinerBandeauTotal,
+  lireLogoCommercant,
+} = require('../utils/pdfHelpers');
+const { FORMATS, mmEnPt, formaterDate, nomFichierPdf, metadonneesPdf } = require('../utils/pdfTheme');
+const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -82,111 +91,203 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Dessine le bon de transfert (A4) : ce que le livreur emporte, d'où, vers où, avec les cases de signature.
-const STATUTS_TRANSFERT = { envoye: 'En cours de livraison', recu: 'Reçu', annule: 'Annulé' };
+// ---------------------------------------------------------------------------
+// Bon de transfert interne (A4 portrait) — charte graphique Amaterasu v8.
+// Document à imprimer pour organiser un transfert entre deux boutiques/dépôts du même commerçant :
+// d'où, vers où, quoi, avec une colonne « Qté reçue » à remplir à la main à l'arrivée.
+// Quantités seulement (aucune valeur en argent).
+// ---------------------------------------------------------------------------
+const STATUTS_TRANSFERT = { envoye: 'En transit', recu: 'Réceptionné', annule: 'Annulé' };
 const nombreFr = (n) => Number(n).toLocaleString('fr-FR', { maximumFractionDigits: 3 });
 const dateHeureFr = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '');
+const typeLieu = (type) => (/d[eé]p[oô]t/i.test(String(type || '')) ? 'Dépôt' : 'Boutique');
 
-function dessinerBonTransfert(doc, { commerce, transfert, articles }) {
-  const gauche = doc.page.margins.left;
-  const largeur = doc.page.width - gauche - doc.page.margins.right;
-  const ref = String(transfert.id).replace(/-/g, '').slice(0, 8).toUpperCase();
-
-  doc.font('Helvetica-Bold').fontSize(16).text(commerce, gauche, 40, { width: largeur });
-  doc.font('Helvetica-Bold').fontSize(20).text('BON DE TRANSFERT', gauche, 40, { width: largeur, align: 'right' });
-  doc.font('Helvetica').fontSize(10).fillColor('#555').text(`Réf. ${ref}`, gauche, 66, { width: largeur, align: 'right' });
-  doc.fillColor('#000');
-  doc.moveTo(gauche, 90).lineTo(gauche + largeur, 90).strokeColor('#999').stroke();
-
-  // Origine → destination
-  const demi = largeur / 2 - 10;
-  doc.font('Helvetica').fontSize(9).fillColor('#555').text('DE (expéditeur)', gauche, 102).text('VERS (destinataire)', gauche + demi + 20, 102);
-  doc.font('Helvetica-Bold').fontSize(14).fillColor('#000')
-    .text(transfert.from_warehouse_name, gauche, 116, { width: demi })
-    .text(transfert.to_warehouse_name, gauche + demi + 20, 116, { width: demi });
-
-  doc.font('Helvetica').fontSize(10).fillColor('#000');
-  const infos = [
-    ['Date d\'envoi', dateHeureFr(transfert.created_at)],
-    ['Préparé par', transfert.created_by_name || '—'],
-    ['Statut', STATUTS_TRANSFERT[transfert.status] || transfert.status],
-  ];
-  let y = 150;
-  for (const [libelle, valeur] of infos) {
-    doc.font('Helvetica').fillColor('#555').text(`${libelle} :`, gauche, y, { width: 90, continued: false });
-    doc.font('Helvetica-Bold').fillColor('#000').text(valeur, gauche + 95, y, { width: largeur - 95 });
-    y += 16;
-  }
-  if (transfert.notes) {
-    doc.font('Helvetica').fillColor('#555').text('Remarque :', gauche, y, { width: 90 });
-    doc.font('Helvetica').fillColor('#000').text(String(transfert.notes), gauche + 95, y, { width: largeur - 95 });
-    y = doc.y + 4;
-  }
-
-  // Tableau des articles : N° | Article | Quantité | Vérifié à l'arrivée (case à cocher)
-  y += 12;
-  const colonnes = [
-    { titre: 'N°', x: gauche, w: 30 },
-    { titre: 'Article', x: gauche + 30, w: largeur - 30 - 90 - 90 },
-    { titre: 'Quantité', x: gauche + largeur - 180, w: 90, align: 'right' },
-    { titre: 'Vérifié', x: gauche + largeur - 90, w: 90, align: 'center' },
-  ];
-  const enteteTableau = (yy) => {
-    doc.rect(gauche, yy, largeur, 20).fill('#eeeeee');
-    doc.fillColor('#000').font('Helvetica-Bold').fontSize(10);
-    for (const c of colonnes) doc.text(c.titre, c.x + 4, yy + 5, { width: c.w - 8, align: c.align || 'left' });
-    return yy + 20;
-  };
-  y = enteteTableau(y);
-  doc.font('Helvetica').fontSize(10);
-  let totalQuantite = 0;
-  articles.forEach((a, i) => {
-    const hauteurNom = doc.heightOfString(a.product_name, { width: colonnes[1].w - 8 });
-    const h = Math.max(22, hauteurNom + 10);
-    if (y + h > doc.page.height - 190) { // il faut garder la place pour les signatures
-      doc.addPage();
-      y = enteteTableau(40);
-      doc.font('Helvetica').fontSize(10);
-    }
-    doc.fillColor('#000');
-    doc.text(String(i + 1), colonnes[0].x + 4, y + 6, { width: colonnes[0].w - 8 });
-    doc.text(a.product_name, colonnes[1].x + 4, y + 6, { width: colonnes[1].w - 8 });
-    doc.font('Helvetica-Bold').text(nombreFr(a.quantity), colonnes[2].x + 4, y + 6, { width: colonnes[2].w - 8, align: 'right' }).font('Helvetica');
-    doc.rect(colonnes[3].x + colonnes[3].w / 2 - 6, y + 5, 12, 12).strokeColor('#555').stroke();
-    doc.moveTo(gauche, y + h).lineTo(gauche + largeur, y + h).strokeColor('#dddddd').stroke();
-    totalQuantite += Number(a.quantity);
-    y += h;
-  });
-  doc.font('Helvetica-Bold').fontSize(10).fillColor('#000')
-    .text(`${articles.length} article${articles.length > 1 ? 's' : ''} — quantité totale : ${nombreFr(totalQuantite)}`, gauche, y + 8, { width: largeur, align: 'right' });
-
-  // Signatures : toujours en bas de la dernière page.
-  let ySign = Math.max(doc.y + 30, doc.page.height - 170);
-  if (ySign + 130 > doc.page.height - 40) { doc.addPage(); ySign = 60; }
-  const tiers = largeur / 3 - 8;
-  const cases = ['Remis par (expéditeur)', 'Livreur — nom, véhicule', 'Reçu par (destinataire)'];
-  cases.forEach((titre, i) => {
-    const x = gauche + i * (tiers + 12);
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#000').text(titre, x, ySign, { width: tiers });
-    doc.rect(x, ySign + 16, tiers, 80).strokeColor('#999').stroke();
-    doc.font('Helvetica').fontSize(8).fillColor('#777').text('Nom, date et signature', x + 4, ySign + 100, { width: tiers - 8 });
-  });
-  doc.page.margins.bottom = 0; // le pied de page est sous la marge basse : sans cela pdfkit ajoute une page vide
-  doc.font('Helvetica').fontSize(8).fillColor('#777')
-    .text(`Document imprimé le ${dateHeureFr(new Date())}. À contrôler à l'arrivée : toute différence doit être signalée avant signature.`, gauche, doc.page.height - 36, { width: largeur, align: 'center' });
+// TRF-2026-0007 (année de création + numéro de séquence) ; repli sur l'ancienne référence si pas de séquence.
+function numeroTransfert(t) {
+  const annee = new Date(t.created_at).getFullYear();
+  const seq = t.transfer_seq !== null && t.transfer_seq !== undefined
+    ? String(t.transfer_seq).padStart(4, '0')
+    : String(t.id).replace(/-/g, '').slice(0, 8).toUpperCase();
+  return `TRF-${annee}-${seq}`;
 }
 
-// GET /stock-transfers/:id/pdf — bon de transfert à remettre au livreur (manager, ou gérant concerné)
+function dessinerBonTransfert(doc, { commerce, merchant, logo, transfert, articles }) {
+  const marge = FORMATS.marge;
+  const gauche = marge;
+  const largeur = doc.page.width - 2 * marge;
+  const droite = gauche + largeur;
+  const bas = doc.page.height - mmEnPt(25); // limite du contenu : le pied de la charte est à 12 mm du bord
+  const numero = numeroTransfert(transfert);
+
+  // Seules les infos légales passent à l'en-tête : jamais les coordonnées bancaires sur un bon de transfert.
+  const enteteMarchand = { address: merchant.address, ninea: merchant.ninea, rccm: merchant.rccm };
+  let y = dessinerEntete(doc, {
+    businessName: commerce,
+    titre: 'Bon de transfert',
+    sousTitre: `N° ${numero}  ·  ${formaterDate(transfert.created_at)}`,
+    merchant: enteteMarchand,
+    marge,
+    logo,
+  });
+
+  // --- D'où → vers où -------------------------------------------------------
+  const espace = 40;
+  const largeurBoite = (largeur - espace) / 2;
+  const hauteurBoite = 56;
+  const boites = [
+    { x: gauche, libelle: 'DE · ORIGINE', nom: transfert.from_warehouse_name, type: typeLieu(transfert.from_warehouse_type) },
+    { x: gauche + largeurBoite + espace, libelle: 'VERS · DESTINATION', nom: transfert.to_warehouse_name, type: typeLieu(transfert.to_warehouse_type) },
+  ];
+  for (const b of boites) {
+    doc.rect(b.x, y, largeurBoite, hauteurBoite).fill(CH.brume);
+    doc.rect(b.x, y, 3, hauteurBoite).fill(CH.azur);
+    doc.fillColor(CH.muted).font('Helvetica-Bold').fontSize(7.5)
+      .text(b.libelle, b.x + 14, y + 9, { characterSpacing: 0.6, lineBreak: false });
+    doc.fillColor(CH.marine).font('Titre').fontSize(13)
+      .text(b.nom || '—', b.x + 14, y + 22, { width: largeurBoite - 26, lineBreak: false, ellipsis: true });
+    doc.fillColor(CH.muted).font('Helvetica').fontSize(9)
+      .text(b.type, b.x + 14, y + 40, { width: largeurBoite - 26, lineBreak: false });
+  }
+  // Flèche entre les deux boîtes
+  const milieuY = y + hauteurBoite / 2;
+  const xFleche = gauche + largeurBoite;
+  doc.moveTo(xFleche + 9, milieuY).lineTo(xFleche + espace - 17, milieuY).lineWidth(1.6).strokeColor(CH.azur).stroke();
+  doc.polygon([xFleche + espace - 18, milieuY - 5], [xFleche + espace - 8, milieuY], [xFleche + espace - 18, milieuY + 5]).fill(CH.azur);
+  y += hauteurBoite + 16;
+
+  // --- Infos : date, préparé par, statut, réception ---------------------------------
+  const statut = STATUTS_TRANSFERT[transfert.status] || transfert.status;
+  const couleurStatut = transfert.status === 'recu' ? CH.succes : transfert.status === 'annule' ? CH.brique : CH.alerte;
+  let reception = '—';
+  if (transfert.status === 'recu') {
+    reception = [dateHeureFr(transfert.received_at), transfert.received_by_name].filter(Boolean).join(' · ') || 'Reçu';
+  } else if (transfert.status === 'annule') {
+    reception = dateHeureFr(transfert.cancelled_at) || 'Annulé';
+  }
+  const infos = [
+    ["DATE D'ENVOI", dateHeureFr(transfert.created_at), CH.marine],
+    ['PRÉPARÉ PAR', transfert.created_by_name || '—', CH.marine],
+    ['STATUT', statut, couleurStatut],
+    ['RÉCEPTION', reception, CH.marine],
+  ];
+  const largeurInfo = largeur / infos.length;
+  infos.forEach(([libelle, valeur, couleur], i) => {
+    const x = gauche + i * largeurInfo;
+    doc.fillColor(CH.muted).font('Helvetica-Bold').fontSize(7.5)
+      .text(libelle, x, y, { characterSpacing: 0.6, lineBreak: false });
+    doc.fillColor(couleur).font('Helvetica-Bold').fontSize(9.5)
+      .text(valeur, x, y + 12, { width: largeurInfo - 10, lineBreak: false, ellipsis: true });
+  });
+  y += 34;
+
+  if (transfert.notes) {
+    const texteNote = String(transfert.notes);
+    doc.font('Helvetica').fontSize(9);
+    const hauteurNote = Math.min(doc.heightOfString(texteNote, { width: largeur - 70 }), 36);
+    doc.fillColor(CH.muted).font('Helvetica-Bold').fontSize(7.5)
+      .text('REMARQUE', gauche, y + 1, { characterSpacing: 0.6, lineBreak: false });
+    doc.fillColor(CH.marine).font('Helvetica').fontSize(9)
+      .text(texteNote, gauche + 70, y, { width: largeur - 70, height: 36, ellipsis: true });
+    y += hauteurNote + 12;
+  }
+
+  // --- Tableau des articles ---------------------------------------------------------------
+  const xEnvoye = droite - 150;
+  const xRecu = droite - 72;
+  const colonnes = [
+    { texte: 'N°', x: gauche + 8, largeur: 22 },
+    { texte: 'Réf.', x: gauche + 36, largeur: 76 },
+    { texte: 'Désignation', x: gauche + 118, largeur: xEnvoye - (gauche + 118) - 8 },
+    { texte: 'Qté envoyée', x: xEnvoye, largeur: 66, aligner: 'right' },
+    { texte: 'Qté reçue', x: xRecu, largeur: 64, aligner: 'center' },
+  ];
+  const debutTableau = (yy) => dessinerEnteteTableau(doc, yy + 7, colonnes, marge) - 4;
+  y = debutTableau(y);
+
+  let total = 0;
+  articles.forEach((a, i) => {
+    doc.font('Helvetica').fontSize(9.5);
+    const hauteurNom = doc.heightOfString(a.product_name || '', { width: colonnes[2].largeur });
+    const h = Math.max(24, hauteurNom + 12);
+    if (y + h > bas) {
+      doc.addPage();
+      y = debutTableau(marge);
+    }
+    if (i % 2 === 1) doc.rect(gauche, y, largeur, h).fill(CH.brume);
+    doc.fillColor(CH.muted).font('Helvetica').fontSize(9.5)
+      .text(String(i + 1), colonnes[0].x, y + (h - 10) / 2, { width: colonnes[0].largeur, lineBreak: false });
+    doc.fillColor(CH.muted).font('Helvetica').fontSize(8.5)
+      .text(a.sku || '', colonnes[1].x, y + (h - 9) / 2, { width: colonnes[1].largeur, lineBreak: false, ellipsis: true });
+    doc.fillColor(CH.marine).font('Helvetica').fontSize(9.5)
+      .text(a.product_name || '', colonnes[2].x, y + 6, { width: colonnes[2].largeur });
+    const qte = `${nombreFr(a.quantity)}${a.is_weighted ? ' kg' : ''}`;
+    doc.fillColor(CH.marine).font('Helvetica-Bold').fontSize(10)
+      .text(qte, colonnes[3].x, y + (h - 10) / 2, { width: colonnes[3].largeur, align: 'right', lineBreak: false });
+    // Case vide à remplir à la main à la réception
+    doc.roundedRect(xRecu + 6, y + 4, 52, h - 8, 3).lineWidth(0.6).strokeColor(CH.muted).stroke();
+    doc.moveTo(gauche, y + h).lineTo(droite, y + h).lineWidth(0.5).strokeColor(CH.bordure).stroke();
+    total += Number(a.quantity);
+    y += h;
+  });
+
+  // --- Bloc de fin : total, observations, transporteur, signatures ----------------------
+  const hauteurFin = 30 + 12 + 12 + 38 + 12 + 24 + 14 + 58 + 16;
+  if (y + 14 + hauteurFin > bas) {
+    doc.addPage();
+    y = marge;
+  } else {
+    y += 14;
+  }
+
+  y = dessinerBandeauTotal(doc, {
+    x: gauche, y, largeur,
+    label: `${articles.length} article${articles.length > 1 ? 's' : ''} · quantité totale`,
+    texteMontant: nombreFr(total),
+  }) + 14;
+
+  doc.fillColor(CH.muted).font('Helvetica-Bold').fontSize(7.5)
+    .text('ÉCART / OBSERVATIONS À LA RÉCEPTION', gauche, y, { characterSpacing: 0.6, lineBreak: false });
+  doc.rect(gauche, y + 12, largeur, 38).lineWidth(0.6).strokeColor(CH.muted).stroke();
+  y += 12 + 38 + 14;
+
+  doc.fillColor(CH.marine).font('Helvetica').fontSize(9.5)
+    .text('Transporté par (nom, véhicule) :', gauche, y, { lineBreak: false });
+  doc.moveTo(gauche + 160, y + 11).lineTo(droite, y + 11).lineWidth(0.6).strokeColor(CH.muted).stroke();
+  y += 24 + 6;
+
+  const largeurSign = (largeur - 24) / 2;
+  const signatures = [
+    { titre: 'Préparé par · origine', nom: transfert.created_by_name },
+    { titre: 'Reçu par · destination', nom: transfert.received_by_name },
+  ];
+  signatures.forEach((s, i) => {
+    const x = gauche + i * (largeurSign + 24);
+    doc.fillColor(CH.marine).font('Helvetica-Bold').fontSize(9)
+      .text(s.titre, x, y, { width: largeurSign, lineBreak: false });
+    doc.rect(x, y + 14, largeurSign, 58).lineWidth(0.6).strokeColor(CH.muted).stroke();
+    if (s.nom) {
+      doc.fillColor(CH.muted).font('Helvetica').fontSize(8)
+        .text(s.nom, x + 6, y + 19, { width: largeurSign - 12, lineBreak: false, ellipsis: true });
+    }
+    doc.fillColor(CH.muted).font('Helvetica').fontSize(8)
+      .text('Nom, date et signature', x + 6, y + 60, { width: largeurSign - 12, lineBreak: false });
+  });
+}
+
+// GET /stock-transfers/:id/pdf — bon de transfert à imprimer (manager, ou gérant concerné)
 router.get('/:id/pdf', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT t.*, wf.name AS from_warehouse_name, wt.name AS to_warehouse_name,
-              uc.full_name AS created_by_name, m.business_name
+      `SELECT t.*, wf.name AS from_warehouse_name, wf.type AS from_warehouse_type,
+              wt.name AS to_warehouse_name, wt.type AS to_warehouse_type,
+              uc.full_name AS created_by_name, ur.full_name AS received_by_name,
+              m.business_name, to_jsonb(m) AS merchant_json
        FROM stock_transfers t
        JOIN warehouses wf ON wf.id = t.from_warehouse_id
        JOIN warehouses wt ON wt.id = t.to_warehouse_id
        JOIN merchants m ON m.id = t.merchant_id
        LEFT JOIN users uc ON uc.id = t.created_by
+       LEFT JOIN users ur ON ur.id = t.received_by
        WHERE t.id = $1 AND t.merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
@@ -196,20 +297,29 @@ router.get('/:id/pdf', async (req, res) => {
       return res.status(403).json({ error: 'Ce transfert ne concerne pas votre boutique.' });
     }
 
+    // to_jsonb(p)->>'sku' : lit la référence sans planter si la colonne porte un autre nom.
     const articles = await pool.query(
-      `SELECT p.name AS product_name, ti.quantity
+      `SELECT p.name AS product_name, p.is_weighted, to_jsonb(p) ->> 'sku' AS sku, ti.quantity
        FROM stock_transfer_items ti JOIN products p ON p.id = ti.product_id
        WHERE ti.transfer_id = $1 ORDER BY p.name`,
       [transfert.id]
     );
 
-    const ref = String(transfert.id).replace(/-/g, '').slice(0, 8).toUpperCase();
+    const merchant = typeof transfert.merchant_json === 'string' ? JSON.parse(transfert.merchant_json) : (transfert.merchant_json || {});
+    const logo = lireLogoCommercant(merchant);
+    const numero = numeroTransfert(transfert);
+
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="bon-transfert-${ref}.pdf"`);
-    const doc = new PDFDocument({ size: 'A4', margin: 40 });
+    res.setHeader('Content-Disposition', `inline; filename="${nomFichierPdf('Bon-transfert', numero)}"`);
+    // Marge basse à 0 : la pagination est gérée à la main (le pied de la charte s'écrit sous la marge).
+    const doc = new PDFDocument({
+      size: 'A4',
+      margins: { top: FORMATS.marge, left: FORMATS.marge, right: FORMATS.marge, bottom: 0 },
+      ...metadonneesPdf({ titre: `Bon de transfert ${numero}`, commercant: transfert.business_name }),
+    });
     doc.on('error', (e) => console.error('pdfkit (bon de transfert) :', e));
     doc.pipe(res);
-    dessinerBonTransfert(doc, { commerce: transfert.business_name, transfert, articles: articles.rows });
+    dessinerBonTransfert(doc, { commerce: transfert.business_name, merchant, logo, transfert, articles: articles.rows });
     doc.end();
   } catch (err) {
     console.error(err);
@@ -368,6 +478,24 @@ router.patch('/:id/receive', async (req, res) => {
       action: 'stock_transfer_received',
       description: `a réceptionné un transfert de stock`,
     });
+
+    (async () => {
+      const [{ rows: noms }, nomReceveur] = await Promise.all([
+        pool.query(
+          `SELECT wf.name AS source, wt.name AS destination FROM warehouses wf, warehouses wt WHERE wf.id = $1 AND wt.id = $2`,
+          [transfer.from_warehouse_id, transfer.to_warehouse_id]
+        ),
+        getNomUtilisateur(req.user.id),
+      ]);
+      await creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'transfert_recu',
+        titre: 'Transfert de stock reçu',
+        message: `${nomReceveur || 'Un utilisateur'} a réceptionné le transfert de ${noms[0]?.source || 'la boutique source'} vers ${noms[0]?.destination || 'la boutique de destination'}.`,
+        referenceId: transfer.id,
+        roles: ['manager', 'gerant'],
+      });
+    })().catch((err) => console.error('Erreur alerte transfert_recu :', err));
 
     res.json(result.rows[0]);
   } catch (err) {

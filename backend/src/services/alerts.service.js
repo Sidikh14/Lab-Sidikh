@@ -5,7 +5,7 @@
 const pool = require('../config/db');
 const webpush = require('web-push');
 const { sendAlertMail } = require('../utils/alertMailer');
-const { broadcast } = require('../utils/eventsBus');
+const { broadcastCible } = require('../utils/eventsBus');
 
 webpush.setVapidDetails(
   process.env.VAPID_SUBJECT || 'mailto:alerts@amaterasu.app',
@@ -15,13 +15,15 @@ webpush.setVapidDetails(
 
 async function creerAlerte({ merchantId, type, titre, message, montant = null, referenceId = null, roles = ['manager', 'gerant'], userIds = null }) {
   const { rows } = await pool.query(
-    `INSERT INTO alerts (merchant_id, type, titre, message, montant, reference_id)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [merchantId, type, titre, message, montant, referenceId]
+    `INSERT INTO alerts (merchant_id, type, titre, message, montant, reference_id, destinataires_roles, destinataires_users)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    // Qui peut voir l'alerte : des personnes précises (userIds) ou, à défaut, des rôles.
+    [merchantId, type, titre, message, montant, referenceId, userIds ? null : roles, userIds || null]
   );
   const alerte = rows[0];
 
-  broadcast(merchantId, 'alert:new', alerte); // bannière SSE, réutilise l'infra existante
+  // Bannière SSE, envoyée seulement aux personnes concernées par l'alerte.
+  broadcastCible(merchantId, 'alert:new', alerte, { roles, userIds });
 
   // userIds cible des personnes précises (ex : le vendeur qui a créé la
   // commande), indépendamment de leur rôle. Sans userIds, on retombe sur le

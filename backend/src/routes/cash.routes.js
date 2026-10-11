@@ -6,6 +6,7 @@ const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
 const { MOYENS_PAIEMENT, LABEL_METHODE, calculerMouvements, getSoldeActuel } = require('../utils/cashBalance');
+const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -322,6 +323,7 @@ router.post('/closings', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
     const [debut, fin] = bornesJour(date);
     const mouvements = await calculerMouvements(req, debut, fin, warehouseId);
     const resultats = [];
+    const ecarts = [];
 
     for (const entree of entries) {
       if (!MOYENS_PAIEMENT.includes(entree.paymentMethod) || typeof entree.actualBalance !== 'number') {
@@ -340,6 +342,7 @@ router.post('/closings', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
         [req.user.merchantId, date, entree.paymentMethod, theorique, entree.actualBalance, ecart, notes || null, req.user.id, warehouseId]
       );
       resultats.push(result.rows[0]);
+      if (Math.round(ecart) !== 0) ecarts.push({ id: result.rows[0].id, methode: entree.paymentMethod, theorique, compte: entree.actualBalance, ecart });
 
       await logActivity({
         merchantId: req.user.merchantId,
@@ -347,6 +350,25 @@ router.post('/closings', requireRole('manager', 'gerant', 'caissier', 'vendeur_c
         action: 'cash_closing',
         description: `a clôturé la caisse ${LABEL_METHODE[entree.paymentMethod]} du ${new Date(date).toLocaleDateString('fr-FR')}`,
       });
+    }
+
+    // Alerte au manager en cas d'écart (fire-and-forget, après l'enregistrement : une alerte qui échoue
+    // ne doit jamais faire échouer la clôture). Pas d'alerte quand c'est le manager lui-même qui clôture.
+    if (ecarts.length > 0 && req.user.role !== 'manager') {
+      getNomUtilisateur(req.user.id).then((nom) => {
+        const fmt = (n) => Math.round(Math.abs(n)).toLocaleString('fr-FR');
+        ecarts.forEach((e) => {
+          creerAlerte({
+            merchantId: req.user.merchantId,
+            type: 'ecart_caisse',
+            titre: 'Écart à la clôture de caisse',
+            message: `${nom || 'Un utilisateur'} a clôturé la caisse ${LABEL_METHODE[e.methode]} du ${new Date(date).toLocaleDateString('fr-FR')} avec un écart de ${e.ecart > 0 ? '+' : '-'}${fmt(e.ecart)} FCFA (théorique ${fmt(e.theorique)}, compté ${fmt(e.compte)}).`,
+            montant: Math.abs(e.ecart),
+            referenceId: e.id,
+            roles: ['manager'],
+          }).catch((err) => console.error('Erreur alerte ecart_caisse :', err));
+        });
+      }).catch((err) => console.error('Erreur getNomUtilisateur (ecart_caisse) :', err));
     }
 
     // Le caissier ne doit pas recevoir le théorique ni l'écart dans la

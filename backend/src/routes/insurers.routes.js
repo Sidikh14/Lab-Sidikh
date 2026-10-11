@@ -4,6 +4,7 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
+const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 
 const router = express.Router();
 router.use(authenticate);
@@ -238,6 +239,19 @@ router.post('/:id/payments', async (req, res) => {
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
       [req.user.merchantId, req.params.id, req.user.id, Number(amount), paymentMethod, notes || null, warehouseId]
     );
+
+    getNomUtilisateur(req.user.id).then((nom) => {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'reglement_recu',
+        titre: 'Règlement mutuelle reçu',
+        message: `${nom || 'Un utilisateur'} a enregistré un règlement de ${Math.round(Number(amount)).toLocaleString('fr-FR')} FCFA reçu de ${insurer.rows[0].name}.`,
+        montant: Number(amount),
+        referenceId: result.rows[0].id,
+        roles: ['manager', 'gerant'],
+      }).catch((err) => console.error('Erreur alerte reglement_recu (mutuelle) :', err));
+    }).catch((err) => console.error('Erreur getNomUtilisateur (reglement_recu) :', err));
+
     res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });

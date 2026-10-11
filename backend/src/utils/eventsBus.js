@@ -9,7 +9,9 @@
 
 const clientsByMerchant = new Map(); // merchantId -> Set(res)
 
-function subscribe(merchantId, res) {
+// utilisateur : { id, role } de la personne connectée, mémorisé pour pouvoir cibler les diffusions.
+function subscribe(merchantId, res, utilisateur = null) {
+  res.utilisateurSSE = utilisateur;
   if (!clientsByMerchant.has(merchantId)) clientsByMerchant.set(merchantId, new Set());
   clientsByMerchant.get(merchantId).add(res);
 }
@@ -34,4 +36,26 @@ function broadcast(merchantId, eventName, data) {
   });
 }
 
-module.exports = { subscribe, unsubscribe, broadcast };
+// Diffusion ciblée : seuls les clients connectés dont le rôle (roles) ou l'identifiant (userIds) correspond
+// reçoivent l'événement. Sert aux alertes : un caissier ne doit jamais recevoir, même sans l'afficher,
+// une alerte réservée au manager (ex. écart de clôture de caisse). L'identité est transmise à subscribe() par la
+// route SSE (lue dans le jeton) ; un client dont l'identité est inconnue ne reçoit rien (par sécurité).
+function broadcastCible(merchantId, eventName, data, { roles = [], userIds = null } = {}) {
+  const clients = clientsByMerchant.get(merchantId);
+  if (!clients || clients.size === 0) return;
+  const payload = `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+  const ids = userIds ? userIds.map(String) : null;
+  clients.forEach((res) => {
+    const utilisateur = res.utilisateurSSE;
+    if (!utilisateur) return;
+    const autorise = ids ? ids.includes(String(utilisateur.id)) : roles.includes(utilisateur.role);
+    if (!autorise) return;
+    try {
+      res.write(payload);
+    } catch (err) {
+      // Connexion déjà fermée côté client : nettoyée par le 'close' du endpoint SSE.
+    }
+  });
+}
+
+module.exports = { subscribe, unsubscribe, broadcast, broadcastCible };

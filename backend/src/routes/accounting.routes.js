@@ -309,14 +309,11 @@ function calculerAlertesFiscales({ jour, regime, depots, activite }) {
   return alertes.sort((x, y) => x.joursRestants - y.joursRestants);
 }
 
-// GET /accounting/fiscal-alerts — ouvert au manager, au gérant et au comptable (lecture seule).
-router.get('/fiscal-alerts', async (req, res) => {
-  try {
-    const vide = { enabled: false, alertes: [] };
-    if (!aRole(req.user, 'manager', 'gerant', 'comptable') || !req.user.merchantId) return res.json(vide);
-    const merchantId = req.user.merchantId;
+// Calcul des rappels fiscaux d'un commerçant (utilisé par la route ci-dessous et par les notifications d'échéance).
+async function alertesFiscalesPour(merchantId) {
+  const vide = { enabled: false, alertes: [] };
     const actif = await pool.query('SELECT accounting_enabled FROM merchants WHERE id = $1', [merchantId]);
-    if (actif.rows[0]?.accounting_enabled !== true) return res.json(vide);
+    if (actif.rows[0]?.accounting_enabled !== true) return vide;
 
     const jour = aujourdhui();
     const mois = moisPrecedents(jour, 3);
@@ -335,10 +332,19 @@ router.get('/fiscal-alerts', async (req, res) => {
     const activite = { tva: new Set(), salaires: new Set(), brs: new Set(brs.rows.map((r) => r.m)) };
     for (const r of ledger.rows) (['443', '445'].includes(r.code) ? activite.tva : activite.salaires).add(r.m);
 
-    res.json({
+    return {
       enabled: true,
       alertes: calculerAlertesFiscales({ jour, regime: profil.regime, depots: new Set(deposes.rows.map((r) => `${r.kind}|${r.period}`)), activite }),
-    });
+    };
+}
+router.alertesFiscalesPour = alertesFiscalesPour;
+
+// GET /accounting/fiscal-alerts — ouvert au manager, au gérant et au comptable (lecture seule).
+router.get('/fiscal-alerts', async (req, res) => {
+  try {
+    const vide = { enabled: false, alertes: [] };
+    if (!aRole(req.user, 'manager', 'gerant', 'comptable') || !req.user.merchantId) return res.json(vide);
+    res.json(await alertesFiscalesPour(req.user.merchantId));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors du calcul des rappels fiscaux.' });

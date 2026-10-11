@@ -31,7 +31,8 @@ router.get('/', (req, res) => {
   });
   res.write('\n');
 
-  subscribe(payload.merchantId, res);
+  // L'identité (id + rôle du jeton) permet de cibler les alertes : chacun ne reçoit que les siennes.
+  subscribe(payload.merchantId, res, { id: payload.sub, role: payload.role });
 
   // Ping régulier pour garder la connexion ouverte à travers les proxys
   // (Render notamment) qui coupent une connexion HTTP restée silencieuse

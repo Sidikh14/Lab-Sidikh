@@ -4,6 +4,7 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
+const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerPiedDePage, traitSeparateur } = require('../utils/pdfHelpers');
 
 const router = express.Router();
@@ -172,6 +173,18 @@ router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier')
       action: 'credit_payment',
       description: `a enregistré un règlement de ${amount.toLocaleString('fr-FR')} pour ${client.full_name}`,
     });
+
+    getNomUtilisateur(req.user.id).then((nom) => {
+      creerAlerte({
+        merchantId: req.user.merchantId,
+        type: 'reglement_recu',
+        titre: 'Règlement client reçu',
+        message: `${nom || 'Un utilisateur'} a enregistré un règlement de ${Math.round(amount).toLocaleString('fr-FR')} FCFA de ${client.full_name}.`,
+        montant: amount,
+        referenceId: result.rows[0].id,
+        roles: ['manager', 'gerant'],
+      }).catch((err) => console.error('Erreur alerte reglement_recu (client) :', err));
+    }).catch((err) => console.error('Erreur getNomUtilisateur (reglement_recu) :', err));
 
     res.status(201).json(result.rows[0]);
   } catch (err) {

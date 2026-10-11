@@ -255,6 +255,12 @@ export const api = {
   downloadStockTransferPdf: (id) => previewFile(`/stock-transfers/${id}/pdf`),
   // Rappels fiscaux (déclarations à déposer) pour le tableau de bord.
   getFiscalAlerts: () => request('/accounting/fiscal-alerts'),
+  // Alertes (cloche de la barre du haut) : chacun ne reçoit que celles qui lui sont destinées.
+  getAlerts: () => request('/alerts'),
+  getAlertsUnreadCount: () => request('/alerts/unread-count'),
+  markAlertRead: (id) => request(`/alerts/${id}/read`, { method: 'PATCH' }),
+  // Flux temps réel (SSE) : le jeton passe en paramètre car EventSource n'envoie pas d'en-tête Authorization.
+  alertsStreamUrl: () => `${API_URL}/events?token=${encodeURIComponent(getToken() || '')}`,
 
   getProducts: (warehouseId) => request(`/products${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   createProduct: (data) =>

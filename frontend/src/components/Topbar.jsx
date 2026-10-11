@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+
+// Rôles qui reçoivent des alertes (même liste que alerts.routes.js côté backend).
+const ROLES_ALERTES = ['manager', 'gerant', 'caissier', 'vendeur_caissier'];
 
 function IconCloche() {
   return (
@@ -20,11 +23,19 @@ function IconMenu() {
   );
 }
 
+const formaterDate = (d) => new Date(d).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
 export function Topbar({ onOuvrirMenu }) {
   const { user, merchant, logout } = useAuth();
   const navigate = useNavigate();
   const [enRupture, setEnRupture] = useState(0);
   const [menuOuvert, setMenuOuvert] = useState(false);
+
+  const peutVoirAlertes = ROLES_ALERTES.includes(user?.role);
+  const [alertes, setAlertes] = useState([]);
+  const [nonLues, setNonLues] = useState(0);
+  const [panneauOuvert, setPanneauOuvert] = useState(false);
+  const [bandeau, setBandeau] = useState(null);
 
   useEffect(() => {
     api
@@ -33,12 +44,76 @@ export function Topbar({ onOuvrirMenu }) {
       .catch(() => {});
   }, []);
 
+  const rafraichirCompte = useCallback(() => {
+    api.getAlertsUnreadCount().then((r) => setNonLues(r?.count || 0)).catch(() => {});
+  }, []);
+
+  const rafraichirListe = useCallback(() => {
+    api.getAlerts().then((liste) => setAlertes(Array.isArray(liste) ? liste : [])).catch(() => {});
+  }, []);
+
+  // Compteur d'alertes non lues : relu toutes les 30 s (ce même appel déclenche côté serveur le contrôle
+  // des lots bientôt périmés et des échéances fiscales, au plus une fois par heure).
+  useEffect(() => {
+    if (!peutVoirAlertes) return undefined;
+    rafraichirCompte();
+    const minuteur = setInterval(rafraichirCompte, 30000);
+    return () => clearInterval(minuteur);
+  }, [peutVoirAlertes, rafraichirCompte]);
+
+  // Temps réel : une nouvelle alerte s'affiche aussitôt en bandeau. En cas d'échec de la connexion, le
+  // compteur relu toutes les 30 s prend le relais.
+  useEffect(() => {
+    if (!peutVoirAlertes) return undefined;
+    let source;
+    try {
+      source = new EventSource(api.alertsStreamUrl());
+    } catch {
+      return undefined;
+    }
+    source.addEventListener('alert:new', (e) => {
+      try {
+        setBandeau(JSON.parse(e.data));
+        rafraichirCompte();
+        if (panneauOuvert) rafraichirListe();
+      } catch {
+        /* message illisible : ignoré */
+      }
+    });
+    return () => source.close();
+  }, [peutVoirAlertes, rafraichirCompte, rafraichirListe, panneauOuvert]);
+
+  useEffect(() => {
+    if (!bandeau) return undefined;
+    const minuteur = setTimeout(() => setBandeau(null), 8000);
+    return () => clearTimeout(minuteur);
+  }, [bandeau]);
+
+  function basculerPanneau() {
+    if (!peutVoirAlertes) {
+      navigate('/');
+      return;
+    }
+    const ouvrir = !panneauOuvert;
+    setPanneauOuvert(ouvrir);
+    if (ouvrir) rafraichirListe();
+  }
+
+  function marquerLue(alerte) {
+    if (alerte.lu) return;
+    setAlertes((liste) => liste.map((a) => (a.id === alerte.id ? { ...a, lu: true } : a)));
+    setNonLues((n) => Math.max(0, n - 1));
+    api.markAlertRead(alerte.id).catch(() => rafraichirCompte());
+  }
+
   const initiales = (user?.fullName || '?')
     .split(' ')
     .map((mot) => mot[0])
     .slice(0, 2)
     .join('')
     .toUpperCase();
+
+  const badge = peutVoirAlertes ? nonLues : enRupture;
 
   return (
     <header className="barre-haut">
@@ -55,15 +130,57 @@ export function Topbar({ onOuvrirMenu }) {
       </div>
 
       <div className="barre-haut-droite">
-        <button
-          type="button"
-          className="barre-haut-cloche"
-          onClick={() => navigate('/')}
-          aria-label={`${enRupture} produit(s) en rupture`}
-        >
-          <IconCloche />
-          {enRupture > 0 && <span className="barre-haut-badge">{enRupture}</span>}
-        </button>
+        <div style={{ position: 'relative' }}>
+          <button
+            type="button"
+            className="barre-haut-cloche"
+            onClick={basculerPanneau}
+            aria-label={peutVoirAlertes ? `${nonLues} alerte(s) non lue(s)` : `${enRupture} produit(s) en rupture`}
+          >
+            <IconCloche />
+            {badge > 0 && <span className="barre-haut-badge">{badge}</span>}
+          </button>
+
+          {panneauOuvert && peutVoirAlertes && (
+            <div
+              style={{
+                position: 'absolute', right: 0, top: 'calc(100% + 8px)', width: 340, maxWidth: '92vw', maxHeight: 420,
+                overflowY: 'auto', background: '#fff', border: '1px solid rgba(0,0,0,0.12)', borderRadius: 12,
+                boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 60, textAlign: 'left',
+              }}
+            >
+              <div style={{ padding: '10px 14px', fontWeight: 700, borderBottom: '1px solid rgba(0,0,0,0.08)' }}>Notifications</div>
+              {enRupture > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { setPanneauOuvert(false); navigate('/'); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', border: 0, borderBottom: '1px solid rgba(0,0,0,0.06)', background: 'var(--accent-clair, #f3f4f6)', cursor: 'pointer' }}
+                >
+                  {enRupture} produit(s) en rupture de stock
+                </button>
+              )}
+              {alertes.length === 0 && (
+                <p style={{ padding: '16px 14px', margin: 0, color: '#6b7280' }}>Aucune notification.</p>
+              )}
+              {alertes.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => marquerLue(a)}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', border: 0,
+                    borderBottom: '1px solid rgba(0,0,0,0.06)', cursor: 'pointer',
+                    background: a.lu ? '#fff' : 'var(--accent-clair, #eef2ff)',
+                  }}
+                >
+                  <span style={{ display: 'block', fontWeight: a.lu ? 500 : 700, fontSize: 13 }}>{a.titre}</span>
+                  <span style={{ display: 'block', fontSize: 12.5, color: '#374151', marginTop: 2 }}>{a.message}</span>
+                  <span style={{ display: 'block', fontSize: 11, color: '#6b7280', marginTop: 4 }}>{formaterDate(a.created_at)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div className="barre-haut-avatar-zone">
           <button type="button" className="avatar avatar--bouton" onClick={() => setMenuOuvert((v) => !v)}>
@@ -78,6 +195,21 @@ export function Topbar({ onOuvrirMenu }) {
           )}
         </div>
       </div>
+
+      {bandeau && (
+        <div
+          role="status"
+          onClick={() => { setBandeau(null); setPanneauOuvert(true); rafraichirListe(); }}
+          style={{
+            position: 'fixed', top: 64, right: 16, width: 320, maxWidth: '92vw', background: '#fff', cursor: 'pointer',
+            border: '1px solid rgba(0,0,0,0.12)', borderLeft: '4px solid var(--accent, #6d28d9)', borderRadius: 10,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: '10px 14px', zIndex: 80, textAlign: 'left',
+          }}
+        >
+          <span style={{ display: 'block', fontWeight: 700, fontSize: 13 }}>{bandeau.titre}</span>
+          <span style={{ display: 'block', fontSize: 12.5, color: '#374151', marginTop: 2 }}>{bandeau.message}</span>
+        </div>
+      )}
     </header>
   );
 }
