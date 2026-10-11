@@ -686,16 +686,16 @@ function TransfertsTab() {
                     </div>
                   ))}
                 </div>
-                <div className="actions-modale">
-                  <button type="button" className="btn" onClick={() => setTransfertDetail(null)}>Fermer</button>
-                  <button type="button" className="btn" onClick={handleImprimerBon}>Imprimer le bon</button>
+                <div className="actions-modale" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8, justifyContent: 'stretch' }}>
+                  <button type="button" className="btn" style={{ width: '100%', whiteSpace: 'nowrap', justifyContent: 'center', textAlign: 'center' }} onClick={() => setTransfertDetail(null)}>Fermer</button>
+                  <button type="button" className="btn" style={{ width: '100%', whiteSpace: 'nowrap', justifyContent: 'center', textAlign: 'center' }} onClick={handleImprimerBon}>Imprimer le bon</button>
                   {peutAnnuler && (
-                    <button type="button" className="btn btn-brique" onClick={handleAnnuler} disabled={actionEnCours}>
+                    <button type="button" className="btn btn-brique" style={{ width: '100%', whiteSpace: 'nowrap', justifyContent: 'center', textAlign: 'center' }} onClick={handleAnnuler} disabled={actionEnCours}>
                       {actionEnCours ? 'Annulation…' : 'Annuler'}
                     </button>
                   )}
                   {peutReceptionner && (
-                    <button type="button" className="btn btn-principal" onClick={handleReceptionner} disabled={actionEnCours}>
+                    <button type="button" className="btn btn-principal" style={{ width: '100%', whiteSpace: 'nowrap', justifyContent: 'center', textAlign: 'center' }} onClick={handleReceptionner} disabled={actionEnCours}>
                       {actionEnCours ? 'Réception…' : 'Réceptionner'}
                     </button>
                   )}
