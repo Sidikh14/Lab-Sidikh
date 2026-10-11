@@ -6,6 +6,7 @@ const pool = require('../config/db');
 const webpush = require('web-push');
 const { sendAlertMail } = require('../utils/alertMailer');
 const { broadcastCible } = require('../utils/eventsBus');
+const { normaliserRoles } = require('../middleware/roles');
 
 webpush.setVapidDetails(
   process.env.VAPID_SUBJECT || 'mailto:alerts@amaterasu.app',
@@ -36,11 +37,15 @@ async function creerAlerte({ merchantId, type, titre, message, montant = null, r
         [merchantId, userIds]
       )
     : await pool.query(
-        `SELECT id, email, alertes_push_actif, alertes_email_actif
+        `SELECT id, email, role, roles, alertes_push_actif, alertes_email_actif
          FROM users
-         WHERE merchant_id = $1 AND role::text = ANY($2) AND is_active = true`,
-        [merchantId, roles]
-      );
+         WHERE merchant_id = $1 AND is_active = true`,
+        [merchantId]
+      ).then((r) => ({
+        // Une personne peut cumuler plusieurs rôles (ex. vendeur + caissier) : elle est concernée dès que
+        // l'un d'eux figure dans la liste visée.
+        rows: r.rows.filter((u) => normaliserRoles(u.roles, u.role).some((x) => roles.includes(x))),
+      }));
 
   await Promise.all(destinataires.map(async (u) => {
     if (u.alertes_push_actif) await envoyerPush(u.id, titre, message);

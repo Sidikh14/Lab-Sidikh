@@ -48,7 +48,8 @@ function broadcastCible(merchantId, eventName, data, { roles = [], userIds = nul
   clients.forEach((res) => {
     const utilisateur = res.utilisateurSSE;
     if (!utilisateur) return;
-    const autorise = ids ? ids.includes(String(utilisateur.id)) : roles.includes(utilisateur.role);
+    const rolesDuClient = utilisateur.roles || [utilisateur.role];
+    const autorise = ids ? ids.includes(String(utilisateur.id)) : rolesDuClient.some((r) => roles.includes(r));
     if (!autorise) return;
     try {
       res.write(payload);

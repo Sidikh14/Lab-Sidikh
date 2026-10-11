@@ -16,7 +16,7 @@ const VISIBLE = `(
   (destinataires_users IS NOT NULL AND $2::uuid = ANY(destinataires_users))
   OR (destinataires_users IS NULL AND COALESCE(destinataires_roles, ARRAY['manager','gerant']) && $3::text[])
 )`;
-const params = (req) => [req.user.merchantId, req.user.id, [req.user.role]];
+const params = (req) => [req.user.merchantId, req.user.id, Array.from(new Set([...(req.user.roles || []), req.user.role].filter(Boolean)))];
 
 router.get('/', async (req, res) => {
   const { rows } = await pool.query(
@@ -29,7 +29,7 @@ router.get('/', async (req, res) => {
 router.get('/unread-count', async (req, res) => {
   // Le manager et le gérant qui consultent l'application déclenchent aussi le contrôle des échéances
   // (lots bientôt périmés, déclarations fiscales) : au plus une fois par heure, sans bloquer la réponse.
-  if (['manager', 'gerant'].includes(req.user.role)) {
+  if ((req.user.roles || [req.user.role]).some((r) => ['manager', 'gerant'].includes(r))) {
     verifierEcheances(req.user.merchantId, req.user.sector).catch((err) => console.error('Erreur vérification échéances :', err));
   }
   const { rows } = await pool.query(

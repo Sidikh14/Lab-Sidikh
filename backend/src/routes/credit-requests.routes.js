@@ -40,7 +40,7 @@ router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
 // POST /credit-requests — le caissier (ou manager) demande la création d'un
 // client et l'autorisation de vente à crédit pour une commande de client de
 // passage actuellement en attente d'encaissement.
-router.post('/', requireRole('manager', 'caissier'), async (req, res) => {
+router.post('/', requireRole('manager', 'caissier', 'vendeur_caissier'), async (req, res) => {
   const { orderId, fullName, phone, address } = req.body;
 
   if (!orderId || !fullName) {
@@ -82,7 +82,7 @@ router.post('/', requireRole('manager', 'caissier'), async (req, res) => {
       description: `a demandé la création du client ${fullName} pour une vente à crédit`,
     });
 
-    if (req.user.role === 'caissier') {
+    if (['caissier', 'vendeur_caissier'].includes(req.user.role)) {
       const nomCaissier = await getNomUtilisateur(req.user.id);
       creerAlerte({
         merchantId: req.user.merchantId,

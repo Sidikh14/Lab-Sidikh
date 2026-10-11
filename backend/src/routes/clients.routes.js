@@ -125,7 +125,7 @@ router.get('/:id', async (req, res) => {
 
 // POST /clients/:id/credit-payments — enregistrer un règlement de créance
 // (partiel ou total). Accessible au caissier, au manager et au gérant.
-router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   const { amount, note, paymentMethod, warehouseId: warehouseIdInput } = req.body;
 
   if (typeof amount !== 'number' || amount <= 0) {
@@ -256,7 +256,7 @@ function normaliserNumeroWhatsapp(phone) {
 // WhatsApp. Ne contacte aucune API externe : c'est le frontend qui ouvre
 // ensuite wa.me avec ce message pré-rempli, et l'utilisateur clique
 // lui-même sur "Envoyer" dans WhatsApp.
-router.post('/:id/whatsapp-statement', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+router.post('/:id/whatsapp-statement', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   try {
     const clientResult = await pool.query(
       `SELECT c.*, m.business_name
@@ -398,7 +398,7 @@ function genererFacturesImpayeesPdf(res, { businessName, clientName, factures, t
 // GET /clients/:id/unpaid-invoices-pdf — export PDF des factures à crédit
 // impayées ou partiellement réglées du client (avec le détail des
 // versements déjà faits), à télécharger et envoyer au client.
-router.get('/:id/unpaid-invoices-pdf', requireRole('manager', 'gerant', 'caissier'), async (req, res) => {
+router.get('/:id/unpaid-invoices-pdf', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   try {
     const clientResult = await pool.query(
       `SELECT c.*, m.business_name, m.logo_data, m.ninea, m.rccm,

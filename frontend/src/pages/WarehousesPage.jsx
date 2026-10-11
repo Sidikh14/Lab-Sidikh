@@ -423,9 +423,10 @@ function TransfertsTab() {
     }
     setEnregistrement(true);
     try {
-      await api.createStockTransfer({ fromWarehouseId, toWarehouseId, items, notes: notes || undefined });
+      const cree = await api.createStockTransfer({ fromWarehouseId, toWarehouseId, items, notes: notes || undefined });
       setModaleOuverte(false);
       charger();
+      if (cree && cree.id) ouvrirDetail(cree);
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -440,6 +441,11 @@ function TransfertsTab() {
       .then(setTransfertDetail)
       .catch((err) => setErreur(err.message))
       .finally(() => setChargementDetail(false));
+  }
+
+  // Ouvre le bon de transfert (PDF) dans un nouvel onglet, prêt à imprimer.
+  function handleImprimerBon() {
+    api.downloadStockTransferPdf(transfertDetail.id).catch((err) => setErreur(err.message));
   }
 
   async function handleReceptionner() {
@@ -682,6 +688,7 @@ function TransfertsTab() {
                 </div>
                 <div className="actions-modale">
                   <button type="button" className="btn" onClick={() => setTransfertDetail(null)}>Fermer</button>
+                  <button type="button" className="btn" onClick={handleImprimerBon}>Imprimer le bon</button>
                   {peutAnnuler && (
                     <button type="button" className="btn btn-brique" onClick={handleAnnuler} disabled={actionEnCours}>
                       {actionEnCours ? 'Annulation…' : 'Annuler'}
