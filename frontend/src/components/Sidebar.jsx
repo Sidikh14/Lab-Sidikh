@@ -240,16 +240,13 @@ const STYLES_RAIL = `
   background: var(--encre); color: #fff; font-size: 12.5px; padding: 6px 10px; border-radius: 7px;
   box-shadow: 0 4px 14px rgba(0,0,0,.28);
 }
-/* Logo de l'entreprise sur une pastille blanche (lisible quelle que soit sa couleur) */
+/* Logo de l'entreprise : le logo seul, sans fond */
 .barre-laterale .marque-logo-attente { display: block; height: 46px; width: 120px; }
 .barre-laterale.reduite .marque-logo-attente { width: 44px; }
-.barre-laterale .marque-logo-pastille {
-  display: inline-flex; align-items: center; justify-content: center; background: #fff; border-radius: 10px;
-  padding: 7px 12px; height: 46px; max-width: 160px;
-}
-.barre-laterale .marque-logo-pastille img { display: block; max-height: 32px; max-width: 136px; object-fit: contain; }
-.barre-laterale.reduite .marque-logo-pastille { padding: 4px; width: 44px; height: 44px; }
-.barre-laterale.reduite .marque-logo-pastille img { max-height: 34px; max-width: 34px; }
+.barre-laterale .marque-logo-pastille { display: inline-flex; align-items: center; justify-content: flex-start; height: 46px; max-width: 170px; }
+.barre-laterale .marque-logo-pastille img { display: block; max-height: 42px; max-width: 170px; object-fit: contain; }
+.barre-laterale.reduite .marque-logo-pastille { justify-content: center; width: 44px; height: 44px; }
+.barre-laterale.reduite .marque-logo-pastille img { max-height: 40px; max-width: 40px; }
 `;
 
 const CLE_REDUITE = 'sidebarReduite';
