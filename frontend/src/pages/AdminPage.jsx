@@ -560,14 +560,18 @@ export function AdminPage() {
                       type="color"
                       aria-label="Choisir la couleur principale"
                       value={palette ? palette.couleur.toLowerCase() : COULEUR_PAR_DEFAUT.toLowerCase()}
-                      onChange={(e) => setCharteCouleur(e.target.value.toUpperCase())}
+                      onChange={(e) => { setCharteCouleur(e.target.value.toUpperCase()); setCharteActive(true); }}
                       style={{ width: 48, height: 40, padding: 2, border: '1px solid var(--trait-fort)', borderRadius: 8, background: 'var(--carte)' }}
                     />
                     <input
                       id="a-charte-couleur"
                       className="champ"
                       value={charteCouleur}
-                      onChange={(e) => setCharteCouleur(e.target.value.trim().toUpperCase())}
+                      onChange={(e) => {
+                        const valeur = e.target.value.trim().toUpperCase();
+                        setCharteCouleur(valeur);
+                        if (/^#[0-9A-F]{6}$/.test(valeur)) setCharteActive(true);
+                      }}
                       placeholder="#1F5FBF"
                       maxLength={7}
                       style={{ maxWidth: 140 }}
@@ -578,6 +582,11 @@ export function AdminPage() {
                   </div>
                 </div>
 
+                {!charteActive && palette && modaleCharte.brand_color && (
+                  <p className="etiquette" style={{ color: 'var(--warning)' }}>
+                    La personnalisation est éteinte : ce commerçant garde les couleurs d'Amaterasu. Cochez « Personnalisation active » pour l'appliquer.
+                  </p>
+                )}
                 {!palette && <div className="erreur">Saisissez une couleur valide, par exemple #1F5FBF.</div>}
                 {palette && palette.ajustee && (
                   <p className="etiquette" style={{ color: 'var(--warning)' }}>

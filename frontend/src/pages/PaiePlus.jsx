@@ -41,6 +41,15 @@ const TYPES_ABSENCE = [
   { value: 'payee', label: 'Absence payée' },
   { value: 'conge', label: 'Congé' },
 ];
+// Majorations d'heures supplémentaires courantes, proposées en un clic. Ce sont des valeurs usuelles, PAS un avis
+// juridique : à comparer avec votre convention collective et à faire valider, puis modifiables dans Réglages paie.
+const MAJORATIONS_COURANTES = [
+  { code: 'h15', label: 'Heures sup +15 % (8 premières heures)', rate: 1.15 },
+  { code: 'h40', label: 'Heures sup +40 % (au-delà)', rate: 1.4 },
+  { code: 'nuit', label: 'Heures de nuit +60 %', rate: 1.6 },
+  { code: 'dimanche', label: 'Dimanche et jours fériés +100 %', rate: 2 },
+];
+
 const TYPES_DOC = {
   attestation_travail: 'Attestation de travail',
   certificat_travail: 'Certificat de travail',
@@ -555,6 +564,16 @@ export function AbsencesHeuresTab() {
   }
   const supprimer = (action, id) => action(id).then(charger).catch((err) => setErreur(err.message));
 
+  async function chargerMajorationsCourantes() {
+    setErreur('');
+    try {
+      await api.updatePayrollSettings({ overtime_rates: MAJORATIONS_COURANTES });
+      setMajorations(MAJORATIONS_COURANTES);
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
   const joursNonPayes = absences.filter((a) => !a.is_paid).reduce((s, a) => s + Number(a.days), 0);
   const totalHeures = heures.reduce((s, h) => s + Number(h.hours), 0);
   const choixEmploye = (id, valeur, onChange) => (
@@ -600,7 +619,14 @@ export function AbsencesHeuresTab() {
       )}
 
       <h2 style={{ fontSize: 16, margin: '22px 0 10px' }}>Heures supplémentaires</h2>
-      {majorations.length === 0 && <div className="md-info">Aucune majoration n'est configurée : ajoutez-les dans Réglages paie avant de saisir des heures supplémentaires.</div>}
+      {majorations.length === 0 && (
+        <div className="md-info">
+          Aucune majoration n'est encore configurée. Vous pouvez charger les majorations courantes (+15 %, +40 %, nuit +60 %, dimanche et jours fériés +100 %), à vérifier avec votre convention collective, ou les créer vous-même dans Réglages paie.
+          <div style={{ marginTop: 8 }}>
+            <button type="button" className="btn btn-principal" onClick={chargerMajorationsCourantes}>Charger les majorations courantes</button>
+          </div>
+        </div>
+      )}
       {heures.length === 0 ? <p className="etat-vide">Aucune heure supplémentaire ce mois-ci.</p> : (
         <div className="md-liste">
           {heures.map((h) => (
@@ -652,9 +678,12 @@ export function AbsencesHeuresTab() {
                 <Champ id="hs-nb" label="Nombre d'heures"><input id="hs-nb" type="number" step="0.25" min="0.25" required className="champ" value={hs.hours} onChange={(e) => setHs((h) => ({ ...h, hours: e.target.value }))} /></Champ>
                 <Champ id="hs-cat" label="Majoration">
                   <select id="hs-cat" className="champ" required value={hs.category} onChange={(e) => setHs((h) => ({ ...h, category: e.target.value }))}>
-                    <option value="">— Choisir —</option>
+                    <option value="">{majorations.length === 0 ? '— Aucune majoration configurée —' : '— Choisir —'}</option>
                     {majorations.map((m) => <option key={m.code} value={m.code}>{m.label} (x{m.rate})</option>)}
                   </select>
+                  {majorations.length === 0 && (
+                    <button type="button" className="btn" style={{ marginTop: 8 }} onClick={chargerMajorationsCourantes}>Charger les majorations courantes</button>
+                  )}
                 </Champ>
                 <Champ id="hs-note" label="Note"><input id="hs-note" className="champ" value={hs.note} onChange={(e) => setHs((h) => ({ ...h, note: e.target.value }))} /></Champ>
               </div>
@@ -1156,7 +1185,14 @@ export function ReglagesPeriodeSection() {
           <button type="button" className="btn" onClick={() => setMajorations((l) => l.filter((_, j) => j !== i))}>×</button>
         </div>
       ))}
-      <button type="button" className="btn" onClick={() => setMajorations((l) => [...l, { code: '', label: '', rate: '' }])} style={{ marginBottom: 22 }}>+ Ajouter une majoration</button>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 22 }}>
+        <button type="button" className="btn" onClick={() => setMajorations((l) => [...l, { code: '', label: '', rate: '' }])}>+ Ajouter une majoration</button>
+        {majorations.length === 0 && (
+          <button type="button" className="btn" onClick={() => setMajorations(MAJORATIONS_COURANTES.map((m) => ({ ...m, rate: String(m.rate) })))}>
+            Pré-remplir avec les majorations courantes
+          </button>
+        )}
+      </div>
 
       <h2 style={{ fontSize: 16, marginBottom: 10 }}>Numéros employeur</h2>
       <div style={{ display: 'flex', gap: 12, marginBottom: 18 }}>
