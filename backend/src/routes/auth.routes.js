@@ -20,6 +20,17 @@ function brandingDepuisLigne(enabled, couleur) {
   return palette ? { enabled: true, palette } : { enabled: false, palette: null };
 }
 
+// Logo de l'entreprise : le nom exact de la colonne n'est pas supposé, on prend la première colonne « logo… »
+// qui contient une image exploitable (data URI ou lien https).
+function extraireLogo(ligne) {
+  if (!ligne) return null;
+  for (const [cle, valeur] of Object.entries(ligne)) {
+    if (!/logo/i.test(cle) || typeof valeur !== 'string') continue;
+    if (/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(valeur) || /^https:\/\//i.test(valeur)) return valeur;
+  }
+  return null;
+}
+
 function signToken(user) {
   return jwt.sign(
     { sub: user.id, merchantId: user.merchant_id, role: user.role, warehouseId: user.warehouse_id || null, sector: user.sector || null },
@@ -154,7 +165,8 @@ router.post('/login', async (req, res) => {
               u.visible_modules, u.warehouse_id, w.name AS warehouse_name,
               m.business_name, m.sector, m.currency, m.is_active AS merchant_is_active,
               COALESCE((to_jsonb(m)->>'brand_enabled')::boolean, false) AS brand_enabled,
-              to_jsonb(m)->>'brand_color' AS brand_color
+              to_jsonb(m)->>'brand_color' AS brand_color,
+              to_jsonb(m) AS merchant_ligne
        FROM users u
        LEFT JOIN merchants m ON m.id = u.merchant_id
        LEFT JOIN warehouses w ON w.id = u.warehouse_id
@@ -206,7 +218,7 @@ router.post('/login', async (req, res) => {
         warehouseName: user.warehouse_name,
       },
       merchant: user.merchant_id
-        ? { id: user.merchant_id, businessName: user.business_name, sector: user.sector, currency: user.currency, branding: brandingDepuisLigne(user.brand_enabled, user.brand_color) }
+        ? { id: user.merchant_id, businessName: user.business_name, sector: user.sector, currency: user.currency, branding: { ...brandingDepuisLigne(user.brand_enabled, user.brand_color), logo: extraireLogo(user.merchant_ligne) } }
         : null,
     });
   } catch (err) {
@@ -227,17 +239,7 @@ router.get('/branding', authenticate, async (req, res) => {
     const ligne = result.rows[0] && result.rows[0].ligne;
     const branding = brandingDepuisLigne(ligne && ligne.brand_enabled === true, ligne && ligne.brand_color);
 
-    let logo = null;
-    if (ligne) {
-      // Le nom exact de la colonne du logo n'est pas supposé : on prend la première colonne « logo… » exploitable.
-      for (const [cle, valeur] of Object.entries(ligne)) {
-        if (!/logo/i.test(cle) || typeof valeur !== 'string') continue;
-        if (/^data:image\/(png|jpe?g|webp|gif|svg\+xml);base64,/i.test(valeur) || /^https:\/\//i.test(valeur)) {
-          logo = valeur;
-          break;
-        }
-      }
-    }
+    const logo = extraireLogo(ligne);
     res.json({ ...branding, logo });
   } catch (err) {
     console.error(err);

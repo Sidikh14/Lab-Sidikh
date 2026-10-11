@@ -1,7 +1,7 @@
-import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useLayoutEffect } from 'react';
 import { api } from '../api/client';
 import { appliquerThemeSecteur } from '../config/sectorConfig';
-import { appliquerBranding, retirerBranding } from '../config/brandingTheme';
+import { appliquerBranding, retirerBranding, lireCacheBranding, ecrireCacheBranding, effacerCacheBranding } from '../config/brandingTheme';
 
 const AuthContext = createContext(null);
 
@@ -17,7 +17,11 @@ export function AuthProvider({ children }) {
   // Charte du commerçant : { enabled, palette, logo } ou null. `enabled`/`palette` = couleurs personnalisées (réglées par
   // l'owner) ; `logo` = logo de l'entreprise, affiché dans la barre latérale dès qu'il existe. La palette vient de la
   // connexion ; le logo (volumineux) est chargé séparément, au démarrage.
-  const [branding, setBranding] = useState(() => (merchant?.branding?.enabled ? { ...merchant.branding, logo: null } : null));
+  // Au rechargement, la charte vient d'abord de la mémoire locale (affichage immédiat), puis elle est relue sur le serveur.
+  const [branding, setBranding] = useState(() => lireCacheBranding(merchant?.id) || (merchant?.branding?.enabled ? { ...merchant.branding, logo: null } : null));
+  // Faux tant que la charte du commerçant n'est pas connue : la barre latérale n'affiche alors aucun logo au lieu de
+  // montrer un instant celui d'Amaterasu.
+  const [brandingCharge, setBrandingCharge] = useState(() => !merchant || Boolean(lireCacheBranding(merchant.id)));
   const [sessionExpiredMessage, setSessionExpiredMessage] = useState(null);
 
   function persist(data) {
@@ -39,7 +43,11 @@ export function AuthProvider({ children }) {
     if (data.merchant) {
       localStorage.setItem('merchant', JSON.stringify(data.merchant));
       setMerchant(data.merchant);
-      setBranding(data.merchant.branding?.enabled ? { ...data.merchant.branding, logo: null } : null);
+      // La connexion renvoie déjà couleurs et logo : rien à attendre après.
+      const charte = data.merchant.branding || null;
+      setBranding(charte);
+      ecrireCacheBranding(data.merchant.id, charte);
+      setBrandingCharge(true);
     }
   }
 
@@ -63,6 +71,8 @@ export function AuthProvider({ children }) {
     setUser(null);
     setMerchant(null);
     setBranding(null);
+    setBrandingCharge(true);
+    effacerCacheBranding();
   }, []);
 
   // Bascule les couleurs de l'app (--accent/--accent-clair) selon le
@@ -80,7 +90,8 @@ export function AuthProvider({ children }) {
 
   // Charte personnalisée : couleurs appliquées sur la page tant que la personne est connectée, puis retirées
   // (l'écran de connexion garde donc toujours les couleurs d'Amaterasu).
-  useEffect(() => {
+  // useLayoutEffect : appliqué avant l'affichage, donc sans éclair aux couleurs d'Amaterasu.
+  useLayoutEffect(() => {
     if (branding?.enabled && branding.palette) appliquerBranding(branding.palette);
     else retirerBranding();
   }, [branding]);
@@ -91,8 +102,13 @@ export function AuthProvider({ children }) {
     if (!user || !merchant) return undefined;
     let annule = false;
     api.getBranding()
-      .then((b) => { if (!annule) setBranding(b || null); })
-      .catch(() => { /* la charte Amaterasu par défaut reste en place */ });
+      .then((b) => {
+        if (annule) return;
+        setBranding(b || null);
+        ecrireCacheBranding(merchant.id, b || null);
+        setBrandingCharge(true);
+      })
+      .catch(() => { if (!annule) setBrandingCharge(true); /* la charte Amaterasu par défaut reste en place */ });
     return () => { annule = true; };
   }, [user?.id, merchant?.id]);
 
@@ -118,7 +134,7 @@ export function AuthProvider({ children }) {
   }, [user]);
 
   return (
-    <AuthContext.Provider value={{ user, merchant, branding, login, register, logout, aRole, sessionExpiredMessage, clearSessionExpiredMessage }}>
+    <AuthContext.Provider value={{ user, merchant, branding, brandingCharge, login, register, logout, aRole, sessionExpiredMessage, clearSessionExpiredMessage }}>
       {children}
     </AuthContext.Provider>
   );

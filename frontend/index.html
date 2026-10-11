@@ -14,8 +14,24 @@
     <!-- Nécessaire pour que l'ajout à l'écran d'accueil sur iPhone
          s'ouvre en plein écran (sans barre Safari) -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Amaterasu" />
+
+    <!-- Charte personnalisée du commerçant connecté : appliquée avant le premier affichage, pour éviter un éclair aux
+         couleurs d'Amaterasu au rechargement. Sans effet sur l'écran de connexion (personne n'est connecté). -->
+    <script>
+      try {
+        var cache = localStorage.getItem('token') && JSON.parse(localStorage.getItem('brandingCache') || 'null');
+        if (cache && cache.enabled && cache.palette) {
+          var racine = document.documentElement.style;
+          racine.setProperty('--marine', cache.palette.principale);
+          racine.setProperty('--accent', cache.palette.accent);
+          racine.setProperty('--accent-fonce', cache.palette.accentFonce);
+          racine.setProperty('--accent-clair', cache.palette.accentClair);
+        }
+      } catch (e) { /* ignoré */ }
+    </script>
 
     <!-- Polices : Plus Jakarta Sans et Inter sont chargées par tokens.css (paquets npm @fontsource). -->
   </head>

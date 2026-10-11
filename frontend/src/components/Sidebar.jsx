@@ -241,6 +241,8 @@ const STYLES_RAIL = `
   box-shadow: 0 4px 14px rgba(0,0,0,.28);
 }
 /* Logo de l'entreprise sur une pastille blanche (lisible quelle que soit sa couleur) */
+.barre-laterale .marque-logo-attente { display: block; height: 46px; width: 120px; }
+.barre-laterale.reduite .marque-logo-attente { width: 44px; }
 .barre-laterale .marque-logo-pastille {
   display: inline-flex; align-items: center; justify-content: center; background: #fff; border-radius: 10px;
   padding: 7px 12px; height: 46px; max-width: 160px;
@@ -327,7 +329,7 @@ function lireGroupeOuvert(pathname) {
 }
 
 export function Sidebar({ ouvert = false, onFermer }) {
-  const { user, merchant, logout, aRole, branding } = useAuth();
+  const { user, merchant, logout, aRole, branding, brandingCharge } = useAuth();
   // Logo de l'entreprise : il remplace celui d'Amaterasu en haut de la barre, pour tous les secteurs.
   // Sans logo enregistré, le logo Amaterasu reste affiché.
   const logoClient = branding?.logo || null;
@@ -490,6 +492,8 @@ export function Sidebar({ ouvert = false, onFermer }) {
               <span className="marque-logo-pastille">
                 <img src={logoClient} alt={merchant?.businessName || 'Logo'} />
               </span>
+            ) : !brandingCharge ? (
+              <span className="marque-logo-attente" aria-hidden="true" />
             ) : (
               <>
                 <img src="/amaterasu-emblem.svg" alt="" width="28" height="28" />

@@ -132,4 +132,34 @@ export function retirerBranding() {
   if (meta) meta.setAttribute('content', THEME_COLOR_DEFAUT);
 }
 
+// --- Mémoire locale de la charte (couleurs + logo) ---
+// Elle sert à afficher la charte du commerçant dès le premier affichage (rechargement de la page), sans attendre
+// le serveur. Elle est relue et remise à jour à chaque démarrage, et effacée à la déconnexion.
+const CLE_CACHE = 'brandingCache';
+const TAILLE_MAX_LOGO = 800000; // caractères : au-delà, le logo n'est pas mémorisé (limite de stockage du navigateur)
+
+export function lireCacheBranding(merchantId) {
+  try {
+    const c = JSON.parse(localStorage.getItem(CLE_CACHE) || 'null');
+    return c && merchantId && c.merchantId === merchantId ? { enabled: Boolean(c.enabled), palette: c.palette || null, logo: c.logo || null } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function ecrireCacheBranding(merchantId, branding) {
+  try {
+    if (!merchantId || !branding) return effacerCacheBranding();
+    const logo = branding.logo && branding.logo.length <= TAILLE_MAX_LOGO ? branding.logo : null;
+    localStorage.setItem(CLE_CACHE, JSON.stringify({ merchantId, enabled: Boolean(branding.enabled), palette: branding.palette || null, logo }));
+  } catch {
+    // stockage plein ou indisponible : la charte sera simplement relue depuis le serveur
+  }
+  return undefined;
+}
+
+export function effacerCacheBranding() {
+  try { localStorage.removeItem(CLE_CACHE); } catch { /* ignoré */ }
+}
+
 export { palettePourCouleur, COULEUR_PAR_DEFAUT };
