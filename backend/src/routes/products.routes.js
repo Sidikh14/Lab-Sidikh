@@ -380,7 +380,7 @@ router.get('/', async (req, res) => {
 
 // POST /products
 router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, costPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes, warehouseId: warehouseIdInput, lotNumber, expiryDate } = req.body;
+  const { name, sku, categoryId, unitPrice, costPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes, warehouseId: warehouseIdInput, lotNumber, expiryDate, isDish, description, ingredientsText, station, course, prepMinutes, available, trackStock } = req.body;
 
   if (!name) {
     return res.status(400).json({ error: 'Le nom du produit est requis.' });
@@ -398,8 +398,9 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
     const isActivated = true;
 
     const result = await client.query(
-      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, cost_price, quantity_alert_threshold, is_weighted, tva_applicable, attributes, is_activated, is_vital, requires_prescription, requires_cold_chain)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      `INSERT INTO products (merchant_id, category_id, name, sku, unit_price, cost_price, quantity_alert_threshold, is_weighted, tva_applicable, attributes, is_activated, is_vital, requires_prescription, requires_cold_chain,
+                             is_dish, description, ingredients_text, station, course, prep_minutes, available, track_stock)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
        RETURNING *`,
       [
         req.user.merchantId,
@@ -416,6 +417,14 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
         Boolean(isVital),
         Boolean(requiresPrescription),
         Boolean(requiresColdChain),
+        Boolean(isDish),
+        typeof description === 'string' ? description.trim().slice(0, 500) || null : null,
+        typeof ingredientsText === 'string' ? ingredientsText.trim().slice(0, 500) || null : null,
+        ['cuisine', 'bar'].includes(station) ? station : null,
+        ['entree', 'plat', 'dessert', 'boisson'].includes(course) ? course : null,
+        Number.isInteger(prepMinutes) && prepMinutes >= 0 ? prepMinutes : null,
+        available === undefined ? true : Boolean(available),
+        trackStock === undefined ? !isDish : Boolean(trackStock),
       ]
     );
     const product = result.rows[0];
@@ -515,7 +524,7 @@ router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), async (req
 
 // PATCH /products/:id — journalise un changement de prix, s'il y en a un
 router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
-  const { name, sku, categoryId, unitPrice, costPrice, quantityAlertThreshold, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes } = req.body;
+  const { name, sku, categoryId, unitPrice, costPrice, quantityAlertThreshold, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes, isDish, description, ingredientsText, station, course, prepMinutes, available, trackStock } = req.body;
 
   try {
     const avant = await pool.query(
@@ -541,8 +550,16 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
          attributes = COALESCE($9, attributes),
          is_vital = COALESCE($10, is_vital),
          requires_prescription = COALESCE($11, requires_prescription),
-         requires_cold_chain = COALESCE($12, requires_cold_chain)
-       WHERE id = $13 AND merchant_id = $14
+         requires_cold_chain = COALESCE($12, requires_cold_chain),
+         is_dish = COALESCE($15, is_dish),
+         description = COALESCE($16, description),
+         ingredients_text = COALESCE($17, ingredients_text),
+         station = COALESCE($18, station),
+         course = COALESCE($19, course),
+         prep_minutes = COALESCE($20, prep_minutes),
+         available = COALESCE($21, available),
+         track_stock = COALESCE($22, track_stock)
+       WHERE id = $23 AND merchant_id = $24
        RETURNING *`,
       [
         name, sku, categoryId, unitPrice, costPrice, quantityAlertThreshold, isWeighted,
@@ -551,6 +568,14 @@ router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
         isVital === undefined ? null : Boolean(isVital),
         requiresPrescription === undefined ? null : Boolean(requiresPrescription),
         requiresColdChain === undefined ? null : Boolean(requiresColdChain),
+        isDish === undefined ? null : Boolean(isDish),
+        typeof description === 'string' ? description.trim().slice(0, 500) : null,
+        typeof ingredientsText === 'string' ? ingredientsText.trim().slice(0, 500) : null,
+        ['cuisine', 'bar'].includes(station) ? station : null,
+        ['entree', 'plat', 'dessert', 'boisson'].includes(course) ? course : null,
+        Number.isInteger(prepMinutes) ? prepMinutes : null,
+        available === undefined ? null : Boolean(available),
+        trackStock === undefined ? null : Boolean(trackStock),
         req.params.id, req.user.merchantId,
       ]
     );
