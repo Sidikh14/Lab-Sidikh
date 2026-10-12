@@ -31,6 +31,11 @@ function extraireLogo(ligne) {
   return null;
 }
 
+// Emails insensibles à la casse et aux espaces : « Bouba@gmail.com » = « bouba@gmail.com ».
+function normaliserEmail(valeur) {
+  return typeof valeur === 'string' ? valeur.trim().toLowerCase() : '';
+}
+
 function signToken(user) {
   return jwt.sign(
     { sub: user.id, merchantId: user.merchant_id, role: user.role, warehouseId: user.warehouse_id || null, sector: user.sector || null },
@@ -44,7 +49,8 @@ function signToken(user) {
 // commerce sur la plateforme. Les commerçants existants ajoutent ensuite leurs
 // gérants/vendeurs via /users, qui ne nécessite pas cette clé.
 router.post('/register', requireAdminKey, async (req, res) => {
-  const { businessName, sector, fullName, email, password } = req.body;
+  const { businessName, sector, fullName, password } = req.body;
+  const email = normaliserEmail(req.body.email);
 
   if (!businessName || !fullName || !email || !password) {
     return res.status(400).json({ error: 'Champs requis manquants.' });
@@ -126,7 +132,8 @@ router.post('/register', requireAdminKey, async (req, res) => {
 // page d'administration, puis vous connectez ensuite avec /auth/login
 // comme n'importe quel utilisateur.
 router.post('/create-owner', requireAdminKey, async (req, res) => {
-  const { fullName, email, password } = req.body;
+  const { fullName, password } = req.body;
+  const email = normaliserEmail(req.body.email);
 
   if (!fullName || !email || !password) {
     return res.status(400).json({ error: 'Champs requis manquants.' });
@@ -153,7 +160,8 @@ router.post('/create-owner', requireAdminKey, async (req, res) => {
 // POST /auth/login
 // Renvoie aussi le nom du commerce, pour l'afficher dans l'interface.
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { password } = req.body;
+  const email = normaliserEmail(req.body.email);
 
   if (!email || !password) {
     return res.status(400).json({ error: 'Email et mot de passe requis.' });
@@ -170,7 +178,7 @@ router.post('/login', async (req, res) => {
        FROM users u
        LEFT JOIN merchants m ON m.id = u.merchant_id
        LEFT JOIN warehouses w ON w.id = u.warehouse_id
-       WHERE u.email = $1`,
+       WHERE LOWER(u.email) = $1`,
       [email]
     );
     const user = result.rows[0];

@@ -58,7 +58,8 @@ router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
 
 // POST /users — créer un membre de l'équipe (manager uniquement)
 router.post('/', requireRole('manager'), async (req, res) => {
-  const { fullName, email, warehouseId } = req.body;
+  const { fullName, warehouseId } = req.body;
+  const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
 
   if (!fullName || !email) {
     return res.status(400).json({ error: 'Champs requis manquants.' });
