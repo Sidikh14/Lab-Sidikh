@@ -240,6 +240,9 @@ function qs(params = {}) {
   return texte ? `?${texte}` : '';
 }
 
+// Adresse d'une photo de plat (publique, sans connexion), pour les balises <img>.
+export const urlPhotoPlat = (photoId) => (photoId ? `${API_URL}/public/photos/${photoId}` : null);
+
 export const api = {
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
@@ -456,6 +459,13 @@ export const api = {
     request(`/restaurant/menu?warehouseId=${encodeURIComponent(warehouseId)}`),
   importRestaurantMenu: (data, verifierSeulement = false) =>
     request(`/restaurant/menu/import${verifierSeulement ? '?verifier=1' : ''}`, { method: 'POST', body: JSON.stringify(data) }),
+  uploadDishPhoto: (productId, blob) => {
+    const formData = new FormData();
+    formData.append('photo', blob, 'photo.jpg');
+    return requestFormData(`/restaurant/menu/${productId}/photo`, formData);
+  },
+  deleteDishPhoto: (productId) =>
+    request(`/restaurant/menu/${productId}/photo`, { method: 'DELETE' }),
   setDishAvailability: (productId, warehouseId, available) =>
     request(`/restaurant/menu/${productId}/disponibilite`, { method: 'PATCH', body: JSON.stringify({ warehouseId, available }) }),
   updateDish: (productId, data) =>

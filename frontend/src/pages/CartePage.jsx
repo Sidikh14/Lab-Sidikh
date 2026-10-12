@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import QRCode from 'qrcode';
-import { api } from '../api/client';
+import { api, urlPhotoPlat } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { StylesModernes } from '../components/StylesModernes';
 
@@ -10,6 +10,36 @@ import { StylesModernes } from '../components/StylesModernes';
 // Accès : manager (tous les restaurants) et gérant (les restaurants qui lui sont affectés).
 
 const prixFcfa = (n) => `${Math.round(Number(n)).toLocaleString('fr-FR')} FCFA`;
+
+// Compression de la photo dans le navigateur : 200 Ko maximum (limite du serveur), côté le plus long 1000 px au départ.
+async function compresserImage(fichier, maxOctets = 190 * 1024) {
+  if (!/^image\/(jpeg|png|webp)$/.test(fichier.type)) {
+    throw new Error('format non pris en charge (JPG, PNG ou WebP)');
+  }
+  const image = await createImageBitmap(fichier);
+  let coteMax = 1000;
+  for (let essai = 0; essai < 4; essai += 1) {
+    const echelle = Math.min(1, coteMax / Math.max(image.width, image.height));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.width * echelle));
+    canvas.height = Math.max(1, Math.round(image.height * echelle));
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; // fond blanc : les PNG transparents ne deviennent pas noirs en JPEG
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    for (let qualite = 0.85; qualite >= 0.45; qualite -= 0.1) {
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', qualite));
+      if (blob && blob.size <= maxOctets) return blob;
+    }
+    coteMax = Math.round(coteMax * 0.75);
+  }
+  throw new Error('image trop lourde même après compression');
+}
+
+// « Suprême.jpg » correspond au plat « Suprême » : accents, majuscules, espaces et tirets sont ignorés.
+const normaliserNom = (t) =>
+  String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const sansExtension = (nom) => nom.replace(/\.[^.]+$/, '');
 
 const echapperHtml = (t) =>
   String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -108,6 +138,10 @@ export function CartePage() {
   const [texteImport, setTexteImport] = useState('');
   const [rapportImport, setRapportImport] = useState(null);
   const [importEnCours, setImportEnCours] = useState(false);
+
+  // Photos des plats
+  const [photosEnCours, setPhotosEnCours] = useState(false);
+  const [photosMessage, setPhotosMessage] = useState('');
 
   useEffect(() => {
     api.getWarehouses()
@@ -252,6 +286,36 @@ export function CartePage() {
     }
   }
 
+  // Envoie des photos : soit pour un plat précis (platCible), soit plusieurs d'un coup, rattachées aux plats
+  // du restaurant d'après le nom du fichier.
+  async function envoyerPhotos(fichiers, platCible = null) {
+    setErreur('');
+    setPhotosMessage('');
+    setPhotosEnCours(true);
+    const refus = [];
+    let reussies = 0;
+    for (const [i, fichier] of fichiers.entries()) {
+      const plat = platCible || plats.find((p) => normaliserNom(p.name) === normaliserNom(sansExtension(fichier.name)));
+      if (!plat) {
+        refus.push(`${fichier.name} (aucun plat de ce nom)`);
+        continue;
+      }
+      setPhotosMessage(`Envoi ${i + 1}/${fichiers.length} : ${plat.name}…`);
+      try {
+        const blob = await compresserImage(fichier);
+        await api.uploadDishPhoto(plat.id, blob);
+        reussies += 1;
+      } catch (err) {
+        refus.push(`${fichier.name} (${err.message})`);
+      }
+    }
+    setPhotosEnCours(false);
+    setPhotosMessage(
+      `${reussies} photo(s) enregistrée(s).` + (refus.length ? ` Non importées : ${refus.join(' ; ')}.` : '')
+    );
+    await chargerPlats();
+  }
+
   function lireFichierImport(e) {
     const fichier = e.target.files[0];
     if (!fichier) return;
@@ -344,6 +408,23 @@ export function CartePage() {
 
           {onglet === 'plats' && (
             <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginTop: 12 }}>
+                <label className="btn" style={{ cursor: photosEnCours ? 'wait' : 'pointer' }}>
+                  {photosEnCours ? 'Envoi des photos…' : 'Importer des photos'}
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    multiple
+                    hidden
+                    disabled={photosEnCours}
+                    onChange={(e) => { const f = [...e.target.files]; e.target.value = ''; if (f.length) envoyerPhotos(f); }}
+                  />
+                </label>
+                <span className="etiquette" style={{ margin: 0 }}>
+                  Nommez chaque fichier comme le plat (ex. « Suprême.jpg »). JPG, PNG ou WebP, compressés automatiquement.
+                </span>
+              </div>
+              {photosMessage && <p className="etiquette" style={{ marginTop: 8 }}>{photosMessage}</p>}
               <input
                 className="champ"
                 style={{ maxWidth: 320, margin: '12px 0' }}
@@ -369,6 +450,13 @@ export function CartePage() {
                           border: '1px solid var(--trait-fort, #ddd)', opacity: p.disponible_ici ? 1 : 0.55,
                         }}
                       >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                        {p.photo_id ? (
+                          <img src={urlPhotoPlat(p.photo_id)} alt="" width="56" height="56" loading="lazy"
+                            style={{ objectFit: 'cover', borderRadius: 8, flexShrink: 0 }} />
+                        ) : (
+                          <div aria-hidden style={{ width: 56, height: 56, borderRadius: 8, background: 'var(--fond-alterne, #f0f0f0)', flexShrink: 0 }} />
+                        )}
                         <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 600 }}>{p.name}</div>
                           {p.description && (
@@ -380,11 +468,22 @@ export function CartePage() {
                             </div>
                           )}
                         </div>
+                        </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                           <strong>{prixFcfa(p.price)}</strong>
                           <button type="button" className="btn" onClick={() => basculerDisponibilite(p)}>
                             {p.disponible_ici ? 'Marquer en rupture' : 'Remettre à la carte'}
                           </button>
+                          <label className="btn" style={{ cursor: photosEnCours ? 'wait' : 'pointer' }}>
+                            {p.photo_id ? 'Changer la photo' : 'Photo'}
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp"
+                              hidden
+                              disabled={photosEnCours}
+                              onChange={(e) => { const f = e.target.files[0]; e.target.value = ''; if (f) envoyerPhotos([f], p); }}
+                            />
+                          </label>
                           <button type="button" className="btn" onClick={() => ouvrirEdition(p)}>Modifier</button>
                         </div>
                       </div>

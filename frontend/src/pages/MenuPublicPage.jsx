@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, urlPhotoPlat } from '../api/client';
 
 // Page ouverte par le client en scannant le QR de sa table (aucune connexion).
 // Affiche la carte du restaurant de cette table : plats, ingrédients, allergènes, options. Prix TTC.
@@ -33,7 +33,8 @@ const styles = {
 
 function Plat({ plat }) {
   return (
-    <article style={styles.plat}>
+    <article style={{ ...styles.plat, display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
       <div style={styles.ligne}>
         <h3 style={styles.nom}>{plat.name}</h3>
         <span style={styles.prix}>{prixFcfa(plat.price)}</span>
@@ -56,6 +57,17 @@ function Plat({ plat }) {
           {g.choices.length > 0 && ' : ' + g.choices.map((c) => `${c.name}${supplement(c.priceDelta)}`).join(', ')}
         </p>
       ))}
+      </div>
+      {plat.photoId && (
+        <img
+          src={urlPhotoPlat(plat.photoId)}
+          alt={plat.name}
+          width="96"
+          height="96"
+          loading="lazy"
+          style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 10, flexShrink: 0, background: '#f0f0f0' }}
+        />
+      )}
     </article>
   );
 }

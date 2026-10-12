@@ -6,6 +6,7 @@
 //   app.use('/public', restaurant.publicRouter);
 // Dépend de la migration 091 (table product_warehouses) pour le menu public.
 const express = require('express');
+const multer = require('multer');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole } = require('../middleware/roles');
@@ -93,7 +94,7 @@ router.get('/menu', authenticate, requireRole(...ROLES_CARTE), exigerRestaurant,
     }
     const { rows } = await pool.query(
       `SELECT p.id, p.name, p.description, p.ingredients_text, p.unit_price AS price, p.course, p.station,
-              p.attributes, c.name AS categorie, pw.available AS disponible_ici,
+              p.photo_id, p.attributes, c.name AS categorie, pw.available AS disponible_ici,
               (SELECT COUNT(*)::int FROM product_warehouses x WHERE x.product_id = p.id) AS nb_restaurants
          FROM product_warehouses pw
          JOIN products p ON p.id = pw.product_id
@@ -178,6 +179,108 @@ router.patch('/menu/:productId', authenticate, requireRole(...ROLES_CARTE), exig
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la modification du plat.' });
+  }
+});
+
+
+// ---------- Photos des plats ----------
+// Les photos sont compressées par le navigateur (200 Ko maximum, contrainte de la table product_photos).
+const TAILLE_MAX_PHOTO = 204800;
+const televerserPhoto = multer({ storage: multer.memoryStorage(), limits: { fileSize: TAILLE_MAX_PHOTO, files: 1 } });
+
+function recevoirPhoto(req, res, next) {
+  televerserPhoto.single('photo')(req, res, (err) => {
+    if (!err) return next();
+    const message = err.code === 'LIMIT_FILE_SIZE'
+      ? 'Photo trop lourde (200 Ko maximum).'
+      : 'Fichier de photo invalide.';
+    res.status(400).json({ error: message });
+  });
+}
+
+// Le type réel est lu dans le contenu du fichier (et non dans ce que déclare le navigateur).
+function typeImage(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf.toString('ascii', 1, 4) === 'PNG') return 'image/png';
+  if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
+// Le plat est commun à tous ses restaurants : un gérant ne change sa photo que si le plat ne figure que
+// dans les restaurants qui lui sont affectés (le manager, toujours).
+async function platHorsPerimetre(productId, user) {
+  const visibles = restaurantsVisibles(user);
+  if (visibles === null) return false;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM product_warehouses
+      WHERE product_id = $1 AND merchant_id = $2 AND NOT (warehouse_id = ANY($3::uuid[])) LIMIT 1`,
+    [productId, user.merchantId, visibles]
+  );
+  return rows.length > 0;
+}
+
+// POST /restaurant/menu/:productId/photo — formulaire multipart : champ « photo » (JPEG, PNG ou WebP, 200 Ko maximum)
+router.post('/menu/:productId/photo', authenticate, requireRole(...ROLES_CARTE), exigerRestaurant, recevoirPhoto, async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Aucune photo reçue.' });
+  const mime = typeImage(req.file.buffer);
+  if (!mime) return res.status(400).json({ error: 'Format non pris en charge (JPG, PNG ou WebP).' });
+
+  const client = await pool.connect();
+  try {
+    const plat = await client.query(
+      'SELECT id, photo_id FROM products WHERE id = $1 AND merchant_id = $2 AND is_dish = TRUE',
+      [req.params.productId, req.user.merchantId]
+    );
+    if (!plat.rows.length) return res.status(404).json({ error: 'Plat introuvable.' });
+    if (await platHorsPerimetre(req.params.productId, req.user)) {
+      return res.status(403).json({ error: "Ce plat figure aussi à la carte d'un restaurant qui ne vous est pas affecté. Demandez au propriétaire." });
+    }
+    // Un plat doit être à la carte d'au moins un restaurant que la personne gère.
+    const visibles = restaurantsVisibles(req.user);
+    const lien = await client.query(
+      `SELECT 1 FROM product_warehouses WHERE product_id = $1 AND merchant_id = $2
+          AND ($3::uuid[] IS NULL OR warehouse_id = ANY($3::uuid[])) LIMIT 1`,
+      [req.params.productId, req.user.merchantId, visibles]
+    );
+    if (!lien.rows.length) return res.status(404).json({ error: 'Plat introuvable dans vos restaurants.' });
+
+    await client.query('BEGIN');
+    const photo = await client.query(
+      `INSERT INTO product_photos (merchant_id, product_id, mime_type, data, size_bytes)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [req.user.merchantId, req.params.productId, mime, req.file.buffer, req.file.size]
+    );
+    await client.query('UPDATE products SET photo_id = $1, updated_at = now() WHERE id = $2', [photo.rows[0].id, req.params.productId]);
+    // L'ancienne photo est supprimée : une seule photo par plat.
+    await client.query('DELETE FROM product_photos WHERE product_id = $1 AND id <> $2', [req.params.productId, photo.rows[0].id]);
+    await client.query('COMMIT');
+    res.status(201).json({ photoId: photo.rows[0].id });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error(err);
+    res.status(500).json({ error: "Erreur lors de l'enregistrement de la photo." });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /restaurant/menu/:productId/photo — retire la photo du plat
+router.delete('/menu/:productId/photo', authenticate, requireRole(...ROLES_CARTE), exigerRestaurant, async (req, res) => {
+  try {
+    if (await platHorsPerimetre(req.params.productId, req.user)) {
+      return res.status(403).json({ error: "Ce plat figure aussi à la carte d'un restaurant qui ne vous est pas affecté. Demandez au propriétaire." });
+    }
+    const plat = await pool.query(
+      'UPDATE products SET photo_id = NULL, updated_at = now() WHERE id = $1 AND merchant_id = $2 AND is_dish = TRUE RETURNING id',
+      [req.params.productId, req.user.merchantId]
+    );
+    if (!plat.rows.length) return res.status(404).json({ error: 'Plat introuvable.' });
+    await pool.query('DELETE FROM product_photos WHERE product_id = $1 AND merchant_id = $2', [req.params.productId, req.user.merchantId]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la suppression de la photo.' });
   }
 });
 
@@ -313,7 +416,7 @@ publicRouter.get('/menu/:token', async (req, res) => {
 
     const plats = await pool.query(
       `SELECT p.id, p.name, p.description, p.ingredients_text, p.unit_price AS price,
-              p.course, p.station, p.attributes, c.name AS categorie
+              p.course, p.station, p.photo_id, p.attributes, c.name AS categorie
          FROM products p
          JOIN product_warehouses pw ON pw.product_id = p.id AND pw.warehouse_id = $2
          LEFT JOIN categories c ON c.id = p.category_id
@@ -354,6 +457,7 @@ publicRouter.get('/menu/:token', async (req, res) => {
         ingredients: p.ingredients_text,
         price: p.price,               // TTC
         categorie: p.categorie,
+        photoId: p.photo_id,
         service: p.course,
         allergenes: p.attributes?.allergens || [],
         regimes: p.attributes?.regimes || [],
@@ -363,6 +467,31 @@ publicRouter.get('/menu/:token', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors du chargement de la carte.' });
+  }
+});
+
+// GET /public/photos/:id — photo d'un plat de la carte (sans connexion). Seules les photos de plats actifs
+// actuellement illustrés sont servies. L'identifiant change à chaque nouvelle photo : cache longue durée.
+publicRouter.get('/photos/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT pp.mime_type, pp.data
+         FROM product_photos pp
+         JOIN products p ON p.id = pp.product_id AND p.photo_id = pp.id
+        WHERE pp.id = $1 AND p.is_dish = TRUE AND p.is_active = TRUE`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).end();
+    res.set({
+      'Content-Type': rows[0].mime_type,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'X-Content-Type-Options': 'nosniff',
+      'Cross-Origin-Resource-Policy': 'cross-origin',
+    });
+    res.send(rows[0].data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).end();
   }
 });
 
