@@ -70,7 +70,9 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     const message = body?.error || `Erreur ${response.status}`;
-    throw new Error(message);
+    const erreur = new Error(message);
+    if (Array.isArray(body?.erreurs)) erreur.details = body.erreurs; // détail des erreurs de validation (import de carte)
+    throw erreur;
   }
 
   return body;

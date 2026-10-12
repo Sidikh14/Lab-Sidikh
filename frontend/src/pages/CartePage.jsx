@@ -92,6 +92,7 @@ export function CartePage() {
   const [tables, setTables] = useState([]);
   const [chargement, setChargement] = useState(true);
   const [erreur, setErreur] = useState('');
+  const [detailsErreur, setDetailsErreur] = useState([]);
   const [message, setMessage] = useState('');
   const [recherche, setRecherche] = useState('');
 
@@ -259,6 +260,7 @@ export function CartePage() {
 
   async function lancerImport(verifierSeulement) {
     setErreur('');
+    setDetailsErreur([]);
     setRapportImport(null);
     let carte;
     try {
@@ -274,6 +276,7 @@ export function CartePage() {
       if (!verifierSeulement) setTexteImport('');
     } catch (err) {
       setErreur(err.message);
+      setDetailsErreur(err.details || []);
     } finally {
       setImportEnCours(false);
     }
@@ -318,7 +321,17 @@ export function CartePage() {
         <p className="etat-vide">Aucun restaurant n'a encore été créé. Créez-en un avant de gérer la carte.</p>
       )}
 
-      {erreur && <div className="erreur">{erreur}</div>}
+      {erreur && (
+        <div className="erreur">
+          {erreur}
+          {detailsErreur.length > 0 && (
+            <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+              {detailsErreur.slice(0, 15).map((d, i) => <li key={i}>{d}</li>)}
+              {detailsErreur.length > 15 && <li>… et {detailsErreur.length - 15} autre(s)</li>}
+            </ul>
+          )}
+        </div>
+      )}
       {message && <p className="etiquette">{message}</p>}
 
       {restaurantId && (
