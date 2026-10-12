@@ -55,7 +55,8 @@ export function CaissePage() {
   // Le caissier ne doit voir ni le solde théorique par moyen de paiement, ni
   // l'écart à la clôture : il saisit juste son solde réel compté et valide.
   // Tout le détail (théorique, écart) reste réservé à manager/gérant.
-  const estCaissier = user?.role === 'caissier';
+  // Même règle que le serveur (cash_routes.js) : « caissier » ET « vendeur_caissier » (vendeur + caissier cumulés).
+  const estCaissier = ['caissier', 'vendeur_caissier'].includes(user?.role);
   const estManager = user?.role === 'manager';
 
   const [onglet, setOnglet] = useState('cloture');
@@ -423,9 +424,11 @@ export function CaissePage() {
         <button className={`onglet ${onglet === 'entrees' ? 'onglet-actif' : ''}`} onClick={() => setOnglet('entrees')}>
           Entrées de caisse
         </button>
-        <button className={`onglet ${onglet === 'releves' ? 'onglet-actif' : ''}`} onClick={() => setOnglet('releves')}>
-          Relevés
-        </button>
+        {!estCaissier && (
+          <button className={`onglet ${onglet === 'releves' ? 'onglet-actif' : ''}`} onClick={() => setOnglet('releves')}>
+            Relevés
+          </button>
+        )}
       </div>
 
       {onglet === 'cloture' && (

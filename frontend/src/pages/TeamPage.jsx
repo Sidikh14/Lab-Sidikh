@@ -140,7 +140,7 @@ const MODULES = [
 const MODULES_PAR_ROLE = {
   gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   vendeur: ['stock', 'ventes', 'clients'],
-  caissier: ['ventes', 'caisse'],
+  caissier: ['ventes', 'clients', 'fournisseurs', 'caisse'],
   comptable: ['comptabilite', 'fiscalite', 'paie'],
 };
 // Modules visibles par défaut : ceux de tous les rôles de la personne réunis.

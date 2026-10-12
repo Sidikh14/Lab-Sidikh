@@ -622,11 +622,15 @@ function VueEnsembleFiscalite() {
 }
 
 export function FiscalitePage() {
-  const { user } = useAuth();
+  const { user, aRole } = useAuth();
   const { loaded, accounting, fiscalite } = useModulesAccess();
   const [onglet, setOnglet] = useState('vue');
 
-  if (user?.role !== 'manager') return <Navigate to="/" replace />;
+  // Manager, ou comptable (même cumulé avec un autre rôle, ex. gérant + comptable) ayant la page Fiscalité
+  // dans ses permissions (rien de personnalisé = les trois pages de finance).
+  const pageAutorisee = aRole('manager')
+    || (aRole('comptable') && (!Array.isArray(user?.visibleModules) || user.visibleModules.includes('fiscalite')));
+  if (!pageAutorisee) return <Navigate to="/" replace />;
   if (!loaded) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
   if (!accounting || !fiscalite) return <PageModuleNonActive nom="Fiscalité" />;
 

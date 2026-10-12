@@ -95,10 +95,14 @@ const COULEUR_STATUT_ACHAT = {
 // membre restreint peut voir ; un manager/gérant les voit toujours tous les
 // deux.
 export function SuppliersPage() {
-  const { user } = useAuth();
+  const { user, aRole } = useAuth();
   const [searchParams] = useSearchParams();
-  const voitFournisseurs = user.role === 'manager' || user.role === 'gerant' || !Array.isArray(user.visibleModules) || user.visibleModules.includes('fournisseurs');
-  const voitAchats = user.role === 'manager' || user.role === 'gerant' || !Array.isArray(user.visibleModules) || user.visibleModules.includes('achats');
+  // Manager et gérant (même cumulés avec un autre rôle) voient les deux onglets. Sans personnalisation, le caissier
+  // ne voit que Fournisseurs (pour payer un fournisseur depuis la caisse) : les achats de stock restent
+  // réservés au manager et au gérant.
+  const estGestion = aRole('manager', 'gerant');
+  const voitFournisseurs = estGestion || (Array.isArray(user.visibleModules) ? user.visibleModules.includes('fournisseurs') : aRole('caissier'));
+  const voitAchats = estGestion || (Array.isArray(user.visibleModules) && user.visibleModules.includes('achats'));
   const [onglet, setOnglet] = useState(() => {
     const demande = searchParams.get('tab');
     if (demande === 'achats' && voitAchats) return 'achats';
@@ -130,8 +134,10 @@ export function SuppliersPage() {
 }
 
 function FournisseursTab() {
-  const { user } = useAuth();
+  const { user, aRole } = useAuth();
   const estManager = user.role === 'manager';
+  // Créer ou retirer un fournisseur : manager et gérant. Le caissier ne fait que les règlements.
+  const peutGerer = aRole('manager', 'gerant');
   // Le manager n'est rattaché à aucune boutique : il choisit celle dont la caisse paie le fournisseur.
   const [boutiques, setBoutiques] = useState([]);
   const [boutiqueReglement, setBoutiqueReglement] = useState(() => localStorage.getItem('boutiqueActiveId') || '');
@@ -278,6 +284,7 @@ function FournisseursTab() {
     <>
       <StylesModernes />
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+        {peutGerer && (
         <button
           className="btn btn-principal"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '10px 18px', borderRadius: 12, boxShadow: '0 6px 16px -6px var(--accent)', fontWeight: 600 }}
@@ -286,6 +293,7 @@ function FournisseursTab() {
           <IconPlus />
           Nouveau fournisseur
         </button>
+        )}
       </div>
 
       {erreur && <div className="erreur">{erreur}</div>}
@@ -393,9 +401,11 @@ function FournisseursTab() {
                     <IconReglement />
                     Règlement
                   </button>
-                  <button className="btn" onClick={() => handleSupprimer(s)} title="Retirer ce fournisseur">
-                    <IconCorbeille />
-                  </button>
+                  {peutGerer && (
+                    <button className="btn" onClick={() => handleSupprimer(s)} title="Retirer ce fournisseur">
+                      <IconCorbeille />
+                    </button>
+                  )}
                 </div>
               </div>
             );

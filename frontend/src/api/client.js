@@ -370,6 +370,11 @@ export const api = {
     request('/push/subscribe', { method: 'POST', body: JSON.stringify(subscription) }),
   unsubscribePush: (endpoint) =>
     request('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint }) }),
+  // Alias : certains écrans appellent encore ces noms-là (erreur « subscribeToPush is not a function »).
+  subscribeToPush: (subscription) =>
+    request('/push/subscribe', { method: 'POST', body: JSON.stringify(subscription) }),
+  unsubscribeFromPush: (endpoint) =>
+    request('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint }) }),
 
   getUsers: () => request('/users'),
   createUser: (data) =>

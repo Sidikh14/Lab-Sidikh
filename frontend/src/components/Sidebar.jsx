@@ -277,8 +277,8 @@ const MODULES_PAR_DEFAUT = {
   manager: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   vendeur: ['stock', 'ventes', 'clients'],
-  caissier: ['ventes', 'caisse'],
-  vendeur_caissier: ['stock', 'ventes', 'clients', 'caisse'],
+  caissier: ['ventes', 'clients', 'fournisseurs', 'caisse'],
+  vendeur_caissier: ['stock', 'ventes', 'clients', 'fournisseurs', 'caisse'],
   comptable: [],
 };
 

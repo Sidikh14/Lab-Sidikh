@@ -2,7 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, aRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
 const {
@@ -773,8 +773,9 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
       return res.status(403).json({ error: 'Cette commande ne concerne pas votre boutique.' });
     }
     // Le gérant ne peut encaisser que les ventes qu'il a lui-même créées ;
-    // au-delà, c'est au caissier (ou au manager) de s'en charger.
-    if (req.user.role === 'gerant' && order.created_by !== req.user.id) {
+    // au-delà, c'est au caissier (ou au manager) de s'en charger. Un gérant qui est aussi caissier
+    // garde le droit du caissier : il encaisse toutes les ventes en attente de sa boutique.
+    if (req.user.role === 'gerant' && !aRole(req.user, 'caissier') && order.created_by !== req.user.id) {
       return res.status(403).json({ error: 'Vous ne pouvez encaisser que les ventes que vous avez vous-même créées.' });
     }
     if (order.status !== 'en_attente') {

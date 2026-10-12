@@ -8,14 +8,18 @@ const { LABEL_METHODE, getSoldeActuel } = require('../utils/cashBalance');
 
 const router = express.Router();
 router.use(authenticate);
-router.use(requireRole('manager', 'gerant'));
+// Gestion des fournisseurs (création, suppression, export des achats) : manager et gérant.
+// Le caissier peut consulter la liste/le détail et enregistrer un règlement : c'est lui qui sort l'argent
+// de la caisse pour payer un fournisseur (contrôle du solde de caisse inchangé).
+const GESTION = requireRole('manager', 'gerant');
+const PAIEMENT = requireRole('manager', 'gerant', 'caissier');
 
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
 
 // GET /suppliers — liste avec la dette (créance du fournisseur envers nous,
 // pour les achats à crédit) calculée à la volée : jamais stockée, pour
 // éviter toute désynchronisation.
-router.get('/', async (req, res) => {
+router.get('/', PAIEMENT, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT
@@ -47,7 +51,7 @@ router.get('/', async (req, res) => {
 
 // GET /suppliers/:id — détail d'un fournisseur : dette + historique des
 // entrées à crédit et des règlements (pour la modale de règlement).
-router.get('/:id', async (req, res) => {
+router.get('/:id', PAIEMENT, async (req, res) => {
   try {
     const supplierResult = await pool.query(
       `SELECT id, name, phone, email, address, created_at
@@ -91,9 +95,8 @@ router.get('/:id', async (req, res) => {
 
 // GET /suppliers/purchases/pdf?from=&to= — export PDF de tous les
 // achats (entrées de stock avec fournisseur) sur une période donnée, tous
-// fournisseurs confondus. Pas besoin de requireRole ici : déjà appliqué à
-// tout le router via router.use(requireRole('manager', 'gerant')) plus haut.
-router.get('/purchases/pdf', async (req, res) => {
+// fournisseurs confondus. Réservé au manager et au gérant (GESTION).
+router.get('/purchases/pdf', GESTION, async (req, res) => {
   const { from, to } = req.query;
 
   if (!from || !to) {
@@ -211,7 +214,7 @@ async function boutiqueDuReglement(req, providedId) {
 // Un règlement en espèces, Wave, Orange Money ou chèque sort de la caisse de la boutique choisie
 // (il est rattaché à cette boutique et ne peut pas la rendre négative). Un virement ne passe
 // pas par la caisse.
-router.post('/:id/payments', async (req, res) => {
+router.post('/:id/payments', PAIEMENT, async (req, res) => {
   const { amount, notes, paymentMethod, warehouseId: warehouseIdInput } = req.body;
   if (!Number(amount) || Number(amount) <= 0) {
     return res.status(400).json({ error: 'Montant de règlement invalide.' });
@@ -254,7 +257,7 @@ router.post('/:id/payments', async (req, res) => {
 });
 
 // POST /suppliers
-router.post('/', async (req, res) => {
+router.post('/', GESTION, async (req, res) => {
   const { name, phone, email, address } = req.body;
   if (!name) {
     return res.status(400).json({ error: 'Le nom du fournisseur est requis.' });
@@ -273,7 +276,7 @@ router.post('/', async (req, res) => {
 });
 
 // DELETE /suppliers/:id — désactivation (pas de suppression physique)
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', GESTION, async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE suppliers SET is_active = FALSE WHERE id = $1 AND merchant_id = $2 RETURNING id`,

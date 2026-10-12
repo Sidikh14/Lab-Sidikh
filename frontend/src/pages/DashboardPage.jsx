@@ -298,11 +298,12 @@ export function DashboardPage() {
 }
 
 function DashboardCommerce() {
-  const { user, merchant } = useAuth();
+  const { user, merchant, aRole } = useAuth();
   const navigate = useNavigate();
-  const vueEquipe = ['manager', 'gerant'].includes(user.role);
-  const estCaissier = user.role === 'caissier';
-  const estVendeur = user.role === 'vendeur';
+  // Une personne peut cumuler des rôles (ex. vendeur + caissier) : on regarde tous ses rôles, pas seulement le principal.
+  const vueEquipe = aRole('manager', 'gerant');
+  const estCaissier = !vueEquipe && aRole('caissier');
+  const estVendeur = !vueEquipe && aRole('vendeur');
   const estPharmacie = merchant?.sector === 'pharmacie';
 
   const [onglet, setOnglet] = useState('pilotage');
@@ -734,6 +735,37 @@ function DashboardCommerce() {
                   </div>
                 ))}
               </div>
+            )}
+
+            {/* Vendeur + caissier : on ajoute aussi les factures renvoyées et le bouton de vente du vendeur. */}
+            {estVendeur && (
+              <>
+            {commandesRenvoyees.length > 0 && (
+              <>
+                <h2 style={{ fontSize: 16, marginBottom: 12 }}>Factures renvoyées par la caisse</h2>
+                <div className="liste-a-encaisser" style={{ marginBottom: 24 }}>
+                  {commandesRenvoyees.map((o) => (
+                    <div key={o.id} className="carte-a-encaisser">
+                      <div style={{ minWidth: 0 }}>
+                        <p className="carte-a-encaisser-numero">{o.order_number}</p>
+                        <p className="carte-a-encaisser-client">
+                          {o.client_name || 'Client de passage'}
+                          {o.returned_reason && <span style={{ color: 'var(--danger)' }}> · {o.returned_reason}</span>}
+                        </p>
+                      </div>
+                      <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                      <button className="btn btn-principal" onClick={() => navigate(`/ventes?modifier=${o.id}`)}>Modifier</button>
+                      <button className="btn btn-brique" onClick={() => annulerCommandeRenvoyee(o)}>Annuler</button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <button className="btn btn-principal" style={{ marginBottom: 24 }} onClick={() => navigate('/ventes')}>
+              + Nouvelle vente
+            </button>
+              </>
             )}
 
             <div style={{ marginTop: 24 }}>
