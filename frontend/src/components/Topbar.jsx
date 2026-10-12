@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 
@@ -28,6 +28,7 @@ const formaterDate = (d) => new Date(d).toLocaleString('fr-FR', { day: '2-digit'
 export function Topbar({ onOuvrirMenu }) {
   const { user, merchant, logout, aRole } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [enRupture, setEnRupture] = useState(0);
   const [menuOuvert, setMenuOuvert] = useState(false);
 
@@ -39,6 +40,44 @@ export function Topbar({ onOuvrirMenu }) {
   // Lu dans le gestionnaire temps réel sans relancer la connexion à chaque ouverture/fermeture du panneau.
   const panneauOuvertRef = useRef(false);
   useEffect(() => { panneauOuvertRef.current = panneauOuvert; }, [panneauOuvert]);
+
+  // Téléphone : le panneau des notifications est centré sur l'écran (marge de 8 px de chaque côté) au lieu d'être
+  // accroché à la cloche, ce qui le faisait déborder à gauche.
+  const [mobile, setMobile] = useState(() => window.matchMedia('(max-width: 960px)').matches);
+  const [topPanneau, setTopPanneau] = useState(64);
+  const boutonClocheRef = useRef(null);
+  const zoneClocheRef = useRef(null);
+  const zoneAvatarRef = useRef(null);
+  useEffect(() => {
+    const requete = window.matchMedia('(max-width: 960px)');
+    const maj = () => setMobile(requete.matches);
+    requete.addEventListener('change', maj);
+    return () => requete.removeEventListener('change', maj);
+  }, []);
+
+  // Un toucher (ou un clic) en dehors de la cloche / de l'avatar ferme le panneau des notifications et le menu du compte.
+  // Échap les ferme aussi, et un changement de page également.
+  useEffect(() => {
+    if (!panneauOuvert && !menuOuvert) return undefined;
+    function dehors(e) {
+      if (panneauOuvert && zoneClocheRef.current && !zoneClocheRef.current.contains(e.target)) setPanneauOuvert(false);
+      if (menuOuvert && zoneAvatarRef.current && !zoneAvatarRef.current.contains(e.target)) setMenuOuvert(false);
+    }
+    function touche(e) {
+      if (e.key === 'Escape') { setPanneauOuvert(false); setMenuOuvert(false); }
+    }
+    document.addEventListener('pointerdown', dehors);
+    document.addEventListener('keydown', touche);
+    return () => {
+      document.removeEventListener('pointerdown', dehors);
+      document.removeEventListener('keydown', touche);
+    };
+  }, [panneauOuvert, menuOuvert]);
+
+  useEffect(() => {
+    setPanneauOuvert(false);
+    setMenuOuvert(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     api
@@ -92,15 +131,25 @@ export function Topbar({ onOuvrirMenu }) {
     return () => clearTimeout(minuteur);
   }, [bandeau]);
 
+  function ouvrirPanneau() {
+    const rect = boutonClocheRef.current?.getBoundingClientRect();
+    setTopPanneau(rect ? Math.round(rect.bottom + 8) : 64);
+    setPanneauOuvert(true);
+    rafraichirListe();
+  }
+
   function basculerPanneau() {
     if (!peutVoirAlertes) {
       navigate('/');
       return;
     }
-    const ouvrir = !panneauOuvert;
-    setPanneauOuvert(ouvrir);
-    if (ouvrir) rafraichirListe();
+    if (panneauOuvert) setPanneauOuvert(false);
+    else ouvrirPanneau();
   }
+
+  const stylePanneau = mobile
+    ? { position: 'fixed', left: 8, right: 8, top: topPanneau, maxHeight: `calc(100vh - ${topPanneau + 16}px)` }
+    : { position: 'absolute', right: 0, top: 'calc(100% + 8px)', width: 340, maxWidth: '92vw', maxHeight: 420 };
 
   function marquerLue(alerte) {
     if (alerte.lu) return;
@@ -133,9 +182,10 @@ export function Topbar({ onOuvrirMenu }) {
       </div>
 
       <div className="barre-haut-droite">
-        <div style={{ position: 'relative' }}>
+        <div ref={zoneClocheRef} style={{ position: 'relative' }}>
           <button
             type="button"
+            ref={boutonClocheRef}
             className="barre-haut-cloche"
             onClick={basculerPanneau}
             aria-label={peutVoirAlertes ? `${nonLues} alerte(s) non lue(s)` : `${enRupture} produit(s) en rupture`}
@@ -147,7 +197,7 @@ export function Topbar({ onOuvrirMenu }) {
           {panneauOuvert && peutVoirAlertes && (
             <div
               style={{
-                position: 'absolute', right: 0, top: 'calc(100% + 8px)', width: 340, maxWidth: '92vw', maxHeight: 420,
+                ...stylePanneau,
                 overflowY: 'auto', background: '#fff', border: '1px solid rgba(0,0,0,0.12)', borderRadius: 12,
                 boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 60, textAlign: 'left',
               }}
@@ -185,7 +235,7 @@ export function Topbar({ onOuvrirMenu }) {
           )}
         </div>
 
-        <div className="barre-haut-avatar-zone">
+        <div className="barre-haut-avatar-zone" ref={zoneAvatarRef}>
           <button type="button" className="avatar avatar--bouton" onClick={() => setMenuOuvert((v) => !v)}>
             {initiales}
           </button>
@@ -202,7 +252,7 @@ export function Topbar({ onOuvrirMenu }) {
       {bandeau && (
         <div
           role="status"
-          onClick={() => { setBandeau(null); setPanneauOuvert(true); rafraichirListe(); }}
+          onClick={() => { setBandeau(null); ouvrirPanneau(); }}
           style={{
             position: 'fixed', top: 64, right: 16, width: 320, maxWidth: '92vw', background: '#fff', cursor: 'pointer',
             border: '1px solid rgba(0,0,0,0.12)', borderLeft: '4px solid var(--accent, #6d28d9)', borderRadius: 10,
