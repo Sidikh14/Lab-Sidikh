@@ -16,6 +16,8 @@ import { WarehousesPage } from './pages/WarehousesPage';
 import { ComptabilitePage } from './pages/ComptabilitePage';
 import { FiscalitePage } from './pages/FiscalitePage';
 import { PaiePage } from './pages/PaiePage';
+import { CartePage } from './pages/CartePage';
+import { MenuPublicPage } from './pages/MenuPublicPage';
 import { api } from './api/client';
 import OfflineBanner from './offline/OfflineBanner';
 import CreditRequestNotifications from './components/CreditRequestNotifications';
@@ -60,6 +62,13 @@ function RouteCommercant({ children }) {
   );
 }
 
+// Carte du restaurant : réservée au manager et au gérant d'un commerce du secteur restauration.
+function RouteCarte({ children }) {
+  const { merchant, aRole } = useAuth();
+  if (merchant?.sector !== 'restauration' || !aRole('manager', 'gerant')) return <Navigate to="/" replace />;
+  return <RouteCommercant>{children}</RouteCommercant>;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -69,8 +78,11 @@ export default function App() {
         <Routes>
           <Route path="/connexion" element={<LoginPage />} />
           <Route path="/inscription" element={<RegisterPage />} />
+          {/* Page publique du QR d'une table : le client n'a pas de compte. */}
+          <Route path="/menu/:token" element={<MenuPublicPage />} />
           <Route path="/" element={<RouteCommercant><DashboardPage /></RouteCommercant>} />
           <Route path="/stock" element={<RouteGestion><StockPage /></RouteGestion>} />
+          <Route path="/carte" element={<RouteCarte><CartePage /></RouteCarte>} />
           <Route path="/ventes" element={<RouteGestion><OrdersPage /></RouteGestion>} />
           <Route path="/clients" element={<RouteGestion><ClientsPage /></RouteGestion>} />
           <Route path="/fournisseurs" element={<RouteGestion><SuppliersPage /></RouteGestion>} />

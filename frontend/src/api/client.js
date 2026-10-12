@@ -449,6 +449,25 @@ export const api = {
   getProfit: () => request('/activity/profit'),
   getRevenueByWarehouse: () => request('/activity/revenue-by-warehouse'),
 
+  // Restauration : carte par restaurant (boutique), tables et QR codes.
+  getRestaurantMenu: (warehouseId) =>
+    request(`/restaurant/menu?warehouseId=${encodeURIComponent(warehouseId)}`),
+  importRestaurantMenu: (data, verifierSeulement = false) =>
+    request(`/restaurant/menu/import${verifierSeulement ? '?verifier=1' : ''}`, { method: 'POST', body: JSON.stringify(data) }),
+  setDishAvailability: (productId, warehouseId, available) =>
+    request(`/restaurant/menu/${productId}/disponibilite`, { method: 'PATCH', body: JSON.stringify({ warehouseId, available }) }),
+  updateDish: (productId, data) =>
+    request(`/restaurant/menu/${productId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  // Page publique du QR (sans connexion) : la carte du restaurant de la table.
+  getPublicMenu: (token) => request(`/public/menu/${encodeURIComponent(token)}`),
+  getRestaurantTables: () => request('/restaurant/tables'),
+  createRestaurantTable: (data) =>
+    request('/restaurant/tables', { method: 'POST', body: JSON.stringify(data) }),
+  setRestaurantTableStatus: (id, isActive) =>
+    request(`/restaurant/tables/${id}`, { method: 'PATCH', body: JSON.stringify({ isActive }) }),
+  regenerateTableQr: (id) =>
+    request(`/restaurant/tables/${id}/regenerer-qr`, { method: 'POST' }),
+
   getMerchantProfile: () => request('/merchant/profile'),
   updateMerchantProfile: (data) =>
     request('/merchant/profile', { method: 'PATCH', body: JSON.stringify(data) }),

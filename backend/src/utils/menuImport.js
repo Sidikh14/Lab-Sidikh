@@ -81,9 +81,12 @@ function validerMenu(menu) {
 }
 
 // Crée la carte en base. À appeler dans une transaction.
-// Un plat dont le nom existe déjà dans la même catégorie est ignoré (pas de doublon si on relance l'import).
-async function importerMenu(client, merchantId, menu) {
-  const rapport = { categoriesCreees: 0, categoriesExistantes: 0, platsCrees: 0, platsIgnores: [] };
+// Chaque plat est rattaché au restaurant (warehouseId) via product_warehouses.
+// Un plat dont le nom existe déjà dans la même catégorie n'est pas recréé : il est simplement rattaché
+// à ce restaurant s'il ne l'était pas (même plat, même prix, plusieurs restaurants).
+async function importerMenu(client, merchantId, menu, warehouseId) {
+  if (!warehouseId) throw new Error('warehouseId requis pour importer une carte.');
+  const rapport = { categoriesCreees: 0, categoriesExistantes: 0, platsCrees: 0, platsRattaches: 0, platsIgnores: [] };
 
   for (const cat of menu.categories) {
     const existante = await client.query(
@@ -109,7 +112,13 @@ async function importerMenu(client, merchantId, menu) {
         [merchantId, categoryId, it.name]
       );
       if (doublon.rows.length) {
-        rapport.platsIgnores.push(it.name);
+        const lien = await client.query(
+          `INSERT INTO product_warehouses (product_id, warehouse_id, merchant_id)
+           VALUES ($1, $2, $3) ON CONFLICT (product_id, warehouse_id) DO NOTHING`,
+          [doublon.rows[0].id, warehouseId, merchantId]
+        );
+        if (lien.rowCount > 0) rapport.platsRattaches += 1;
+        else rapport.platsIgnores.push(it.name); // déjà à la carte de ce restaurant
         continue;
       }
 
@@ -127,6 +136,10 @@ async function importerMenu(client, merchantId, menu) {
       );
       const productId = produit.rows[0].id;
       rapport.platsCrees += 1;
+      await client.query(
+        'INSERT INTO product_warehouses (product_id, warehouse_id, merchant_id) VALUES ($1, $2, $3)',
+        [productId, warehouseId, merchantId]
+      );
 
       for (const g of it.options) {
         const groupe = await client.query(

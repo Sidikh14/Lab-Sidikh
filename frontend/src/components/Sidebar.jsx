@@ -27,6 +27,16 @@ function IconStock() {
   );
 }
 
+function IconCarte() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="nav-icone">
+      <path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3V4z" />
+      <path d="M5 17a3 3 0 0 1 3-3h11" />
+      <path d="M9 8h6M9 11h4" />
+    </svg>
+  );
+}
+
 function IconVentes() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" className="nav-icone">
@@ -343,7 +353,8 @@ export function Sidebar({ ouvert = false, onFermer }) {
   // "Fournisseurs" héberge aussi l'onglet Achats depuis la fusion des pages
   // (20/09) : le lien reste visible si le membre a l'un OU l'autre module.
   const liensGestion = TOUS_LES_LIENS.map((lien) => {
-    if (lien.to === '/stock') return { ...lien, label: secteurConfig.libelleStock || `${secteurConfig.libelleProduit}s` };
+    // Restauration : « Carte » a sa propre page (/carte) ; /stock redevient le stock (boissons, eaux, ingrédients).
+    if (lien.to === '/stock') return { ...lien, label: merchant?.sector === 'restauration' ? 'Stock' : (secteurConfig.libelleStock || `${secteurConfig.libelleProduit}s`) };
     if (lien.to === '/clients') return { ...lien, label: `${secteurConfig.libelleClient}s` };
     return lien;
   }).filter((lien) =>
@@ -351,6 +362,10 @@ export function Sidebar({ ouvert = false, onFermer }) {
   );
   const voitEquipe = aRole('manager', 'gerant');
   const estManager = user?.role === 'manager';
+  // Carte du restaurant (plats, tables et QR, import) : manager et gérant d'un restaurant.
+  if (merchant?.sector === 'restauration' && voitEquipe) {
+    liensGestion.unshift({ to: '/carte', label: 'Carte', icone: IconCarte });
+  }
   // Le comptable gère la comptabilité, la fiscalité et la paie, comme le manager (qui garde en plus l'entreprise).
   const voitFinance = aRole('manager', 'comptable');
   // Un comptable n'ouvre que les pages de finance cochées dans ses permissions (rien de coché = comportement
