@@ -35,6 +35,8 @@ const accountingRoutes = require('./routes/accounting.routes');
 const modulesRoutes = require('./routes/modules.routes');
 const employeesRoutes = require('./routes/employees.routes');
 const hrDocumentsRoutes = require('./routes/hr-documents.routes');
+const restaurantRoutes = require('./routes/restaurant.routes'); // secteur restauration : carte, tables, QR, réglages
+const restaurantCommandes = require('./routes/restaurant.commandes.routes'); // commandes QR, validation caisse, tableau des tables
 
 const app = express();
 
@@ -87,6 +89,10 @@ app.use('/accounting', accountingRoutes); // module comptabilité (activé par l
 app.use('/modules', modulesRoutes); // modules activés par l'owner (menu latéral)
 app.use('/employees', employeesRoutes); // fiches employés, absences, heures sup, avances (module Paie)
 app.use('/hr-documents', hrDocumentsRoutes); // documents RH : attestations, certificats, contrats (module Paie)
+app.use('/restaurant', restaurantRoutes.router); // restauration : import de la carte, tables, QR, réglages
+app.use('/public', restaurantRoutes.publicRouter); // restauration : menu public par QR (sans connexion)
+app.use('/restaurant', restaurantCommandes.router);
+app.use('/public', restaurantCommandes.publicRouter);
 
 // Gestion des routes inconnues
 app.use((req, res) => {
