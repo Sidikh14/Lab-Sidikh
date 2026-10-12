@@ -9,10 +9,12 @@ const { normaliserRoles, rolePrincipal } = require('../middleware/roles');
 const { getMaintenance, reponseMaintenance } = require('../middleware/maintenance');
 const { CATEGORIES_PHARMACIE } = require('../data/pharmacieCatalogue');
 const { CATEGORIES_ELECTROMENAGER } = require('../data/electromenagerCategories');
+const { CATEGORIES_RESTAURATION } = require('../data/restaurationCatalogue');
 
 const router = express.Router();
 
-const SECTEURS_VALIDES = ['grossiste', 'pharmacie', 'electromenager', 'textile'];
+// Le secteur textile n'est plus proposé à l'inscription (aucun commerçant concerné) ; sa valeur reste en base.
+const SECTEURS_VALIDES = ['grossiste', 'pharmacie', 'electromenager', 'restauration'];
 
 // Charte personnalisée d'un commerçant : { enabled, palette } — palette calculée à partir de la couleur choisie par l'owner.
 function brandingDepuisLigne(enabled, couleur) {
@@ -89,6 +91,16 @@ router.post('/register', requireAdminKey, async (req, res) => {
     // vide à la création du tout premier article.
     if (sector === 'electromenager') {
       for (const nomCategorie of CATEGORIES_ELECTROMENAGER) {
+        await client.query(
+          `INSERT INTO categories (merchant_id, name) VALUES ($1, $2)`,
+          [merchant.id, nomCategorie]
+        );
+      }
+    }
+
+    // Pour tout nouveau commerce restauration, catalogue de démarrage : catégories de carte et d'économat.
+    if (sector === 'restauration') {
+      for (const nomCategorie of CATEGORIES_RESTAURATION) {
         await client.query(
           `INSERT INTO categories (merchant_id, name) VALUES ($1, $2)`,
           [merchant.id, nomCategorie]

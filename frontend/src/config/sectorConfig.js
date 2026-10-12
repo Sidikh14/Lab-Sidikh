@@ -3,6 +3,14 @@
 // différence visuelle/opérationnelle par secteur passe par ce fichier —
 // pas de page ou de composant dupliqué par secteur.
 
+// Vocabulaire commun, utilisé quand un secteur ne le redéfinit pas.
+const VOCABULAIRE_PAR_DEFAUT = {
+  libelleEquipe: 'Équipe',
+  libelleVendeur: 'Vendeur',
+  libelleStock: null, // null = « <libelleProduit>s » (ex. Produits)
+};
+
+// Secteurs proposés à l'inscription. Le secteur textile n'y figure plus (aucun commerçant concerné).
 export const SECTEURS = {
   grossiste: {
     label: 'Grossiste',
@@ -38,6 +46,22 @@ export const SECTEURS = {
       { key: 'numeroSerie', label: 'Numéro de série', type: 'text' },
     ],
   },
+  restauration: {
+    label: 'Restauration',
+    theme: null,
+    libelleProduit: 'Plat',
+    libelleBoutique: 'Restaurant',
+    libelleClient: 'Client',
+    libelleStock: 'Carte',
+    libelleEquipe: 'Brigade',
+    libelleVendeur: 'Serveur',
+    champsProduitSup: [],
+  },
+};
+
+// Secteurs retirés de l'inscription mais encore présents en base : leurs commerces gardent
+// un affichage correct. Textile : aucun commerçant à migrer, la valeur reste en base.
+export const SECTEURS_RELIQUAT = {
   textile: {
     label: 'Textile',
     theme: null,
@@ -52,7 +76,8 @@ export const SECTEURS = {
 };
 
 export function getSecteurConfig(sector) {
-  return SECTEURS[sector] || SECTEURS.grossiste;
+  const config = SECTEURS[sector] || SECTEURS_RELIQUAT[sector] || SECTEURS.grossiste;
+  return { ...VOCABULAIRE_PAR_DEFAUT, ...config };
 }
 
 const THEME_COLOR = '#0f2747'; // Marine : couleur du navigateur (<meta name="theme-color">)

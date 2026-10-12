@@ -289,10 +289,11 @@ function modulesAutorises(user) {
   return [...new Set(roles.flatMap((r) => MODULES_PAR_DEFAUT[r] || []))];
 }
 
-const LIBELLES_ROLES = { manager: 'Manager', gerant: 'Gérant', vendeur: 'Vendeur', caissier: 'Caissier', comptable: 'Comptable', owner: 'Propriétaire', vendeur_caissier: 'Vendeur · Caissier' };
-function libelleRoles(user) {
+const LIBELLES_ROLES = { manager: 'Manager', gerant: 'Gérant', vendeur: 'Vendeur', caissier: 'Caissier', comptable: 'Comptable', owner: 'Propriétaire', vendeur_caissier: 'Vendeur · Caissier', cuisinier: 'Cuisinier', livreur: 'Livreur' };
+// Le libellé du rôle « vendeur » dépend du secteur (« Serveur » en restauration).
+function libelleRoles(user, secteurConfig) {
   const roles = Array.isArray(user.roles) && user.roles.length > 0 ? user.roles : [user.role];
-  return roles.map((r) => LIBELLES_ROLES[r] || r).join(' · ');
+  return roles.map((r) => (r === 'vendeur' && secteurConfig?.libelleVendeur) || LIBELLES_ROLES[r] || r).join(' · ');
 }
 
 function IconFermer() {
@@ -342,7 +343,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
   // "Fournisseurs" héberge aussi l'onglet Achats depuis la fusion des pages
   // (20/09) : le lien reste visible si le membre a l'un OU l'autre module.
   const liensGestion = TOUS_LES_LIENS.map((lien) => {
-    if (lien.to === '/stock') return { ...lien, label: `${secteurConfig.libelleProduit}s` };
+    if (lien.to === '/stock') return { ...lien, label: secteurConfig.libelleStock || `${secteurConfig.libelleProduit}s` };
     if (lien.to === '/clients') return { ...lien, label: `${secteurConfig.libelleClient}s` };
     return lien;
   }).filter((lien) =>
@@ -370,7 +371,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
     if (pageFinancePermise('paie')) liensFinance.push({ to: '/paie', label: 'Paie', icone: IconSalaires, verrouille: modulesCharges && !paieActive });
   }
   if (estManager) liensFinance.push({ to: '/entreprise', label: 'Entreprise', icone: IconEntreprise });
-  if (voitEquipe) liensFinance.push({ to: '/equipe', label: 'Équipe', icone: IconEquipe });
+  if (voitEquipe) liensFinance.push({ to: '/equipe', label: secteurConfig.libelleEquipe, icone: IconEquipe });
 
   const groupes = [
     { id: 'gestion', liens: liensGestion },
@@ -552,14 +553,14 @@ export function Sidebar({ ouvert = false, onFermer }) {
         <div className="pied-sidebar">
           <span
             className="avatar"
-            onMouseEnter={(e) => montrerInfobulle(e, `${user.fullName} · ${libelleRoles(user)}`)}
+            onMouseEnter={(e) => montrerInfobulle(e, `${user.fullName} · ${libelleRoles(user, secteurConfig)}`)}
             onMouseLeave={cacherInfobulle}
           >
             {initiales}
           </span>
           <div className="texte-pied" style={{ minWidth: 0 }}>
             <p className="nom">{user.fullName}</p>
-            <p className="role">{libelleRoles(user)}</p>
+            <p className="role">{libelleRoles(user, secteurConfig)}</p>
             <button className="lien-deconnexion" onClick={logout}>
               Se déconnecter
             </button>
