@@ -257,6 +257,15 @@ const CSS_HISTORIQUE = `
 .hv-ticket-tete{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px}
 .hv-ticket-tete h2{margin:0;font-size:15px}
 .hv-ticket-tete span{font-size:12px;color:var(--encre-douce)}
+.ticket-barre-mobile,.ticket-fermer-mobile{display:none}
+@media (max-width:960px){
+  .caisse-produits{padding-bottom:92px}
+  .caisse-ticket{display:none}
+  .caisse-ticket.caisse-ticket--ouvert{display:block;position:fixed;top:0;right:0;bottom:0;left:0;z-index:40;overflow-y:auto;-webkit-overflow-scrolling:touch;border-radius:0;margin:0;max-width:none;width:auto;background:var(--blanc,#fff);padding:16px 16px calc(28px + env(safe-area-inset-bottom,0px))}
+  .ticket-fermer-mobile{display:inline-flex;align-items:center;gap:6px;margin:0 0 12px;padding:6px 0;background:none;border:0;font-size:14px;font-weight:700;color:var(--accent);cursor:pointer}
+  .ticket-barre-mobile{display:flex;align-items:center;justify-content:space-between;gap:12px;position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:30;padding:14px 18px;border:0;border-radius:14px;background:var(--accent);color:#fff;font-size:15px;font-weight:700;box-shadow:0 8px 24px rgba(17,24,39,.28);cursor:pointer}
+  .ticket-barre-mobile .chiffre{font-variant-numeric:tabular-nums}
+}
 `;
 
 const LABEL_STATUT_VENTE = {
@@ -328,10 +337,11 @@ export function OrdersPage() {
   }
   const [panier, setPanier] = useState([]);
   const [clientId, setClientId] = useState('');
-  const [tvaApplicable, setTvaApplicable] = useState(false);
   // Type d'opération pour la déclaration de TVA : normale, exportation ou suspension de TVA (sans TVA), précompte.
   const [tvaRegime, setTvaRegime] = useState('normal');
   const [precompte, setPrecompte] = useState(false);
+  // Téléphone : le ticket s'ouvre en plein écran depuis la barre du bas (au lieu d'être tout en bas de la liste des produits).
+  const [ticketOuvertMobile, setTicketOuvertMobile] = useState(false);
   const [prescriptionId, setPrescriptionId] = useState('');
   const [ordonnanceModaleOuverte, setOrdonnanceModaleOuverte] = useState(false);
   const [nouvelleOrdonnance, setNouvelleOrdonnance] = useState({ patientName: '', patientPhone: '', doctorName: '', prescriptionDate: new Date().toISOString().slice(0, 10), insurerId: '', insurerMemberNumber: '', coverageRate: '' });
@@ -591,11 +601,11 @@ export function OrdersPage() {
       const detail = await api.getOrder(order.id);
       setPanier(construirePanierDepuisCommande(detail, products));
       setClientId(detail.client_id ? String(detail.client_id) : '');
-      setTvaApplicable(Boolean(detail.tva_applicable));
       setTvaRegime(detail.tva_regime || 'normal');
       setPrecompte(Number(detail.precompte_amount) > 0);
       setCommandeEnEdition(detail);
       setOnglet('caisse');
+      if (window.matchMedia('(max-width: 960px)').matches) setTicketOuvertMobile(true);
     } catch (err) {
       setErreur(err.message);
     } finally {
@@ -606,7 +616,6 @@ export function OrdersPage() {
   function annulerEdition() {
     setPanier([]);
     setClientId('');
-    setTvaApplicable(false);
     setTvaRegime('normal');
     setPrecompte(false);
     setCommandeEnEdition(null);
@@ -882,9 +891,27 @@ export function OrdersPage() {
 
   const apercuCaisse = useMemo(() => {
     const sousTotal = lignesPanier.reduce((sum, l) => sum + l.option.price * l.quantity, 0);
-    const tva = tvaApplicable && tvaRegime === 'normal' ? Math.round(sousTotal * 0.18) : 0;
+    // TVA produit par produit (même règle que le serveur) : seules les lignes dont le produit est soumis à la TVA sont taxées.
+    const baseTaxable = lignesPanier.reduce(
+      (sum, l) => (l.produit.tva_applicable === false ? sum : sum + l.option.price * l.quantity),
+      0
+    );
+    const tva = tvaRegime === 'normal' ? Math.round(baseTaxable * 0.18) : 0;
     return { sousTotal, tva, total: sousTotal + tva };
-  }, [lignesPanier, tvaApplicable, tvaRegime]);
+  }, [lignesPanier, tvaRegime]);
+
+  // Panier vide (vente payée, ticket vidé) : on referme le ticket plein écran.
+  useEffect(() => {
+    if (panier.length === 0) setTicketOuvertMobile(false);
+  }, [panier.length]);
+
+  // Ticket plein écran ouvert (téléphone seulement) : la liste des produits derrière ne défile plus.
+  useEffect(() => {
+    if (!ticketOuvertMobile || !window.matchMedia('(max-width: 960px)').matches) return undefined;
+    const ancien = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ancien; };
+  }, [ticketOuvertMobile]);
 
   const necessiteOrdonnance = estPharmacie && lignesPanier.some((l) => l.produit.requires_prescription);
 
@@ -984,7 +1011,6 @@ export function OrdersPage() {
     const payload = {
       clientId: clientId || null,
       items: panier.map((l) => ({ productId: l.productId, quantity: l.quantity, unitId: l.unitId || undefined, authorizeOutOfStock: l.authorizeOutOfStock || undefined })),
-      tvaApplicable,
       tvaRegime,
       precompte: tvaRegime === 'normal' ? precompte : false,
       warehouseId: estManager ? warehouseId : undefined,
@@ -995,7 +1021,6 @@ export function OrdersPage() {
         const commande = await api.updateOrder(commandeEnEdition.id, payload);
         setPanier([]);
         setClientId('');
-        setTvaApplicable(false);
         setTvaRegime('normal');
         setPrecompte(false);
         setPrescriptionId('');
@@ -1011,7 +1036,6 @@ export function OrdersPage() {
         const commande = await creerVenteHorsLigne(payload);
         setPanier([]);
         setClientId('');
-        setTvaApplicable(false);
         setTvaRegime('normal');
         setPrecompte(false);
         setPrescriptionId('');
@@ -1222,7 +1246,10 @@ export function OrdersPage() {
             )}
           </div>
 
-          <div className="caisse-ticket">
+          <div className={`caisse-ticket${ticketOuvertMobile ? ' caisse-ticket--ouvert' : ''}`}>
+            <button type="button" className="ticket-fermer-mobile" onClick={() => setTicketOuvertMobile(false)}>
+              ← Retour aux produits
+            </button>
             {commandeEnEdition && (
               <div
                 style={{
@@ -1301,11 +1328,6 @@ export function OrdersPage() {
               )}
             </div>
 
-            <label className="case-a-cocher" style={{ margin: '12px 0' }}>
-              <input type="checkbox" checked={tvaApplicable} onChange={(e) => setTvaApplicable(e.target.checked)} />
-              Vente avec TVA (18 %)
-            </label>
-
             <div className="champ-groupe" style={{ margin: '0 0 12px' }}>
               <label className="etiquette" htmlFor="v-regime">Type d'opération (déclaration de TVA)</label>
               <select id="v-regime" className="champ" value={tvaRegime} onChange={(e) => setTvaRegime(e.target.value)}>
@@ -1319,7 +1341,6 @@ export function OrdersPage() {
                   Le client retient le précompte de TVA
                 </label>
               )}
-              <p className="aide" style={{ marginTop: 6 }}>Les produits exonérés se règlent dans leur fiche (TVA non applicable) ; la TVA de la vente est calculée produit par produit.</p>
             </div>
 
             <div className="ticket-totaux">
@@ -1327,7 +1348,7 @@ export function OrdersPage() {
                 <span>Sous-total</span>
                 <span className="chiffre">{Math.round(apercuCaisse.sousTotal).toLocaleString('fr-FR')}</span>
               </div>
-              {tvaApplicable && (
+              {apercuCaisse.tva > 0 && (
                 <div className="ticket-total-ligne">
                   <span>TVA (18 %)</span>
                   <span className="chiffre">{Math.round(apercuCaisse.tva).toLocaleString('fr-FR')}</span>
@@ -1364,6 +1385,13 @@ export function OrdersPage() {
                 : `Payer · ${Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA`}
             </button>
           </div>
+
+          {lignesPanier.length > 0 && !ticketOuvertMobile && (
+            <button type="button" className="ticket-barre-mobile" onClick={() => setTicketOuvertMobile(true)}>
+              <span>Voir le ticket · {lignesPanier.length} article(s)</span>
+              <span className="chiffre">{Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -2148,13 +2176,13 @@ export function OrdersPage() {
                   {detailCommande.client_id ? (
                     <>
                       <button
-                        className="btn"
+                        className={detailCommande.payment_method === 'tiers_payant' ? 'btn btn-principal' : 'btn'}
                         onClick={() => api.previewOrderReceipt(detailCommande.id, 'ticket').catch((err) => setErreur(err.message))}
                       >
                         Ticket de caisse
                       </button>
                       <button
-                        className="btn btn-principal"
+                        className={detailCommande.payment_method === 'tiers_payant' ? 'btn' : 'btn btn-principal'}
                         onClick={() => api.previewOrderReceipt(detailCommande.id, 'a4').catch((err) => setErreur(err.message))}
                       >
                         Facture A4

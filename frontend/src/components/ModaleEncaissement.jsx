@@ -132,6 +132,12 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
     }
   }, [clientAMutuelle]);
 
+  // Pharmacie : en tiers payant (patient enregistré ou créé à l'encaissement), le reçu s'imprime d'office en
+  // ticket de caisse. La facture A4 reste disponible dans l'historique et dans la liste « Reçu à imprimer ».
+  useEffect(() => {
+    setFormatRecu(estPharmacie && estTiersPayant ? 'ticket' : 'a4');
+  }, [estPharmacie, estTiersPayant]);
+
   // Le montant reçu suit le reste à charge en tiers payant (au lieu de
   // rester sur le total de la facture), et revient au total si on quitte
   // le tiers payant.
@@ -237,7 +243,10 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
       // onglet — l'échec de cet appel ne doit pas bloquer l'encaissement
       // déjà enregistré, donc on l'isole dans son propre try/catch.
       try {
-        await api.previewOrderReceipt(commande.id, commande.client_id ? formatRecu : undefined);
+        // Un patient créé à l'instant (client de passage + tiers payant en pharmacie) a une fiche après l'encaissement :
+        // le format est donc imposé ici, sinon le serveur choisirait la facture A4.
+        const formatImpose = commande.client_id || (estPharmacie && estTiersPayant) ? formatRecu : undefined;
+        await api.previewOrderReceipt(commande.id, formatImpose);
       } catch (err) {
         console.error('Impossible d\'ouvrir le reçu automatiquement :', err.message);
       }
@@ -417,7 +426,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
             <span>Sous-total</span>
             <span className="chiffre">{Math.round(commande.subtotal_amount).toLocaleString('fr-FR')}</span>
           </div>
-          {commande.tva_applicable && (
+          {Number(commande.tva_amount) > 0 && (
             <div className="ticket-total-ligne">
               <span>TVA ({commande.tva_rate ?? 18} %)</span>
               <span className="chiffre">{Math.round(commande.tva_amount).toLocaleString('fr-FR')}</span>

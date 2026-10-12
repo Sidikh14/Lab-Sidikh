@@ -1703,7 +1703,7 @@ function mesurerHauteurTicket(order, largeurContenu) {
   enregistrerPolices(mesure);
 
   let hauteur = 232; // emblème + en-tête + bloc totaux fixe + mention « Édité avec Amaterasu » + marge basse
-  if (order.tva_applicable) hauteur += 13;
+  if (Number(order.tva_amount) > 0) hauteur += 13;
   if (Number(order.change_given) > 0) hauteur += 12;
   if (order.has_return) hauteur += 18;
   if (order.caissier_name) hauteur += 12;
@@ -1819,7 +1819,7 @@ function genererTicketEtroit(res, order) {
   doc.text(`${formatMontant(order.subtotal_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
   y += 13;
 
-  if (order.tva_applicable) {
+  if (Number(order.tva_amount) > 0) {
     doc.text(`TVA (${TVA_RATE} %)`, MARGE, y, { width: largeurContenu - 70 });
     doc.text(`${formatMontant(order.tva_amount)} ${order.currency}`, MARGE, y, { width: largeurContenu, align: 'right' });
     y += 13;
@@ -2066,7 +2066,7 @@ function genererFactureA4(res, order, creditInfo, logoPret) {
   const montant = (valeur) => `${formatMontant(valeur)} ${devise}`;
 
   ligneTotal('Sous-total', montant(order.subtotal_amount));
-  if (order.tva_applicable) ligneTotal(`TVA (${TVA_RATE} %)`, montant(order.tva_amount));
+  if (Number(order.tva_amount) > 0) ligneTotal(`TVA (${TVA_RATE} %)`, montant(order.tva_amount));
   if (order.discount_type && Number(order.discount_amount) > 0) {
     const labelReduction = { remise: 'Remise', rabais: 'Rabais', ristourne: 'Ristourne', escompte: 'Escompte' }[order.discount_type] || 'Réduction';
     const detailReduction = order.discount_mode === 'pourcentage' ? ` (${order.discount_value} %)` : '';
@@ -2219,9 +2219,9 @@ function genererBonDeLivraison(res, order, merchant) {
 }
 
 // GET /orders/:id/receipt-pdf?format=a4|ticket — reçu de caisse. Sans
-// paramètre "format" : ticket étroit pour un client de passage, facture A4
-// pour un client enregistré. Avec format=a4 ou format=ticket, le choix est
-// forcé (ex : ticket de caisse pour un client enregistré).
+// paramètre "format" : ticket étroit pour un client de passage ou une vente en
+// tiers payant, facture A4 pour un autre client enregistré. Avec format=a4 ou
+// format=ticket, le choix est forcé (ex : facture A4 depuis l'historique).
 router.get('/:id/receipt-pdf', async (req, res) => {
   try {
     const debut = Date.now();
@@ -2229,7 +2229,7 @@ router.get('/:id/receipt-pdf', async (req, res) => {
     if (!order) return res.status(404).json({ error: 'Commande introuvable.' });
 
     const format = String(req.query.format || '').toLowerCase();
-    const utiliserA4 = format === 'a4' ? true : format === 'ticket' ? false : Boolean(order.client_id);
+    const utiliserA4 = format === 'a4' ? true : format === 'ticket' ? false : Boolean(order.client_id) && order.payment_method !== 'tiers_payant';
 
     if (utiliserA4) {
       if (!order.client_name) order.client_name = 'Client de passage';
