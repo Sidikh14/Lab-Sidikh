@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authenticatePourChangement } = require('../middleware/auth');
 const { requireAdminKey } = require('../middleware/adminKey');
 const { palettePourCouleur } = require('../utils/branding');
 const { normaliserRoles, rolePrincipal } = require('../middleware/roles');
@@ -162,7 +162,7 @@ router.post('/login', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.merchant_id, u.full_name, u.email, u.password_hash, u.role, u.roles, u.is_active,
-              u.visible_modules, u.warehouse_id, w.name AS warehouse_name,
+              u.visible_modules, u.warehouse_id, u.must_change_password, w.name AS warehouse_name,
               m.business_name, m.sector, m.currency, m.is_active AS merchant_is_active,
               COALESCE((to_jsonb(m)->>'brand_enabled')::boolean, false) AS brand_enabled,
               to_jsonb(m)->>'brand_color' AS brand_color,
@@ -216,6 +216,7 @@ router.post('/login', async (req, res) => {
         visibleModules: user.visible_modules,
         warehouseId: user.warehouse_id,
         warehouseName: user.warehouse_name,
+        mustChangePassword: user.must_change_password === true,
       },
       merchant: user.merchant_id
         ? { id: user.merchant_id, businessName: user.business_name, sector: user.sector, currency: user.currency, branding: { ...brandingDepuisLigne(user.brand_enabled, user.brand_color), logo: extraireLogo(user.merchant_ligne) } }
@@ -244,6 +245,36 @@ router.get('/branding', authenticate, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la lecture de la charte graphique.' });
+  }
+});
+
+// POST /auth/change-password — le membre change son propre mot de passe (provisoire ou non)
+router.post('/change-password', authenticatePourChangement, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (typeof currentPassword !== 'string' || typeof newPassword !== 'string') {
+    return res.status(400).json({ error: 'Champs requis manquants.' });
+  }
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: 'Le nouveau mot de passe doit contenir au moins 6 caractères.' });
+  }
+  if (newPassword === currentPassword) {
+    return res.status(400).json({ error: "Le nouveau mot de passe doit être différent de l'actuel." });
+  }
+  try {
+    const { rows } = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+    // 400 et non 401 : une erreur de mot de passe actuel ne doit pas déclencher la déconnexion.
+    const valide = rows[0] && (await bcrypt.compare(currentPassword, rows[0].password_hash));
+    if (!valide) return res.status(400).json({ error: 'Mot de passe actuel incorrect.' });
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    await pool.query(
+      'UPDATE users SET password_hash = $1, must_change_password = FALSE WHERE id = $2',
+      [passwordHash, req.user.id]
+    );
+    res.json({ message: 'Mot de passe modifié avec succès.' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du changement de mot de passe.' });
   }
 });
 

@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useCallback, useEffect, useLayoutE
 import { api } from '../api/client';
 import { appliquerThemeSecteur } from '../config/sectorConfig';
 import { appliquerBranding, retirerBranding, lireCacheBranding, ecrireCacheBranding, effacerCacheBranding } from '../config/brandingTheme';
+import { ChangementMotDePasseObligatoire } from '../components/ChangementMotDePasseObligatoire';
 
 const AuthContext = createContext(null);
 
@@ -119,6 +120,30 @@ export function AuthProvider({ children }) {
     return () => { annule = true; };
   }, [user?.id, merchant?.id]);
 
+  // Mot de passe provisoire : client.js déclenche cet événement quand le backend refuse l'accès tant que le
+  // mot de passe n'est pas changé. Le drapeau est mémorisé avec l'utilisateur (survit au rechargement).
+  useEffect(() => {
+    function gererChangementRequis() {
+      setUser((courant) => {
+        if (!courant) return courant;
+        const mis = { ...courant, mustChangePassword: true };
+        localStorage.setItem('user', JSON.stringify(mis));
+        return mis;
+      });
+    }
+    window.addEventListener('password-change-required', gererChangementRequis);
+    return () => window.removeEventListener('password-change-required', gererChangementRequis);
+  }, []);
+
+  const terminerChangementMotDePasse = useCallback(() => {
+    setUser((courant) => {
+      if (!courant) return courant;
+      const mis = { ...courant, mustChangePassword: false };
+      localStorage.setItem('user', JSON.stringify(mis));
+      return mis;
+    });
+  }, []);
+
   // client.js déclenche cet événement quand le backend répond 401
   // (token absent/invalide/expiré après 8h) : on déconnecte proprement
   // et on garde un message à afficher sur l'écran de connexion, plutôt
@@ -182,6 +207,9 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{ user, merchant, branding, brandingCharge, login, register, logout, aRole, sessionExpiredMessage, clearSessionExpiredMessage }}>
       {children}
+      {user?.mustChangePassword && (
+        <ChangementMotDePasseObligatoire onTermine={terminerChangementMotDePasse} onDeconnexion={logout} />
+      )}
     </AuthContext.Provider>
   );
 }

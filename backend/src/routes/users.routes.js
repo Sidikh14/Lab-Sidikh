@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const { genererMotDePasseProvisoire } = require('../utils/motDePasseProvisoire');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole, normaliserRoles, rolePrincipal, ROLES_ATTRIBUABLES } = require('../middleware/roles');
@@ -57,9 +58,9 @@ router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
 
 // POST /users — créer un membre de l'équipe (manager uniquement)
 router.post('/', requireRole('manager'), async (req, res) => {
-  const { fullName, email, password, warehouseId } = req.body;
+  const { fullName, email, warehouseId } = req.body;
 
-  if (!fullName || !email || !password) {
+  if (!fullName || !email) {
     return res.status(400).json({ error: 'Champs requis manquants.' });
   }
   const lecture = lireRoles(req.body);
@@ -104,10 +105,11 @@ router.post('/', requireRole('manager'), async (req, res) => {
       });
     }
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const motDePasseProvisoire = genererMotDePasseProvisoire();
+    const passwordHash = await bcrypt.hash(motDePasseProvisoire, 10);
     const result = await pool.query(
-      `INSERT INTO users (merchant_id, full_name, email, password_hash, role, roles, warehouse_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO users (merchant_id, full_name, email, password_hash, role, roles, warehouse_id, must_change_password)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE)
        RETURNING id, full_name, email, role, roles, is_active, created_at, warehouse_id`,
       [req.user.merchantId, fullName, email, passwordHash, role, roles, warehouseId || null]
     );
@@ -119,7 +121,8 @@ router.post('/', requireRole('manager'), async (req, res) => {
       description: `a ajouté ${fullName} à l'équipe (${roles.join(', ')})`,
     });
 
-    res.status(201).json(result.rows[0]);
+    // Mot de passe provisoire : affiché une seule fois au manager, qui le transmet au membre.
+    res.status(201).json({ ...result.rows[0], motDePasseProvisoire });
   } catch (err) {
     if (err.code === '23505') {
       return res.status(409).json({ error: 'Cet email est déjà utilisé.' });
@@ -264,26 +267,22 @@ router.patch('/:id/warehouse', requireRole('manager'), async (req, res) => {
   }
 });
 
-// PATCH /users/:id/password — le manager réinitialise le mot de passe d'un
-// membre de l'équipe (cas d'un employé qui a oublié le sien). Le manager ne
-// peut pas réinitialiser son propre mot de passe ici, ni celui d'un autre
-// manager.
+// PATCH /users/:id/password — le manager réinitialise le mot de passe d'un membre
+// (cas d'oubli). Un mot de passe provisoire est généré ; le manager ne choisit ni ne voit
+// le mot de passe personnel. Le membre doit le changer à sa prochaine connexion.
 router.patch('/:id/password', requireRole('manager'), async (req, res) => {
-  const { newPassword } = req.body;
-
-  if (typeof newPassword !== 'string' || newPassword.length < 6) {
-    return res.status(400).json({ error: 'Le nouveau mot de passe doit contenir au moins 6 caractères.' });
-  }
   if (req.params.id === req.user.id) {
     return res.status(400).json({ error: 'Vous ne pouvez pas réinitialiser votre propre mot de passe ici.' });
   }
 
+  const motDePasseProvisoire = genererMotDePasseProvisoire();
   try {
-    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const passwordHash = await bcrypt.hash(motDePasseProvisoire, 10);
     const result = await pool.query(
-      `UPDATE users SET password_hash = $1
-       WHERE id = $2 AND merchant_id = $3 AND role != 'manager'
-       RETURNING id, full_name, role`,
+      `UPDATE users
+          SET password_hash = $1, must_change_password = TRUE, password_reset_at = now()
+        WHERE id = $2 AND merchant_id = $3 AND role != 'manager'
+        RETURNING id, full_name, role`,
       [passwordHash, req.params.id, req.user.merchantId]
     );
     if (result.rows.length === 0) {
@@ -297,7 +296,7 @@ router.patch('/:id/password', requireRole('manager'), async (req, res) => {
       description: `a réinitialisé le mot de passe de ${result.rows[0].full_name}`,
     });
 
-    res.json({ ...result.rows[0], message: 'Mot de passe réinitialisé avec succès.' });
+    res.json({ ...result.rows[0], motDePasseProvisoire, message: 'Mot de passe provisoire généré.' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la réinitialisation du mot de passe.' });

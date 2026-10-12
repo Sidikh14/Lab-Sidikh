@@ -11,7 +11,7 @@ const { normaliserRoles, rolePrincipal } = require('./roles');
 // requête que le compte et son commerçant sont toujours actifs, pour qu'un
 // blocage effectué par un manager/owner coupe l'accès immédiatement au lieu
 // d'attendre une expiration qui n'arrivera jamais.
-async function authenticate(req, res, next) {
+async function verifier(req, res, next, autoriserChangementMotDePasse) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
 
@@ -23,7 +23,7 @@ async function authenticate(req, res, next) {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
 
     const result = await pool.query(
-      `SELECT u.is_active, u.role, u.roles, u.warehouse_id, m.is_active AS merchant_is_active, m.sector AS merchant_sector,
+      `SELECT u.is_active, u.role, u.roles, u.warehouse_id, u.must_change_password, u.password_reset_at, m.is_active AS merchant_is_active, m.sector AS merchant_sector,
               COALESCE((SELECT array_agg(uw.warehouse_id) FROM user_warehouses uw WHERE uw.user_id = u.id), '{}') AS warehouse_ids
        FROM users u
        LEFT JOIN merchants m ON m.id = u.merchant_id
@@ -34,6 +34,16 @@ async function authenticate(req, res, next) {
 
     if (!account || !account.is_active) {
       return res.status(401).json({ error: 'Compte désactivé.' });
+    }
+
+    // Réinitialisation du mot de passe par le manager : toutes les sessions antérieures sont coupées.
+    if (account.password_reset_at && payload.iat * 1000 < new Date(account.password_reset_at).getTime()) {
+      return res.status(401).json({ error: 'Session expirée.' });
+    }
+
+    // Mot de passe provisoire : seul le changement de mot de passe est autorisé.
+    if (account.must_change_password && !autoriserChangementMotDePasse) {
+      return res.status(403).json({ error: 'Changement de mot de passe requis.', code: 'PASSWORD_CHANGE_REQUIRED' });
     }
     // Rôles lus en base à chaque requête (et non dans le token, qui n'expire jamais) :
     // retirer un rôle à quelqu'un s'applique immédiatement.
@@ -68,6 +78,7 @@ async function authenticate(req, res, next) {
       warehouseId: principal,
       warehouseIds: ids,
       sector: payload.sector || null,
+      mustChangePassword: account.must_change_password === true,
     };
     next();
   } catch (err) {
@@ -75,4 +86,7 @@ async function authenticate(req, res, next) {
   }
 }
 
-module.exports = { authenticate };
+const authenticate = (req, res, next) => verifier(req, res, next, false);
+const authenticatePourChangement = (req, res, next) => verifier(req, res, next, true);
+
+module.exports = { authenticate, authenticatePourChangement };

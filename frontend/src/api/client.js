@@ -34,6 +34,9 @@ function signalerMaintenance(body) {
   }
 }
 
+// Routes où un 401 signifie « identifiants incorrects », pas « session expirée ».
+const ROUTES_SANS_SESSION = ['/auth/login', '/auth/register'];
+
 async function request(path, options = {}) {
   const token = getToken();
   const headers = {
@@ -52,8 +55,17 @@ async function request(path, options = {}) {
   }
 
   if (response.status === 401) {
+    // Échec de connexion ou d'inscription : le serveur dit déjà pourquoi (identifiants incorrects).
+    // Ce n'est pas une session expirée, on n'éjecte donc pas la personne.
+    if (ROUTES_SANS_SESSION.includes(path) && body?.error) throw new Error(body.error);
     signalerSessionExpiree();
     throw new Error('Votre session a expiré. Veuillez vous reconnecter.');
+  }
+
+  // Mot de passe provisoire : l'application affiche l'écran de changement obligatoire.
+  if (response.status === 403 && body?.code === 'PASSWORD_CHANGE_REQUIRED') {
+    window.dispatchEvent(new CustomEvent('password-change-required'));
+    throw new Error(body.error);
   }
 
   if (!response.ok) {
@@ -230,6 +242,9 @@ export const api = {
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
 
+  changeOwnPassword: (currentPassword, newPassword) =>
+    request('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) }),
+
   register: (data, adminKey) =>
     request('/auth/register', {
       method: 'POST',
@@ -387,8 +402,9 @@ export const api = {
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
   setUserPermissions: (id, modules) =>
     request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules }) }),
-  resetUserPassword: (id, newPassword) =>
-    request(`/users/${id}/password`, { method: 'PATCH', body: JSON.stringify({ newPassword }) }),
+  // Le serveur génère le mot de passe provisoire : il est renvoyé une seule fois dans la réponse.
+  resetUserPassword: (id) =>
+    request(`/users/${id}/password`, { method: 'PATCH' }),
   setUserWarehouse: (id, warehouseId) =>
     request(`/users/${id}/warehouse`, { method: 'PATCH', body: JSON.stringify({ warehouseId }) }),
 

@@ -220,7 +220,6 @@ function EquipeTab() {
   const [nouveauMembre, setNouveauMembre] = useState({
     fullName: '',
     email: '',
-    password: '',
     roles: ['vendeur'],
     warehouseId: '',
   });
@@ -265,7 +264,7 @@ function EquipeTab() {
 
   async function handleCreate(e) {
     e.preventDefault();
-    if (!nouveauMembre.fullName || !nouveauMembre.email || !nouveauMembre.password) {
+    if (!nouveauMembre.fullName || !nouveauMembre.email) {
       setErreur('Tous les champs sont requis.');
       return;
     }
@@ -279,9 +278,12 @@ function EquipeTab() {
       return;
     }
     try {
-      await api.createUser({ ...nouveauMembre, warehouseId: warehouseId || undefined });
+      const cree = await api.createUser({ ...nouveauMembre, warehouseId: warehouseId || undefined });
       setModaleOuverte(false);
-      setNouveauMembre({ fullName: '', email: '', password: '', roles: ['vendeur'], warehouseId: '' });
+      setNouveauMembre({ fullName: '', email: '', roles: ['vendeur'], warehouseId: '' });
+      if (cree?.motDePasseProvisoire) {
+        setProvisoireAffiche({ nom: cree.full_name || nouveauMembre.fullName, email: cree.email, motDePasse: cree.motDePasseProvisoire });
+      }
       charger();
     } catch (err) {
       setErreur(err.message);
@@ -333,25 +335,20 @@ function EquipeTab() {
   }
 
   const [membreMotDePasse, setMembreMotDePasse] = useState(null);
-  const [nouveauMotDePasse, setNouveauMotDePasse] = useState('');
-  const [messageMotDePasse, setMessageMotDePasse] = useState('');
+  const [provisoireAffiche, setProvisoireAffiche] = useState(null);
 
   function ouvrirResetMotDePasse(membre) {
     setMembreMotDePasse(membre);
-    setNouveauMotDePasse('');
-    setMessageMotDePasse('');
   }
 
-  async function handleResetMotDePasse(e) {
-    e.preventDefault();
-    if (nouveauMotDePasse.length < 6) {
-      setErreur('Le nouveau mot de passe doit contenir au moins 6 caractères.');
-      return;
-    }
+  // Le manager ne choisit jamais le mot de passe : le serveur génère un provisoire,
+  // affiché une seule fois.
+  async function handleResetMotDePasse() {
+    const membre = membreMotDePasse;
     try {
-      await api.resetUserPassword(membreMotDePasse.id, nouveauMotDePasse);
-      setMessageMotDePasse(`Mot de passe de ${membreMotDePasse.full_name} réinitialisé avec succès.`);
-      setNouveauMotDePasse('');
+      const reponse = await api.resetUserPassword(membre.id);
+      setMembreMotDePasse(null);
+      setProvisoireAffiche({ nom: membre.full_name, email: membre.email, motDePasse: reponse.motDePasseProvisoire });
     } catch (err) {
       setErreur(err.message);
     }
@@ -605,17 +602,6 @@ function EquipeTab() {
                 />
               </div>
               <div className="champ-groupe">
-                <label className="etiquette" htmlFor="m-password">Mot de passe temporaire</label>
-                <input
-                  id="m-password"
-                  type="password"
-                  className="champ"
-                  value={nouveauMembre.password}
-                  onChange={(e) => setNouveauMembre({ ...nouveauMembre, password: e.target.value })}
-                  autoComplete="new-password"
-                />
-              </div>
-              <div className="champ-groupe">
                 <span className="etiquette">Rôles (cochez-en plusieurs si besoin)</span>
                 <ChoixRoles
                   roles={nouveauMembre.roles}
@@ -690,34 +676,35 @@ function EquipeTab() {
           <div className="modale" onClick={(e) => e.stopPropagation()}>
             <h2>Réinitialiser le mot de passe de {membreMotDePasse.full_name}</h2>
             <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-              Communiquez ce nouveau mot de passe temporaire au membre concerné.
+              Un mot de passe provisoire sera généré. Le membre devra le changer à sa prochaine connexion.
             </p>
-            {messageMotDePasse && (
-              <div className="tampon tampon-sarcelle" style={{ display: 'block', marginBottom: 12 }}>
-                {messageMotDePasse}
-              </div>
-            )}
-            <form onSubmit={handleResetMotDePasse}>
-              <div className="champ-groupe">
-                <label className="etiquette" htmlFor="m-nouveau-mdp">Nouveau mot de passe</label>
-                <input
-                  id="m-nouveau-mdp"
-                  type="password"
-                  className="champ"
-                  value={nouveauMotDePasse}
-                  onChange={(e) => setNouveauMotDePasse(e.target.value)}
-                  autoComplete="new-password"
-                />
-              </div>
-              <div className="actions-modale">
-                <button type="button" className="btn" onClick={() => setMembreMotDePasse(null)}>
-                  Fermer
-                </button>
-                <button type="submit" className="btn btn-principal">
-                  Réinitialiser
-                </button>
-              </div>
-            </form>
+            <div className="actions-modale">
+              <button type="button" className="btn" onClick={() => setMembreMotDePasse(null)}>
+                Fermer
+              </button>
+              <button type="button" className="btn btn-principal" onClick={handleResetMotDePasse}>
+                Générer un mot de passe provisoire
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {provisoireAffiche && (
+        <div className="modale-fond" onClick={() => setProvisoireAffiche(null)}>
+          <div className="modale" onClick={(e) => e.stopPropagation()}>
+            <h2>Mot de passe provisoire</h2>
+            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+              Transmettez-le à {provisoireAffiche.nom}{provisoireAffiche.email ? ` (${provisoireAffiche.email})` : ''}.
+              Il ne sera plus affiché après fermeture de cette fenêtre.
+            </p>
+            <div className="tampon tampon-sarcelle" style={{ display: 'block', fontSize: 20, letterSpacing: 2, textAlign: 'center', marginBottom: 16 }}>
+              {provisoireAffiche.motDePasse}
+            </div>
+            <div className="actions-modale">
+              <button type="button" className="btn btn-principal" onClick={() => setProvisoireAffiche(null)}>
+                J'ai noté le mot de passe
+              </button>
+            </div>
           </div>
         </div>
       )}
