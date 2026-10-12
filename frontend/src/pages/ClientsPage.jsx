@@ -1209,8 +1209,10 @@ function MutuellesTab() {
 }
 
 export function ClientsPage() {
-  const { merchant } = useAuth();
+  const { merchant, aRole } = useAuth();
   const estPharmacie = merchant?.sector === 'pharmacie';
+  // Créances et règlements des mutuelles : manager et gérant. Caissier et vendeur n'ont que la liste des clients.
+  const voitMutuelles = estPharmacie && aRole('manager', 'gerant');
   const libelleClients = `${getSecteurConfig(merchant?.sector).libelleClient}s`;
   const [onglet, setOnglet] = useState('clients');
 
@@ -1220,7 +1222,7 @@ export function ClientsPage() {
         <h1>{libelleClients}</h1>
       </div>
 
-      {estPharmacie && (
+      {voitMutuelles && (
         <div className="onglets" style={{ marginBottom: 20 }}>
           <button className={onglet === 'clients' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('clients')}>
             {libelleClients}
@@ -1231,7 +1233,7 @@ export function ClientsPage() {
         </div>
       )}
 
-      {estPharmacie && onglet === 'mutuelles' ? <MutuellesTab /> : <ClientsTab />}
+      {voitMutuelles && onglet === 'mutuelles' ? <MutuellesTab /> : <ClientsTab />}
     </>
   );
 }

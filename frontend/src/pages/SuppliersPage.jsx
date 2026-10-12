@@ -323,6 +323,7 @@ function FournisseursTab() {
             onChange={(e) => setRecherche(e.target.value)}
           />
         </div>
+        {peutGerer && (
         <div className="md-groupe">
           <input
             type="date"
@@ -351,6 +352,7 @@ function FournisseursTab() {
             {exportEnCours ? 'Génération…' : 'Exporter les achats (PDF)'}
           </button>
         </div>
+        )}
       </div>
 
       <div className="md-barre-vue">

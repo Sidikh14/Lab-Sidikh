@@ -268,17 +268,18 @@ const LABEL_STATUT_VENTE = {
 };
 
 export function OrdersPage() {
-  const { user, merchant } = useAuth();
+  const { user, merchant, aRole } = useAuth();
   const secteurConfig = getSecteurConfig(merchant?.sector);
   const libelleClient = secteurConfig.libelleClient;
-  const peutCreer = PEUT_CREER.includes(user.role);
-  const peutEncaisser = PEUT_ENCAISSER.includes(user.role);
+  // Une personne peut cumuler des rôles : on teste tous ses rôles, pas seulement le principal.
+  const peutCreer = aRole(...PEUT_CREER);
+  const peutEncaisser = aRole(...PEUT_ENCAISSER);
   // Le gérant n'a le droit d'encaisser QUE les ventes qu'il a lui-même
   // créées (contrôle miroir de celui du backend sur PATCH /:id/payment) ;
-  // manager et caissier gardent l'accès à toutes les ventes en attente.
+  // manager et caissier (y compris un gérant qui est aussi caissier) gardent l'accès à toutes les ventes en attente.
   const peutEncaisserCetteCommande = (o) =>
-    peutEncaisser && (user.role !== 'gerant' || o.created_by === user.id);
-  const peutGererStatut = PEUT_GERER_STATUT.includes(user.role);
+    peutEncaisser && !(user.role === 'gerant' && !aRole('caissier') && o.created_by !== user.id);
+  const peutGererStatut = aRole(...PEUT_GERER_STATUT);
   const estManager = user.role === 'manager';
   const estPharmacie = merchant?.sector === 'pharmacie';
   const estSecteurReliquat = SECTEURS_RELIQUAT.includes(merchant?.sector);
@@ -391,10 +392,10 @@ export function OrdersPage() {
     }
   }
 
-  const peutTraiterRenvoi = ['manager', 'gerant', 'vendeur', 'vendeur_caissier'].includes(user.role);
-  const peutTraiterRetour = PEUT_TRAITER_RETOUR.includes(user.role);
-  // Pharmacie uniquement — voir la constante PEUT_DEMANDER_RETOUR.
-  const peutDemanderRetour = estPharmacie && PEUT_DEMANDER_RETOUR.includes(user.role);
+  const peutTraiterRenvoi = aRole('manager', 'gerant', 'vendeur');
+  const peutTraiterRetour = aRole(...PEUT_TRAITER_RETOUR);
+  // Pharmacie uniquement — voir la constante PEUT_DEMANDER_RETOUR. Un gérant/manager qui est aussi caissier traite directement.
+  const peutDemanderRetour = estPharmacie && !peutTraiterRetour && aRole(...PEUT_DEMANDER_RETOUR);
 
   // Module retours client — séparé du flux de vente, lié à une commande
   // existante. Traitement direct réservé manager/gérant ; en pharmacie,

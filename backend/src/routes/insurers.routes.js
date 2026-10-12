@@ -2,13 +2,15 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, aRole } = require('../middleware/roles');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
 const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 
 const router = express.Router();
 router.use(authenticate);
-router.use(requireRole('manager', 'gerant'));
+// Créances, règlements et états mensuels : manager et gérant. Seule la liste des noms (pour rattacher un client
+// à sa mutuelle) est lisible par le caissier et le vendeur, sans aucun montant.
+const GESTION = requireRole('manager', 'gerant');
 
 const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
 
@@ -31,8 +33,15 @@ async function resolveWarehouseId(req, providedId) {
 
 // GET /insurers — liste avec la créance (ce que l'assureur nous doit pour
 // les ventes en tiers payant) calculée à la volée, jamais stockée.
-router.get('/', async (req, res) => {
+router.get('/', requireRole('manager', 'gerant', 'caissier', 'vendeur'), async (req, res) => {
   try {
+    if (!aRole(req.user, 'manager', 'gerant')) {
+      const noms = await pool.query(
+        `SELECT id, name FROM insurers WHERE merchant_id = $1 AND is_active = TRUE ORDER BY name`,
+        [req.user.merchantId]
+      );
+      return res.json(noms.rows);
+    }
     const result = await pool.query(
       `SELECT
          i.id, i.name, i.phone, i.email, i.address, i.created_at,
@@ -63,7 +72,7 @@ router.get('/', async (req, res) => {
 
 // GET /insurers/:id — détail d'une mutuelle : créance + historique des
 // prises en charge et des règlements reçus (pour la modale de règlement).
-router.get('/:id', async (req, res) => {
+router.get('/:id', GESTION, async (req, res) => {
   try {
     const insurerResult = await pool.query(
       `SELECT id, name, phone, email, address, created_at
@@ -109,7 +118,7 @@ router.get('/:id', async (req, res) => {
 // GET /insurers/:id/statement-pdf?month=YYYY-MM — état mensuel pour un
 // assureur donné, à lui transmettre pour obtenir le remboursement : détail
 // de chaque prise en charge du mois + total dû.
-router.get('/:id/statement-pdf', async (req, res) => {
+router.get('/:id/statement-pdf', GESTION, async (req, res) => {
   const { month } = req.query;
   if (!month || !/^\d{4}-\d{2}$/.test(month)) {
     return res.status(400).json({ error: 'Le mois est requis, au format AAAA-MM.' });
@@ -214,7 +223,7 @@ router.get('/:id/statement-pdf', async (req, res) => {
 });
 
 // POST /insurers/:id/payments — enregistrer un règlement reçu de l'assureur
-router.post('/:id/payments', async (req, res) => {
+router.post('/:id/payments', GESTION, async (req, res) => {
   const { amount, notes, paymentMethod, warehouseId: warehouseIdInput } = req.body;
   if (!Number(amount) || Number(amount) <= 0) {
     return res.status(400).json({ error: 'Montant de règlement invalide.' });
@@ -261,7 +270,7 @@ router.post('/:id/payments', async (req, res) => {
 });
 
 // POST /insurers
-router.post('/', async (req, res) => {
+router.post('/', GESTION, async (req, res) => {
   const { name, phone, email, address } = req.body;
   if (!name) {
     return res.status(400).json({ error: 'Le nom de la mutuelle est requis.' });
@@ -280,7 +289,7 @@ router.post('/', async (req, res) => {
 });
 
 // DELETE /insurers/:id — désactivation (pas de suppression physique)
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', GESTION, async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE insurers SET is_active = FALSE WHERE id = $1 AND merchant_id = $2 RETURNING id`,

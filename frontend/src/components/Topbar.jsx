@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -26,16 +26,19 @@ function IconMenu() {
 const formaterDate = (d) => new Date(d).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 export function Topbar({ onOuvrirMenu }) {
-  const { user, merchant, logout } = useAuth();
+  const { user, merchant, logout, aRole } = useAuth();
   const navigate = useNavigate();
   const [enRupture, setEnRupture] = useState(0);
   const [menuOuvert, setMenuOuvert] = useState(false);
 
-  const peutVoirAlertes = ROLES_ALERTES.includes(user?.role);
+  const peutVoirAlertes = aRole(...ROLES_ALERTES);
   const [alertes, setAlertes] = useState([]);
   const [nonLues, setNonLues] = useState(0);
   const [panneauOuvert, setPanneauOuvert] = useState(false);
   const [bandeau, setBandeau] = useState(null);
+  // Lu dans le gestionnaire temps réel sans relancer la connexion à chaque ouverture/fermeture du panneau.
+  const panneauOuvertRef = useRef(false);
+  useEffect(() => { panneauOuvertRef.current = panneauOuvert; }, [panneauOuvert]);
 
   useEffect(() => {
     api
@@ -75,13 +78,13 @@ export function Topbar({ onOuvrirMenu }) {
       try {
         setBandeau(JSON.parse(e.data));
         rafraichirCompte();
-        if (panneauOuvert) rafraichirListe();
+        if (panneauOuvertRef.current) rafraichirListe();
       } catch {
         /* message illisible : ignoré */
       }
     });
     return () => source.close();
-  }, [peutVoirAlertes, rafraichirCompte, rafraichirListe, panneauOuvert]);
+  }, [peutVoirAlertes, rafraichirCompte, rafraichirListe]);
 
   useEffect(() => {
     if (!bandeau) return undefined;
