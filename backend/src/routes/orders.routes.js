@@ -48,6 +48,12 @@ const MODES_REDUCTION = ['pourcentage', 'montant'];
 // lots) et ne doit jamais faire attendre un client sur un médicament.
 const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
 
+// Vente en rupture de stock (reliquat) : le manager, et le gérant dans les secteurs qui gèrent les reliquats.
+// Le prix personnalisé (customPrice) reste réservé au manager.
+function peutVendreEnRupture(user) {
+  return user.role === 'manager' || (user.role === 'gerant' && SECTEURS_RELIQUAT.includes(user.sector));
+}
+
 const router = express.Router();
 router.use(authenticate);
 
@@ -307,7 +313,7 @@ async function verifierOrdonnanceRenouvelable(dbClient, merchantId, prescription
 // Deux actions sont réservées au manager, et bloquées pour tout autre rôle :
 // - customPrice sur un article : vendre à un prix différent du prix normal
 //   (réduction ou majoration).
-// - authorizeOutOfStock sur un article : vendre un produit dont le stock
+// - authorizeOutOfStock sur un article (manager, et gérant pour les secteurs à reliquat) : vendre un produit dont le stock
 //   disponible est insuffisant (vente en rupture autorisée). Le stock ne
 //   descend jamais sous zéro : il est simplement ramené à 0.
 router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), async (req, res) => {
@@ -408,7 +414,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
       const quantiteDisponible = Math.min(baseQuantity, Math.max(0, product.quantity_in_stock));
       const quantiteManquante = baseQuantity - quantiteDisponible;
       if (rupture) {
-        if (req.user.role !== 'manager' || !item.authorizeOutOfStock) {
+        if (!peutVendreEnRupture(req.user) || !item.authorizeOutOfStock) {
           throw { status: 400, message: `Stock insuffisant pour ${product.name}.` };
         }
         stockOverrideUtilise = true;
@@ -1367,7 +1373,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
       const quantiteDisponible = Math.min(baseQuantity, Math.max(0, product.quantity_in_stock));
       const quantiteManquante = baseQuantity - quantiteDisponible;
       if (rupture) {
-        if (req.user.role !== 'manager' || !item.authorizeOutOfStock) {
+        if (!peutVendreEnRupture(req.user) || !item.authorizeOutOfStock) {
           throw { status: 400, message: `Stock insuffisant pour ${product.name}.` };
         }
         stockOverrideUtilise = true;

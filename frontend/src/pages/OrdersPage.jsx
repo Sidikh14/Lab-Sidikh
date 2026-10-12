@@ -292,6 +292,8 @@ export function OrdersPage() {
   const estManager = user.role === 'manager';
   const estPharmacie = merchant?.sector === 'pharmacie';
   const estSecteurReliquat = SECTEURS_RELIQUAT.includes(merchant?.sector);
+  // Reliquat : manager et gérant (même règle que le serveur).
+  const peutCreerReliquat = estSecteurReliquat && (estManager || user.role === 'gerant');
   const { isOnline, createOrder: creerVenteHorsLigne } = useOfflineSync(api);
 
   const [onglet, setOnglet] = useState(peutCreer ? 'caisse' : 'historique');
@@ -2087,7 +2089,7 @@ export function OrdersPage() {
               </p>
             )}
 
-            {estSecteurReliquat && estManager && (
+            {peutCreerReliquat && (
               <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--trait)' }}>
                 <p style={{ fontSize: 13, marginBottom: 10 }}>
                   Créer une commande en attente (reliquat) : le client sera servi dès la prochaine réception fournisseur.
