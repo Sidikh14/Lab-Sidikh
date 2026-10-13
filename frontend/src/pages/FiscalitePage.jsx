@@ -42,21 +42,23 @@ function IconeType({ id }) {
 }
 
 const STYLE_CARTES = `
-.decl-cartes { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; margin-bottom: 18px; }
-.decl-carte { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left; padding: 14px; cursor: pointer;
-  border: 1.5px solid rgba(128,128,128,0.25); border-radius: 14px; background: var(--surface, transparent); color: inherit; font: inherit;
-  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
-.decl-carte:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(15,35,70,0.10); border-color: var(--azur, #2f80ed); }
+.decl-cartes { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.decl-carte { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px 6px 7px; cursor: pointer;
+  border: 1.5px solid rgba(128,128,128,0.25); border-radius: 10px; background: var(--surface, transparent); color: inherit; font: inherit;
+  transition: box-shadow .12s ease, border-color .12s ease; }
+.decl-carte:hover { border-color: var(--azur, #2f80ed); }
 .decl-carte:focus-visible { outline: 3px solid var(--azur, #2f80ed); outline-offset: 2px; }
-.decl-carte.actif { border-color: var(--azur, #2f80ed); box-shadow: 0 0 0 3px rgba(47,128,237,0.18); }
-.decl-carte .decl-icone { width: 40px; height: 40px; border-radius: 11px; display: flex; align-items: center; justify-content: center;
-  background: rgba(47,128,237,0.12); color: var(--azur, #2f80ed); }
+.decl-carte.actif { border-color: var(--azur, #2f80ed); box-shadow: 0 0 0 2px rgba(47,128,237,0.18); }
+.decl-carte .decl-icone { width: 26px; height: 26px; border-radius: 7px; display: flex; align-items: center; justify-content: center;
+  background: rgba(47,128,237,0.12); color: var(--azur, #2f80ed); flex-shrink: 0; }
+.decl-carte .decl-icone svg { width: 15px; height: 15px; }
 .decl-carte.actif .decl-icone { background: var(--azur, #2f80ed); color: #fff; }
-.decl-carte .decl-nom { font-weight: 600; font-size: 14px; line-height: 1.25; }
-.decl-statut { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
-.decl-statut::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.decl-statut.faire { color: #a15c00; background: rgba(245,166,35,0.18); }
-.decl-statut.deposee { color: #137a4b; background: rgba(31,157,99,0.15); }
+.decl-carte .decl-texte { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.2; }
+.decl-carte .decl-nom { font-weight: 600; font-size: 12.5px; }
+.decl-statut { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; margin-top: 2px; }
+.decl-statut::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.decl-statut.faire { color: #a15c00; }
+.decl-statut.deposee { color: #137a4b; }
 `;
 
 const NOMS_TYPES = {
@@ -267,12 +269,14 @@ function DeclarationsTab() {
           return (
             <button key={t.id} type="button" role="tab" aria-selected={t.id === type} className={`decl-carte${t.id === type ? ' actif' : ''}`} onClick={() => setType(t.id)}>
               <span className="decl-icone"><IconeType id={t.id} /></span>
-              <span className="decl-nom">{t.label}</span>
-              {st ? (
-                <span className={`decl-statut ${st}`}>{st === 'deposee' ? 'Déposée' : 'À faire'}</span>
-              ) : (
-                <span className="decl-statut" style={{ opacity: 0.5 }}>…</span>
-              )}
+              <span className="decl-texte">
+                <span className="decl-nom">{t.label}</span>
+                  {st ? (
+                    <span className={`decl-statut ${st}`}>{st === 'deposee' ? 'Déposée' : 'À faire'}</span>
+                  ) : (
+                    <span className="decl-statut" style={{ opacity: 0.5 }}>…</span>
+                  )}
+              </span>
             </button>
           );
         })}
