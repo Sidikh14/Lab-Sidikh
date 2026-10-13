@@ -452,6 +452,8 @@ export const api = {
   downloadActivityPdf: (from, to) => previewFile(`/activity/pdf?from=${from}&to=${to}`),
   getRevenue: () => request('/activity/revenue'),
   getProfit: () => request('/activity/profit'),
+  getResult: (from, to, warehouseId) => request(`/activity/result${qs({ from, to, warehouseId })}`),
+  getCharges: (from, to, warehouseId) => request(`/activity/charges${qs({ from, to, warehouseId })}`),
   getRevenueByWarehouse: () => request('/activity/revenue-by-warehouse'),
 
   // Restauration : carte par restaurant (boutique), tables et QR codes.

@@ -297,6 +297,328 @@ export function DashboardPage() {
   return comptableSeul ? <DashboardComptable /> : <DashboardCommerce />;
 }
 
+// ---------------------------------------------------------------------------
+// Onglet « Résultat » (manager) : chiffre d'affaires, bénéfice, annulé, par période.
+// ---------------------------------------------------------------------------
+const CSS_RESULTAT = `
+.rs-periodes{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:16px}
+.rs-chip{padding:6px 12px;border-radius:999px;border:1.5px solid var(--trait,#e5e7eb);background:var(--surface,#fff);color:inherit;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.rs-chip:hover{border-color:var(--accent)}
+.rs-chip.actif{background:var(--accent);border-color:var(--accent);color:#fff}
+.rs-dates{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-4px 0 16px;font-size:13px;color:var(--encre-douce)}
+.rs-dates input{padding:6px 8px;border:1.5px solid var(--trait,#e5e7eb);border-radius:8px;font:inherit;background:var(--surface,#fff);color:inherit}
+.rs-legende{display:flex;gap:14px;font-size:12px;color:var(--encre-douce);margin-bottom:10px}
+.rs-legende i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.rs-duo{display:flex;flex-direction:column;gap:4px;flex:1}
+.rs-duo .db-barre-piste{margin:0}
+.rs-duo .rs-benef{opacity:.55}
+.rs-table-wrap{overflow-x:auto}
+.rs-table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.rs-table th,.rs-table td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--trait,#e5e7eb);white-space:nowrap}
+.rs-table th:first-child,.rs-table td:first-child{text-align:left}
+.rs-table th{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--encre-douce)}
+.rs-table tfoot td{font-weight:700;border-bottom:none}
+.rs-neg{color:var(--danger,#b91c1c)}
+.rs-sous{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--trait,#e5e7eb)}
+.rs-sous button{padding:8px 14px;border:none;border-bottom:2.5px solid transparent;background:none;color:var(--encre-douce);font:inherit;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:-1px}
+.rs-sous button.actif{color:var(--accent);border-bottom-color:var(--accent)}
+.rs-pct{font-size:12px;color:var(--encre-douce);margin-left:6px}
+`;
+
+function jourLocal(d) {
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const jj = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${jj}`;
+}
+
+const PERIODES_RESULTAT = [
+  { id: 'aujourdhui', label: "Aujourd'hui" },
+  { id: '7jours', label: '7 jours' },
+  { id: 'mois', label: 'Ce mois' },
+  { id: 'moisDernier', label: 'Mois dernier' },
+  { id: 'annee', label: 'Cette année' },
+  { id: 'perso', label: 'Personnalisé' },
+];
+
+function bornesPeriode(id) {
+  const auj = new Date();
+  auj.setHours(12, 0, 0, 0);
+  const y = auj.getFullYear();
+  const m = auj.getMonth();
+  if (id === 'aujourdhui') return [jourLocal(auj), jourLocal(auj)];
+  if (id === '7jours') {
+    const d = new Date(auj);
+    d.setDate(d.getDate() - 6);
+    return [jourLocal(d), jourLocal(auj)];
+  }
+  if (id === 'mois') return [jourLocal(new Date(y, m, 1, 12)), jourLocal(auj)];
+  if (id === 'moisDernier') return [jourLocal(new Date(y, m - 1, 1, 12)), jourLocal(new Date(y, m, 0, 12))];
+  if (id === 'annee') return [jourLocal(new Date(y, 0, 1, 12)), jourLocal(auj)];
+  return null;
+}
+
+function ResultatOnglet({ warehouseId, boutiqueNom }) {
+  const [periode, setPeriode] = useState('mois');
+  const [bornes, setBornes] = useState(() => bornesPeriode('mois'));
+  const [donnees, setDonnees] = useState(null);
+  const [charges, setCharges] = useState(null);
+  const [sousOnglet, setSousOnglet] = useState('resultat');
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState('');
+
+  const [du, au] = bornes;
+
+  function choisir(id) {
+    setPeriode(id);
+    const b = bornesPeriode(id);
+    if (b) setBornes(b);
+  }
+
+  useEffect(() => {
+    if (!du || !au) return;
+    if (du > au) {
+      setErreur('La date de début doit précéder la date de fin.');
+      return;
+    }
+    let annule = false;
+    setChargement(true);
+    setErreur('');
+    Promise.all([
+      api.getResult(du, au, warehouseId || undefined),
+      api.getCharges(du, au, warehouseId || undefined),
+    ])
+      .then(([r, c]) => { if (!annule) { setDonnees(r); setCharges(c); } })
+      .catch((err) => { if (!annule) setErreur(err.message); })
+      .finally(() => { if (!annule) setChargement(false); });
+    return () => { annule = true; };
+  }, [du, au, warehouseId]);
+
+  const mois = donnees?.byMonth || [];
+  const maxMois = Math.max(1, ...mois.map((m) => Math.max(m.revenue, m.profit, 0)));
+  const marge = donnees && donnees.revenue > 0 ? Math.round((donnees.profit / donnees.revenue) * 100) : null;
+  const totalCharges = charges ? charges.total : 0;
+  const beneficeNet = donnees ? donnees.profit - totalCharges : 0;
+  const chargesParMois = Object.fromEntries((charges?.byMonth || []).map((m) => [m.month, m.total]));
+  const moisNet = [...new Set([...mois.map((m) => m.month), ...Object.keys(chargesParMois)])].sort().map((cle) => {
+    const m = mois.find((x) => x.month === cle);
+    const benefice = m ? m.profit : 0;
+    const ch = chargesParMois[cle] || 0;
+    return { month: cle, benefice, charges: ch, net: benefice - ch };
+  });
+  const maxNature = Math.max(1, ...(charges?.byNature || []).map((n) => n.total));
+
+  return (
+    <>
+      <style>{CSS_RESULTAT}</style>
+
+      <div className="rs-sous" role="tablist" aria-label="Résultat">
+        <button type="button" role="tab" aria-selected={sousOnglet === 'resultat'} className={sousOnglet === 'resultat' ? 'actif' : ''} onClick={() => setSousOnglet('resultat')}>
+          Chiffre d'affaires &amp; bénéfice
+        </button>
+        <button type="button" role="tab" aria-selected={sousOnglet === 'charges'} className={sousOnglet === 'charges' ? 'actif' : ''} onClick={() => setSousOnglet('charges')}>
+          Charges
+        </button>
+      </div>
+
+      <div className="rs-periodes" role="group" aria-label="Période">
+        {PERIODES_RESULTAT.map((p) => (
+          <button key={p.id} type="button" className={`rs-chip${periode === p.id ? ' actif' : ''}`} onClick={() => choisir(p.id)}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="rs-dates">
+        <label>Du <input type="date" value={du} max={au} onChange={(e) => { setPeriode('perso'); setBornes([e.target.value, au]); }} /></label>
+        <label>au <input type="date" value={au} min={du} onChange={(e) => { setPeriode('perso'); setBornes([du, e.target.value]); }} /></label>
+        {boutiqueNom && <span>· Boutique : {boutiqueNom}</span>}
+      </div>
+
+      {erreur && <div className="erreur">{erreur}</div>}
+
+      {chargement && !donnees ? (
+        <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+      ) : donnees && sousOnglet === 'charges' && charges ? (
+        <div style={{ opacity: chargement ? 0.6 : 1 }}>
+          <div className="db-kpis">
+            <div className="db-kpi db-kpi--hero">
+              <span className="db-kpi-icone"><IconValeur /></span>
+              <p className="db-kpi-label">Charges</p>
+              <p className="db-kpi-valeur">{fcfa(charges.total)} <small>FCFA</small></p>
+              <p className="db-kpi-sous">{charges.count} opération(s)</p>
+            </div>
+            <div className="db-kpi">
+              <span className="db-kpi-icone"><IconVentes /></span>
+              <p className="db-kpi-label">Bénéfice net</p>
+              <p className={`db-kpi-valeur${beneficeNet < 0 ? ' rs-neg' : ''}`}>{fcfa(beneficeNet)} <small>FCFA</small></p>
+              <p className="db-kpi-sous">Bénéfice {fcfa(donnees.profit)} − charges {fcfa(charges.total)}</p>
+            </div>
+          </div>
+
+          {charges.byNature.length === 0 ? (
+            <p className="etat-vide">Aucune charge sur cette période.</p>
+          ) : (
+            <div className="db-carte" style={{ marginBottom: 20 }}>
+              <div className="db-carte-tete">
+                <h2>Répartition par nature</h2>
+              </div>
+              <div className="db-barres">
+                {charges.byNature.map((n) => (
+                  <div key={n.label} className="db-barre-ligne">
+                    <p className="db-barre-nom">{n.label}</p>
+                    <div className="db-barre-piste">
+                      <div className="db-barre-rempli" style={{ width: `${Math.max(2, (n.total / maxNature) * 100)}%` }} />
+                    </div>
+                    <p className="db-barre-montant">
+                      {fcfa(n.total)} FCFA
+                      <span className="rs-pct">{charges.total > 0 ? Math.round((n.total / charges.total) * 100) : 0} %</span>
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {moisNet.length > 0 && (
+            <div className="db-carte">
+              <div className="db-carte-tete">
+                <h2>Tableau mensuel</h2>
+              </div>
+              <div className="rs-table-wrap">
+                <table className="rs-table">
+                  <thead>
+                    <tr>
+                      <th>Mois</th>
+                      <th>Bénéfice</th>
+                      <th>Charges</th>
+                      <th>Bénéfice net</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...moisNet].reverse().map((m) => (
+                      <tr key={m.month}>
+                        <td>{formatMois(m.month)}</td>
+                        <td>{fcfa(m.benefice)}</td>
+                        <td>{fcfa(m.charges)}</td>
+                        <td className={m.net < 0 ? 'rs-neg' : ''}>{fcfa(m.net)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td>Total</td>
+                      <td>{fcfa(donnees.profit)}</td>
+                      <td>{fcfa(charges.total)}</td>
+                      <td className={beneficeNet < 0 ? 'rs-neg' : ''}>{fcfa(beneficeNet)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '10px 0 0' }}>
+                Montants en FCFA, charges hors taxe. Comptés : sorties de caisse (avec ou sans nature) et salaires payés. Non comptés : factures à payer plus tard, transferts, remboursements de retours, paiements à l'État.
+              </p>
+            </div>
+          )}
+        </div>
+      ) : donnees && (
+        <div style={{ opacity: chargement ? 0.6 : 1 }}>
+          <div className="db-kpis">
+            <div className="db-kpi db-kpi--hero">
+              <span className="db-kpi-icone"><IconValeur /></span>
+              <p className="db-kpi-label">Chiffre d'affaires</p>
+              <p className="db-kpi-valeur">{fcfa(donnees.revenue)} <small>FCFA</small></p>
+              <p className="db-kpi-sous">{donnees.ordersCount} vente(s) encaissée(s)</p>
+            </div>
+            <div className="db-kpi">
+              <span className="db-kpi-icone"><IconVentes /></span>
+              <p className="db-kpi-label">Bénéfice</p>
+              <p className={`db-kpi-valeur${donnees.profit < 0 ? ' rs-neg' : ''}`}>{fcfa(donnees.profit)} <small>FCFA</small></p>
+              {marge !== null && <p className="db-kpi-sous">Marge : {marge} %</p>}
+            </div>
+          </div>
+
+          {donnees.itemsSansCout > 0 && (
+            <p style={{ fontSize: 13, color: 'var(--texte-doux, #6b7280)', marginTop: -8, marginBottom: 20 }}>
+              {donnees.itemsSansCout} ligne(s) de vente n'ont pas de prix d'achat : le bénéfice est surestimé tant que les prix d'achat ne sont pas renseignés sur les produits.
+            </p>
+          )}
+
+          {mois.length === 0 ? (
+            <p className="etat-vide">Aucune vente sur cette période.</p>
+          ) : (
+            <>
+              <div className="db-carte" style={{ marginBottom: 20 }}>
+                <div className="db-carte-tete">
+                  <h2>Par mois</h2>
+                </div>
+                <div className="rs-legende">
+                  <span><i style={{ background: 'var(--accent)' }} />Chiffre d'affaires</span>
+                  <span><i style={{ background: 'var(--accent)', opacity: 0.55 }} />Bénéfice</span>
+                </div>
+                <div className="db-barres">
+                  {mois.map((m) => (
+                    <div key={m.month} className="db-barre-ligne">
+                      <p className="db-barre-nom">{formatMois(m.month)}</p>
+                      <div className="rs-duo">
+                        <div className="db-barre-piste">
+                          <div className="db-barre-rempli" style={{ width: `${Math.max(2, (Math.max(m.revenue, 0) / maxMois) * 100)}%` }} />
+                        </div>
+                        <div className="db-barre-piste">
+                          <div className="db-barre-rempli rs-benef" style={{ width: `${Math.max(2, (Math.max(m.profit, 0) / maxMois) * 100)}%` }} />
+                        </div>
+                      </div>
+                      <p className="db-barre-montant">{fcfa(m.revenue)} FCFA</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="db-carte">
+                <div className="db-carte-tete">
+                  <h2>Tableau mensuel</h2>
+                </div>
+                <div className="rs-table-wrap">
+                  <table className="rs-table">
+                    <thead>
+                      <tr>
+                        <th>Mois</th>
+                        <th>CA</th>
+                        <th>Annulé</th>
+                        <th>Bénéfice</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...mois].reverse().map((m) => (
+                        <tr key={m.month}>
+                          <td>{formatMois(m.month)}</td>
+                          <td>{fcfa(m.revenue)}</td>
+                          <td>{m.cancelledCount > 0 ? `${fcfa(m.cancelled)} (${m.cancelledCount})` : '—'}</td>
+                          <td className={m.profit < 0 ? 'rs-neg' : ''}>{fcfa(m.profit)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td>Total</td>
+                        <td>{fcfa(donnees.revenue)}</td>
+                        <td>{donnees.cancelledCount > 0 ? `${fcfa(donnees.cancelled)} (${donnees.cancelledCount})` : '—'}</td>
+                        <td className={donnees.profit < 0 ? 'rs-neg' : ''}>{fcfa(donnees.profit)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '10px 0 0' }}>
+                  Montants en FCFA. Annulé : montant et (nombre) de commandes annulées, classées selon leur date de création.
+                </p>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 function DashboardCommerce() {
   const { user, merchant, aRole } = useAuth();
   const navigate = useNavigate();
@@ -324,8 +646,6 @@ function DashboardCommerce() {
   const [commandeAEncaisser, setCommandeAEncaisser] = useState(null);
   const [demandesCredit, setDemandesCredit] = useState([]);
   const [demandesRetour, setDemandesRetour] = useState([]);
-  const [chiffreAffaires, setChiffreAffaires] = useState(null);
-  const [benefice, setBenefice] = useState(null);
   const [venteParBoutique, setVenteParBoutique] = useState(null);
   const [alerteSalaires, setAlerteSalaires] = useState(null);
   const [lotsBientotPerimes, setLotsBientotPerimes] = useState([]);
@@ -435,8 +755,6 @@ function DashboardCommerce() {
         .catch((err) => setErreur(err.message));
     }
     if (estManager) {
-      api.getRevenue().then(setChiffreAffaires).catch((err) => setErreur(err.message));
-      api.getProfit().then(setBenefice).catch((err) => setErreur(err.message));
       api.getSalaryAlert().then(setAlerteSalaires).catch((err) => setErreur(err.message));
     }
     if (estPharmacie && vueEquipe) {
@@ -635,7 +953,6 @@ function DashboardCommerce() {
   const max7 = Math.max(1, ...jours7.map((j) => j.total));
   const total7 = jours7.reduce((sum, j) => sum + j.total, 0);
   const alertesStock = [...enRupture, ...enFaible];
-  const maxMois = Math.max(1, ...(chiffreAffaires?.byMonth || []).map((m) => Number(m.total) || 0));
   const maxBoutique = Math.max(1, ...(venteParBoutique || []).map((v) => Number(v.total) || 0));
 
   return (
@@ -676,6 +993,11 @@ function DashboardCommerce() {
         <button className={onglet === 'activite' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('activite')}>
           Journal d'activité
         </button>
+        {estManager && (
+          <button className={onglet === 'resultat' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('resultat')}>
+            Résultat
+          </button>
+        )}
         {vueEquipe && (
           <button className={onglet === 'suivi' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('suivi')}>
             Stock &amp; livraisons
@@ -1224,61 +1546,15 @@ function DashboardCommerce() {
         </>
       )}
 
+      {onglet === 'resultat' && estManager && (
+        <ResultatOnglet
+          warehouseId={warehouseId}
+          boutiqueNom={warehouses.find((w) => w.id === warehouseId)?.name || ''}
+        />
+      )}
+
       {onglet === 'activite' && (
         <>
-          {estManager && chiffreAffaires && (
-            <div style={{ marginBottom: 24 }}>
-              <div className="db-kpis">
-                <div className="db-kpi db-kpi--hero">
-                  <span className="db-kpi-icone"><IconValeur /></span>
-                  <p className="db-kpi-label">Chiffre d'affaires total</p>
-                  <p className="db-kpi-valeur">{fcfa(chiffreAffaires.total)} <small>FCFA</small></p>
-                </div>
-                {benefice && (
-                  <div className="db-kpi">
-                    <span className="db-kpi-icone"><IconVentes /></span>
-                    <p className="db-kpi-label">Bénéfice total</p>
-                    <p className="db-kpi-valeur">{fcfa(benefice.total)} <small>FCFA</small></p>
-                    {Number(chiffreAffaires.total) > 0 && (
-                      <p className="db-kpi-sous">Marge : {Math.round((Number(benefice.total) / Number(chiffreAffaires.total)) * 100)} %</p>
-                    )}
-                  </div>
-                )}
-              </div>
-              {benefice && benefice.itemsSansCout > 0 && (
-                <p style={{ fontSize: 13, color: 'var(--texte-doux, #6b7280)', marginTop: -8, marginBottom: 20 }}>
-                  {benefice.itemsSansCout} ligne(s) de vente n'ont pas de prix d'achat : le bénéfice est surestimé tant que les prix d'achat ne sont pas renseignés sur les produits.
-                </p>
-              )}
-
-              {chiffreAffaires.byMonth.length > 0 && (
-                <div className="db-carte">
-                  <div className="db-carte-tete">
-                    <h2>Chiffre d'affaires par mois</h2>
-                  </div>
-                  <div className="db-barres">
-                    {chiffreAffaires.byMonth.map((m) => (
-                      <div key={m.month} className="db-barre-ligne">
-                        <p className="db-barre-nom">{formatMois(m.month)}</p>
-                        <div className="db-barre-piste">
-                          <div className="db-barre-rempli" style={{ width: `${Math.max(2, ((Number(m.total) || 0) / maxMois) * 100)}%` }} />
-                        </div>
-                        <p className="db-barre-montant">
-                          {fcfa(m.total)} FCFA
-                          {benefice && (
-                            <span className="db-barre-sous">
-                              Bénéfice : {fcfa(benefice.byMonth.find((b) => b.month === m.month)?.total || 0)} FCFA
-                            </span>
-                          )}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
           {vueEquipe && venteParBoutique && venteParBoutique.length > 0 && (
             <div className="db-carte" style={{ marginBottom: 24 }}>
               <div className="db-carte-tete">

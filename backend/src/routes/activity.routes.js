@@ -188,6 +188,238 @@ router.get('/profit', requireRole('manager'), async (req, res) => {
   }
 });
 
+// GET /activity/result?from=AAAA-MM-JJ&to=AAAA-MM-JJ[&warehouseId=] — onglet
+// « Résultat » du tableau de bord (manager uniquement). Même base que /revenue
+// et /profit (commandes encaissées, validated_at renseigné), mais sur une période
+// choisie et, si warehouseId est fourni, pour une seule boutique.
+// L'« annulé » = commandes au statut annulee, classées selon leur date de création.
+router.get('/result', requireRole('manager'), async (req, res) => {
+  const { from, to, warehouseId } = req.query;
+  const formatDate = /^\d{4}-\d{2}-\d{2}$/;
+  if (!formatDate.test(from || '') || !formatDate.test(to || '')) {
+    return res.status(400).json({ error: 'Les dates "from" et "to" sont requises (AAAA-MM-JJ).' });
+  }
+  if (from > to) {
+    return res.status(400).json({ error: 'La date de début doit précéder la date de fin.' });
+  }
+  const formatUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  if (warehouseId && !formatUuid.test(warehouseId)) {
+    return res.status(400).json({ error: 'Boutique invalide.' });
+  }
+
+  try {
+    const params = [req.user.merchantId, from, to];
+    let filtreBoutique = '';
+    if (warehouseId) {
+      params.push(warehouseId);
+      filtreBoutique = ' AND o.warehouse_id = $4';
+    }
+
+    const ventesResult = await pool.query(
+      `SELECT to_char(date_trunc('month', o.validated_at), 'YYYY-MM') AS month,
+              COALESCE(SUM(o.total_amount), 0) AS total, COUNT(*) AS n
+       FROM orders o
+       WHERE o.merchant_id = $1 AND o.validated_at IS NOT NULL
+         AND o.validated_at >= $2::date AND o.validated_at < ($3::date + 1)${filtreBoutique}
+       GROUP BY 1`,
+      params
+    );
+
+    const beneficeResult = await pool.query(
+      `WITH marge_commande AS (
+         SELECT o.id, o.validated_at, COALESCE(o.discount_amount, 0) AS remise,
+                COALESCE(SUM(oi.line_total - oi.quantity * COALESCE(oi.unit_cost, p.cost_price, 0)), 0) AS marge_brute
+         FROM orders o
+         LEFT JOIN order_items oi ON oi.order_id = o.id
+         LEFT JOIN products p ON p.id = oi.product_id
+         WHERE o.merchant_id = $1 AND o.validated_at IS NOT NULL
+           AND o.validated_at >= $2::date AND o.validated_at < ($3::date + 1)${filtreBoutique}
+         GROUP BY o.id
+       )
+       SELECT to_char(date_trunc('month', validated_at), 'YYYY-MM') AS month,
+              COALESCE(SUM(marge_brute - remise), 0) AS total
+       FROM marge_commande
+       GROUP BY 1`,
+      params
+    );
+
+    const annuleResult = await pool.query(
+      `SELECT to_char(date_trunc('month', o.created_at), 'YYYY-MM') AS month,
+              COALESCE(SUM(o.total_amount), 0) AS total, COUNT(*) AS n
+       FROM orders o
+       WHERE o.merchant_id = $1 AND o.status = 'annulee'
+         AND o.created_at >= $2::date AND o.created_at < ($3::date + 1)${filtreBoutique}
+       GROUP BY 1`,
+      params
+    );
+
+    const sansCoutResult = await pool.query(
+      `SELECT COUNT(*) AS n
+       FROM order_items oi
+       JOIN orders o ON o.id = oi.order_id
+       LEFT JOIN products p ON p.id = oi.product_id
+       WHERE o.merchant_id = $1 AND o.validated_at IS NOT NULL
+         AND o.validated_at >= $2::date AND o.validated_at < ($3::date + 1)${filtreBoutique}
+         AND COALESCE(oi.unit_cost, p.cost_price, 0) = 0`,
+      params
+    );
+
+    const parMois = {};
+    const ligne = (mois) => {
+      if (!parMois[mois]) parMois[mois] = { month: mois, revenue: 0, ordersCount: 0, profit: 0, cancelled: 0, cancelledCount: 0 };
+      return parMois[mois];
+    };
+    ventesResult.rows.forEach((r) => { const l = ligne(r.month); l.revenue = Number(r.total); l.ordersCount = Number(r.n); });
+    beneficeResult.rows.forEach((r) => { ligne(r.month).profit = Number(r.total); });
+    annuleResult.rows.forEach((r) => { const l = ligne(r.month); l.cancelled = Number(r.total); l.cancelledCount = Number(r.n); });
+
+    const byMonth = Object.values(parMois).sort((a, b) => a.month.localeCompare(b.month));
+    const somme = (cle) => byMonth.reduce((t, m) => t + m[cle], 0);
+
+    res.json({
+      from,
+      to,
+      revenue: somme('revenue'),
+      ordersCount: somme('ordersCount'),
+      profit: somme('profit'),
+      cancelled: somme('cancelled'),
+      cancelledCount: somme('cancelledCount'),
+      itemsSansCout: Number(sansCoutResult.rows[0].n),
+      byMonth,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du calcul du résultat.' });
+  }
+});
+
+// GET /activity/charges?from=AAAA-MM-JJ&to=AAAA-MM-JJ[&warehouseId=] — sous-onglet
+// « Charges » de l'onglet Résultat (manager uniquement). Comptées :
+//  - les sorties de caisse (avec une nature de charge, ou sans) ;
+//  - les salaires payés (salary_payments, net versé) — leurs sorties de caisse
+//    « Salaire… » sont ignorées pour ne pas les compter deux fois.
+// Ignorées (ce ne sont pas des charges) : avances sur salaire, remboursements de
+// retours, transferts entre boutiques, paiements à l'État, règlements de factures,
+// acquisitions, cessions et financements.
+// Montant d'une charge = montant sorti + retenue BRS − TVA déductible (hors taxe).
+const NATURES_CHARGES_RESULTAT = {
+  '622': 'Loyer', '605': 'Électricité / Eau', '628': 'Téléphone et Internet', '625': 'Assurance',
+  '632': 'Honoraires / Comptabilité', '624': 'Entretien et réparations', '612': 'Livraison',
+  '618': 'Transport', '631': 'Frais bancaires', '627': 'Publicité', '641': 'Impôts et taxes', '658': 'Autre charge',
+};
+const REGLES_NATURE_RESULTAT = [
+  [/loyer/, '622'],
+  [/electricite|courant|senelec|seneau|sen eau|\beau\b/, '605'],
+  [/wifi|internet|telephone|forfait|sonatel/, '628'],
+  [/assurance/, '625'],
+  [/comptab|cabinet|honorair|avocat|conseil|notaire/, '632'],
+  [/menuisi|reparation|entretien|maintenance|plomb|electricien|peinture|nettoyage/, '624'],
+  [/livraison/, '612'],
+  [/transport|taxi|carburant|essence|gasoil/, '618'],
+  [/banque|bancaire|agios/, '631'],
+  [/publicite|affiche|flyer|promotion/, '627'],
+  [/impot|taxe|patente|dgid/, '641'],
+];
+const MOTIFS_NON_CHARGES = ['Paiement État — ', 'Règlement facture — ', 'Acquisition — ', 'Cession — ', 'Financement — '];
+
+router.get('/charges', requireRole('manager'), async (req, res) => {
+  const { from, to, warehouseId } = req.query;
+  const formatDate = /^\d{4}-\d{2}-\d{2}$/;
+  if (!formatDate.test(from || '') || !formatDate.test(to || '')) {
+    return res.status(400).json({ error: 'Les dates "from" et "to" sont requises (AAAA-MM-JJ).' });
+  }
+  if (from > to) {
+    return res.status(400).json({ error: 'La date de début doit précéder la date de fin.' });
+  }
+  const formatUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  if (warehouseId && !formatUuid.test(warehouseId)) {
+    return res.status(400).json({ error: 'Boutique invalide.' });
+  }
+
+  try {
+    const params = [req.user.merchantId, from, to];
+    let filtreCaisse = '';
+    let filtreSalaire = '';
+    if (warehouseId) {
+      params.push(warehouseId);
+      filtreCaisse = ' AND ce.warehouse_id = $4';
+      filtreSalaire = ' AND u.warehouse_id = $4';
+    }
+
+    const caisseResult = await pool.query(
+      `SELECT to_char(ce.expense_date, 'YYYY-MM') AS month, ce.amount, COALESCE(ce.reason, '') AS reason,
+              ce.charge_account, COALESCE(ce.tva_amount, 0) AS tva, COALESCE(ce.brs_retenue, 0) AS retenue
+       FROM cash_expenses ce
+       WHERE ce.merchant_id = $1 AND ce.movement_type = 'sortie' AND COALESCE(ce.amount, 0) > 0
+         AND ce.expense_date >= $2::date AND ce.expense_date <= $3::date${filtreCaisse}`,
+      params
+    );
+
+    const salairesResult = await pool.query(
+      `SELECT to_char(sp.paid_at, 'YYYY-MM') AS month, COALESCE(SUM(sp.amount), 0) AS total, COUNT(*) AS n
+       FROM salary_payments sp
+       JOIN users u ON u.id = sp.user_id
+       WHERE u.merchant_id = $1 AND sp.paid_at >= $2::date AND sp.paid_at < ($3::date + 1)${filtreSalaire}
+       GROUP BY 1`,
+      params
+    );
+
+    const parMois = {};
+    const parNature = {};
+    const ajouter = (mois, cle, label, montant, nombre) => {
+      if (!parMois[mois]) parMois[mois] = { month: mois, total: 0 };
+      parMois[mois].total += montant;
+      if (!parNature[cle]) parNature[cle] = { code: cle, label, total: 0, count: 0 };
+      parNature[cle].total += montant;
+      parNature[cle].count += nombre;
+    };
+
+    for (const row of caisseResult.rows) {
+      const motif = (row.reason || '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+        .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (/^(salaire|avance sur salaire|remboursement retour|transfert vers)/.test(motif)) continue;
+      if (MOTIFS_NON_CHARGES.some((m) => row.reason.startsWith(m))) continue;
+
+      const montant = Number(row.amount);
+      const brut = montant + Number(row.retenue);
+      const charge = brut - Math.min(Number(row.tva), brut);
+
+      let code = /^6\d{1,5}$/.test(row.charge_account || '') ? row.charge_account : null;
+      if (!code) {
+        const regle = REGLES_NATURE_RESULTAT.find(([re]) => re.test(motif));
+        code = regle ? regle[1] : '658';
+      }
+      const label = NATURES_CHARGES_RESULTAT[code] || 'Autre charge';
+      ajouter(row.month, label, label, charge, 1);
+    }
+
+    for (const row of salairesResult.rows) {
+      ajouter(row.month, 'Salaires', 'Salaires', Number(row.total), Number(row.n));
+    }
+
+    const arrondi = (n) => Math.round(n);
+    const byMonth = Object.values(parMois)
+      .map((m) => ({ month: m.month, total: arrondi(m.total) }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+    const byNature = Object.values(parNature)
+      .map((n) => ({ label: n.label, total: arrondi(n.total), count: n.count }))
+      .sort((a, b) => b.total - a.total);
+
+    res.json({
+      from,
+      to,
+      total: byMonth.reduce((t, m) => t + m.total, 0),
+      count: byNature.reduce((t, n) => t + n.count, 0),
+      byNature,
+      byMonth,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du calcul des charges.' });
+  }
+});
+
 // GET /activity/revenue-by-warehouse — ventes encaissées groupées par
 // boutique. Contrairement à /revenue (chiffre d'affaires global, manager
 // uniquement), cette route est ouverte au gérant, mais SEULEMENT pour sa
