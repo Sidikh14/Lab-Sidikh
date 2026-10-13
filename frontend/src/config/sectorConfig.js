@@ -46,17 +46,6 @@ export const SECTEURS = {
       { key: 'numeroSerie', label: 'Numéro de série', type: 'text' },
     ],
   },
-  restauration: {
-    label: 'Restauration',
-    theme: null,
-    libelleProduit: 'Plat',
-    libelleBoutique: 'Restaurant',
-    libelleClient: 'Client',
-    libelleStock: 'Carte',
-    libelleEquipe: 'Brigade',
-    libelleVendeur: 'Serveur',
-    champsProduitSup: [],
-  },
 };
 
 // Secteurs retirés de l'inscription mais encore présents en base : leurs commerces gardent

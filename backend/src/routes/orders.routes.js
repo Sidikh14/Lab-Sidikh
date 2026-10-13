@@ -770,7 +770,7 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
 
   try {
     const orderResult = await pool.query(
-      `SELECT id, total_amount, status, client_id, warehouse_id, created_by, qr_status FROM orders WHERE id = $1 AND merchant_id = $2`,
+      `SELECT id, total_amount, status, client_id, warehouse_id, created_by FROM orders WHERE id = $1 AND merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
     const order = orderResult.rows[0];
@@ -786,10 +786,6 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
     }
     if (order.status !== 'en_attente') {
       return res.status(400).json({ error: 'Cette commande a déjà été traitée.' });
-    }
-    // Commande passée par QR : elle ne s'encaisse qu'une fois acceptée par la caisse.
-    if (order.qr_status === 'a_valider') {
-      return res.status(400).json({ error: 'Cette commande du QR doit être validée avant encaissement.' });
     }
 
     // Une vente à crédit n'est autorisée que pour un client déjà enregistré

@@ -23,6 +23,42 @@ const TYPES = [
   { id: 'cel', label: 'CEL valeur ajoutée' },
   { id: 'cel_vl', label: 'CEL valeur locative' },
 ];
+// Icônes des cartes de choix de déclaration (SVG simples, sans dépendance).
+const ICONES_TYPES = {
+  tva: 'M5 19L19 5M7 8a1.6 1.6 0 100-3.2A1.6 1.6 0 007 8zm10 11.2a1.6 1.6 0 100-3.2 1.6 1.6 0 000 3.2z',
+  ir: 'M12 12a4 4 0 100-8 4 4 0 000 8zm-7 9a7 7 0 0114 0',
+  trimf: 'M4 11l8-7 8 7v9H4v-9zm5 9v-5h6v5',
+  cfce: 'M4 20V9l6 3V9l6 3V5h4v15H4z',
+  brs: 'M7 3h8l4 4v14H7V3zm8 0v4h4M10 12h6M10 16h6',
+  cel: 'M4 20V4m0 16h16M8 16v-4m4 4V8m4 8v-6',
+  cel_vl: 'M3 11l9-7 9 7M5 10v10h14V10M10 20v-6h4v6',
+};
+function IconeType({ id }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={ICONES_TYPES[id] || ICONES_TYPES.brs} />
+    </svg>
+  );
+}
+
+const STYLE_CARTES = `
+.decl-cartes { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; margin-bottom: 18px; }
+.decl-carte { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left; padding: 14px; cursor: pointer;
+  border: 1.5px solid rgba(128,128,128,0.25); border-radius: 14px; background: var(--surface, transparent); color: inherit; font: inherit;
+  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
+.decl-carte:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(15,35,70,0.10); border-color: var(--azur, #2f80ed); }
+.decl-carte:focus-visible { outline: 3px solid var(--azur, #2f80ed); outline-offset: 2px; }
+.decl-carte.actif { border-color: var(--azur, #2f80ed); box-shadow: 0 0 0 3px rgba(47,128,237,0.18); }
+.decl-carte .decl-icone { width: 40px; height: 40px; border-radius: 11px; display: flex; align-items: center; justify-content: center;
+  background: rgba(47,128,237,0.12); color: var(--azur, #2f80ed); }
+.decl-carte.actif .decl-icone { background: var(--azur, #2f80ed); color: #fff; }
+.decl-carte .decl-nom { font-weight: 600; font-size: 14px; line-height: 1.25; }
+.decl-statut { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; padding: 3px 9px; border-radius: 999px; }
+.decl-statut::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.decl-statut.faire { color: #a15c00; background: rgba(245,166,35,0.18); }
+.decl-statut.deposee { color: #137a4b; background: rgba(31,157,99,0.15); }
+`;
+
 const NOMS_TYPES = {
   tva: 'TVA', ir: 'IR RAS Salaires', trimf: 'TRIMF', cfce: 'CFCE', brs: 'RAS Tiers et loyers',
   cel: 'CEL sur la valeur ajoutée', cel_vl: 'CEL sur la valeur locative', vrs: 'Retenues sur salaires',
@@ -182,6 +218,9 @@ function DeclarationsTab() {
   }, [mois]);
 
   const periode = TYPES_ANNUELS.includes(type) ? annee : mois;
+  // Statut de chaque déclaration pour la période choisie (année pour les CEL, mois pour les autres).
+  const depotsListe = donnees ? donnees.depots : null;
+  const statutDe = (id) => (depotsListe && depotsListe.some((f) => f.kind === id && f.period === (TYPES_ANNUELS.includes(id) ? annee : mois)) ? 'deposee' : 'faire');
   // Pendant un changement de déclaration, on garde l'ancien contenu à l'écran jusqu'à l'arrivée du nouveau.
   const d = donnees && donnees.declaration.kind === type ? donnees.declaration : null;
 
@@ -221,10 +260,22 @@ function DeclarationsTab() {
       </p>
       {erreurAction && <div className="erreur">{erreurAction}</div>}
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-        {TYPES.map((t) => (
-          <button key={t.id} type="button" className={`btn ${t.id === type ? 'btn-principal' : ''}`} onClick={() => setType(t.id)}>{t.label}</button>
-        ))}
+      <style>{STYLE_CARTES}</style>
+      <div className="decl-cartes" role="tablist" aria-label="Choix de la déclaration">
+        {TYPES.map((t) => {
+          const st = depotsListe ? statutDe(t.id) : null;
+          return (
+            <button key={t.id} type="button" role="tab" aria-selected={t.id === type} className={`decl-carte${t.id === type ? ' actif' : ''}`} onClick={() => setType(t.id)}>
+              <span className="decl-icone"><IconeType id={t.id} /></span>
+              <span className="decl-nom">{t.label}</span>
+              {st ? (
+                <span className={`decl-statut ${st}`}>{st === 'deposee' ? 'Déposée' : 'À faire'}</span>
+              ) : (
+                <span className="decl-statut" style={{ opacity: 0.5 }}>…</span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 16 }}>

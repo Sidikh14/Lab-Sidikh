@@ -2448,8 +2448,8 @@ router.get('/declarations/cel', async (req, res) => {
 // ----- CEL sur la valeur locative : numéros de ligne du document officiel de la DGID -----
 // Déclarée avant le 31 janvier de l'année d'imposition. Le loyer annuel (ligne 45) est le loyer mensuel
 // à verser, repris des charges (dernier loyer comptabilisé en 622), multiplié par le nombre de mois d'activité.
-// GET /accounting/declarations/cel-vl?year=AAAA[&loyer=&mois=&terrains=&constructions=&agencements=&gratuit=&percu=&prepond=1&hotel=1]
-router.get('/declarations/cel-vl', async (req, res) => {
+// GET /accounting/declarations/cel-vl (ou cel_vl, nom utilisé par le client)?year=AAAA[&loyer=&mois=&terrains=&constructions=&agencements=&gratuit=&percu=&prepond=1&hotel=1]
+router.get(['/declarations/cel-vl', '/declarations/cel_vl'], async (req, res) => {
   try {
     const annee = String(req.query.year || '');
     if (!ANNEE_RE.test(annee)) return res.status(400).json({ error: 'Année invalide (AAAA).' });
