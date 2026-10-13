@@ -2341,7 +2341,7 @@ router.get('/declarations/brs', async (req, res) => {
     const detail = r.rows.map((x) => ({ name: x.beneficiary_name, ref: x.beneficiary_ref || '', nature: x.nature, paidOn: x.paid_on, gross: Math.round(Number(x.gross_ht)) }));
     const somme = (nature) => detail.filter((d) => d.nature === nature).reduce((t, d) => t + d.gross, 0);
     // Lignes du formulaire « RAS Tiers et loyers » de la DGID.
-    // Ligne 10 = prestations + loyers ; ligne 20 = dont loyers ; ligne 30 = ligne 10.
+    // Ligne 10 = prestations + loyers ; ligne 20 laissée vide ; ligne 30 = ligne 10.
     const prestations = somme('prestation');
     const L20 = somme('loyer');
     const L10 = prestations + L20;
@@ -2352,7 +2352,7 @@ router.get('/declarations/brs', async (req, res) => {
     if (detail.length === 0) alertes.push('Aucune somme versée à un tiers enregistrée pour ce mois : ajoutez-les dans le registre ci-dessous, ou déclarez « NÉANT ».');
     const lignes = [
       { ligne: 10, label: 'Montant brut des sommes versées à des résidents du Sénégal', value: L10 },
-      { ligne: 20, label: 'Dont montant brut des sommes versées à titre de loyer', value: L20 },
+      { ligne: 20, label: 'Montant brut des sommes versées à titre de loyer', value: null }, // laissée vide : les loyers sont comptés dans la ligne 10
       { ligne: 30, label: 'Total des sommes versées', value: L30 },
       { ligne: 40, label: 'Total des retenues opérées', value: L40, fort: true },
     ];
