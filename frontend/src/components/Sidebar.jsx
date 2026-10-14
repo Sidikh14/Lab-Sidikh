@@ -237,6 +237,17 @@ const STYLES_RAIL = `
 .barre-laterale .nav-groupe-bouton:hover { background: rgba(255,255,255,.07); }
 .barre-laterale .nav-groupe-bouton.ouvert { background: rgba(255,255,255,.10); }
 .barre-laterale .nav-groupe-bouton.ouvert:hover { background: rgba(255,255,255,.14); }
+/* Hiérarchie : seule la page active est surlignée ; le titre de groupe ouvert reste simplement en gras. */
+.barre-laterale .nav-groupe-bouton.ouvert { background: transparent; color: #fff; font-weight: 700; }
+.barre-laterale .nav-groupe-bouton.ouvert:hover { background: rgba(255,255,255,.07); }
+.barre-laterale .nav-groupe-bouton .nav-texte { white-space: nowrap; }
+/* Sous-menus : icône seule (sans pastille), repère vertical à gauche, texte plus contrasté. */
+.barre-laterale .nav-groupe-liens { margin: 2px 0 8px 22px; padding: 0 0 0 8px; border-left: 1px solid rgba(244,244,247,.16); }
+.barre-laterale .nav-groupe-liens .nav-lien { gap: 10px; padding: 8px 10px; color: rgba(244,244,247,.9); }
+.barre-laterale .nav-groupe-liens .nav-lien .nav-icone { padding: 0; background: transparent; border-radius: 0; opacity: .95; }
+.barre-laterale .nav-groupe-liens .nav-lien:not(.actif):hover .nav-icone { background: transparent; transform: none; color: #fff; }
+.barre-laterale .nav-groupe-liens .nav-lien.actif .nav-icone { background: transparent; color: var(--soleil); }
+.barre-laterale:not(.reduite) .nav-groupe-liens .nav-lien:not(.actif):hover { transform: none; }
 .barre-laterale .nav-groupe-liens { margin: 2px 0 8px; padding: 0 0 0 10px; }
 .barre-laterale.reduite .pied-sidebar { flex-direction: column; align-items: center; justify-content: center; padding-left: 0; padding-right: 0; gap: 8px; }
 .barre-laterale .bouton-deconnexion-rail { display: none; }
@@ -315,7 +326,7 @@ function IconFermer() {
 }
 
 // Accordéon : un seul groupe est déplié à la fois. Ouvrir l'un referme l'autre.
-const TITRES_GROUPES = { gestion: 'Gestion & Stock', finance: 'Finance & Administration' };
+const TITRES_GROUPES = { gestion: 'Gestion & Stock', finance: 'Finance & Admin' };
 const CHEMINS_FINANCE = ['/comptabilite', '/fiscalite', '/paie', '/entreprise', '/equipe'];
 const CLE_GROUPE = 'sidebarGroupeOuvert';
 

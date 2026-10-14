@@ -4,6 +4,8 @@
 // Utilisation (depuis le dossier du frontend, après avoir fait un commit git) :
 //   node reduire-taille.mjs              -> simulation : affiche ce qui serait modifié, ne change rien
 //   node reduire-taille.mjs --appliquer  -> applique les modifications
+//   node reduire-taille.mjs --appliquer --forcer --seulement src/components/Sidebar.jsx,src/pages/DashboardPage.jsx
+//                                         -> ne traite que ces fichiers (remplacés après la réduction)
 //
 // Sécurités : refuse de tourner deux fois (fichier src/.reduction-taille), ne touche jamais
 // aux règles @media (points de rupture), au CSS d'impression (@media print), ni aux bordures,
@@ -15,6 +17,10 @@ const FACTEUR = 0.94;
 const SRC = process.argv.includes('--src') ? process.argv[process.argv.indexOf('--src') + 1] : 'src';
 const APPLIQUER = process.argv.includes('--appliquer');
 const MARQUEUR = join(SRC, '.reduction-taille');
+// --seulement a,b : ne traite que ces fichiers (utile pour un fichier remplacé après la réduction)
+const SEULEMENT = process.argv.includes('--seulement')
+  ? process.argv[process.argv.indexOf('--seulement') + 1].split(',').map((f) => f.replace(/\\/g, '/'))
+  : null;
 
 if (!existsSync(SRC)) { console.error(`Dossier "${SRC}" introuvable : lancez la commande depuis le dossier du frontend.`); process.exit(1); }
 if (APPLIQUER && existsSync(MARQUEUR) && !process.argv.includes('--forcer')) {
@@ -117,6 +123,7 @@ function* fichiers(dossier) {
 
 const total = { css: 0, js: 0, svg: 0, fichiers: 0 };
 for (const chemin of fichiers(SRC)) {
+  if (SEULEMENT && !SEULEMENT.includes(chemin.replace(/\\/g, '/'))) continue;
   const original = readFileSync(chemin, 'utf8');
   const compteur = { css: 0, js: 0, svg: 0 };
   let neuf = transformerCss(original, compteur);
@@ -128,4 +135,4 @@ for (const chemin of fichiers(SRC)) {
   if (APPLIQUER) writeFileSync(chemin, neuf, 'utf8');
 }
 console.log(`\n${total.fichiers} fichier(s), ${total.css} règle(s) CSS, ${total.js} style(s) en ligne, ${total.svg} icône(s) ${APPLIQUER ? 'modifiés.' : 'seraient modifiés (simulation : ajoutez --appliquer pour appliquer).'}`);
-if (APPLIQUER) writeFileSync(MARQUEUR, `Réduction de ${Math.round((1 - FACTEUR) * 100)} % appliquée le ${new Date().toISOString()}\n`, 'utf8');
+if (APPLIQUER && !SEULEMENT) writeFileSync(MARQUEUR, `Réduction de ${Math.round((1 - FACTEUR) * 100)} % appliquée le ${new Date().toISOString()}\n`, 'utf8');

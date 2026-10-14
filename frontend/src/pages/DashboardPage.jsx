@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import { SelecteurBoutique } from '../components/SelecteurBoutique';
 import { useAuth } from '../context/AuthContext';
 import { StatusBadge } from '../components/StatusBadge';
 import { ActiviteListe, initiales, couleurPour } from '../components/ActiviteListe';
@@ -179,13 +178,30 @@ const CSS_DASHBOARD = `
 .db-carte-tete h2{margin:0;font-size:15px}
 .db-carte-tete span{font-size:13px;font-weight:600;color:var(--encre-douce);font-variant-numeric:tabular-nums}
 .db-lien{padding:0;border:none;background:none;color:var(--accent);font-size:13px;cursor:pointer}
-.db-histo{display:flex;align-items:flex-end;gap:10px;height:190px}
-.db-histo-col{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:6px}
-.db-histo-barre{width:100%;max-width:44px;border-radius:8px 8px 4px 4px;background:#e0e7ff;background:color-mix(in srgb,var(--accent) 22%,transparent);transition:height .3s}
-.db-histo-col--jour .db-histo-barre{background:var(--accent)}
-.db-histo-val{font-size:11px;white-space:nowrap;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.db-chart-resume{margin:-4px 0 10px;font-size:12px;color:var(--encre-douce)}
+.db-chart-resume strong{font-weight:700}
+.db-chart-up{color:var(--vif,#157347)}
+.db-chart-down{color:var(--danger,#b42318)}
+.db-chart{position:relative;height:196px;margin-top:6px}
+.db-chart-plot{position:absolute;left:40px;right:0;bottom:26px;height:140px}
+.db-chart-ligne{position:absolute;left:0;right:0;height:0;border-top:1px solid var(--trait,#e5e7eb)}
+.db-chart-ligne span{position:absolute;left:-40px;width:34px;transform:translateY(-50%);text-align:right;font-size:10.5px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.db-chart-moy{position:absolute;left:0;right:0;height:0;border-top:1.5px dashed var(--soleil,#f2a81d);z-index:2;pointer-events:none}
+.db-chart-moy span{position:absolute;right:0;bottom:3px;padding:1px 6px;border-radius:6px;font-size:10.5px;font-weight:600;background:var(--surface,#fff);color:var(--encre-douce)}
+.db-histo{position:absolute;left:40px;right:0;top:0;bottom:0;display:flex;align-items:flex-end;gap:10px}
+.db-histo-col{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;cursor:default;outline:none}
+.db-histo-barre{width:100%;max-width:44px;border-radius:7px 7px 3px 3px;background:color-mix(in srgb,var(--accent) 40%,transparent);transition:height .3s,background .15s}
+.db-histo-col--vide .db-histo-barre{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.db-histo-col:hover .db-histo-barre,.db-histo-col:focus-visible .db-histo-barre{background:color-mix(in srgb,var(--accent) 65%,transparent)}
+.db-histo-col--jour .db-histo-barre,.db-histo-col--jour:hover .db-histo-barre{background:var(--accent)}
+.db-histo-val{height:18px;line-height:18px;font-size:11px;white-space:nowrap;color:var(--encre-douce);font-variant-numeric:tabular-nums}
 .db-histo-col--jour .db-histo-val{color:var(--accent);font-weight:700}
-.db-histo-label{font-size:12px;color:var(--encre-douce)}
+.db-histo-label{height:26px;line-height:26px;font-size:12px;text-transform:capitalize;color:var(--encre-douce)}
+.db-histo-col--jour .db-histo-label{color:var(--accent);font-weight:700}
+.db-chart-tip{position:absolute;z-index:5;transform:translateX(-50%);min-width:140px;padding:8px 10px;border-radius:10px;background:var(--encre,#0f2747);color:#fff;font-size:12px;line-height:1.35;box-shadow:0 8px 20px rgba(0,0,0,.25);pointer-events:none;text-align:left}
+.db-chart-tip strong{display:block;font-size:12px;text-transform:capitalize}
+.db-chart-tip span{display:block;opacity:.85}
+.db-chart-vide{position:absolute;left:40px;right:0;top:0;bottom:26px;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--encre-douce);pointer-events:none}
 .db-cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start;margin-bottom:24px}
 .db-puces{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
 .db-puce{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--trait,#e5e7eb);border-radius:999px;background:var(--surface,#fff);color:var(--encre-douce);font-size:12px;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
@@ -660,6 +676,7 @@ function DashboardCommerce() {
   // Même boutique active que Stock/Ventes (mémorisée en local), pour que le
   // manager n'ait pas à la re-choisir en changeant de page.
   const [warehouses, setWarehouses] = useState([]);
+  const [jourSurvole, setJourSurvole] = useState(null);
   const [warehouseId, setWarehouseId] = useState(() => (estManager ? localStorage.getItem('boutiqueActiveId') || '' : ''));
   const [chargementBoutiques, setChargementBoutiques] = useState(estManager);
 
@@ -940,19 +957,23 @@ function DashboardCommerce() {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
     const cle = d.toDateString();
-    const total = orders
-      .filter((o) => new Date(o.created_at).toDateString() === cle)
-      .reduce((sum, o) => sum + Number(o.total_amount), 0);
+    const duJour = orders.filter((o) => new Date(o.created_at).toDateString() === cle);
+    const total = duJour.reduce((sum, o) => sum + Number(o.total_amount), 0);
     return {
       cle,
       total,
+      nb: duJour.length,
       estAujourdhui: i === 6,
-      label: d.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', ''),
+      label: i === 6 ? 'Auj.' : d.toLocaleDateString('fr-FR', { weekday: 'short' }).replace('.', ''),
       titre: d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' }),
     };
   });
   const max7 = Math.max(1, ...jours7.map((j) => j.total));
   const total7 = jours7.reduce((sum, j) => sum + j.total, 0);
+  const moyenne7 = total7 / 7;
+  const hier7 = jours7[5].total;
+  const evolutionJour = hier7 > 0 ? Math.round(((jours7[6].total - hier7) / hier7) * 100) : null;
+  const HAUTEUR_GRAPHIQUE = 140;
   const alertesStock = [...enRupture, ...enFaible];
   const maxBoutique = Math.max(1, ...(venteParBoutique || []).map((v) => Number(v.total) || 0));
 
@@ -961,7 +982,20 @@ function DashboardCommerce() {
       <div className="entete-page">
         <h1>Pilotage</h1>
         {estManager && warehouses.length > 0 && (
-          <SelecteurBoutique warehouses={warehouses} value={warehouseId} onChange={setWarehouseId} libelle="Boutique" />
+          <div className="selecteur-boutique">
+            <span className="selecteur-boutique-icone">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 9l1.5-5h15L21 9" />
+                <path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" />
+                <path d="M9 20v-6h6v6" />
+              </svg>
+            </span>
+            <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
+              {warehouses.filter((w) => w.is_active).map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
+          </div>
         )}
       </div>
 
@@ -1220,18 +1254,62 @@ function DashboardCommerce() {
                   <h2>Ventes des 7 derniers jours</h2>
                   <span>{fcfa(total7)} FCFA</span>
                 </div>
-                <div className="db-histo">
-                  {jours7.map((j) => (
-                    <div
-                      key={j.cle}
-                      className={'db-histo-col' + (j.estAujourdhui ? ' db-histo-col--jour' : '')}
-                      title={`${j.titre} : ${fcfa(j.total)} FCFA`}
-                    >
-                      <span className="db-histo-val">{j.total > 0 ? abreger(j.total) : ''}</span>
-                      <div className="db-histo-barre" style={{ height: Math.max(4, Math.round((j.total / max7) * 130)) }} />
-                      <span className="db-histo-label">{j.label}</span>
-                    </div>
-                  ))}
+                <p className="db-chart-resume">
+                  Moyenne <strong>{fcfa(Math.round(moyenne7))} FCFA</strong> / jour
+                  {evolutionJour !== null && (
+                    <>
+                      {' '}· Aujourd'hui{' '}
+                      <strong className={evolutionJour >= 0 ? 'db-chart-up' : 'db-chart-down'}>
+                        {evolutionJour >= 0 ? '+' : ''}{evolutionJour} %
+                      </strong>{' '}vs hier
+                    </>
+                  )}
+                </p>
+                <div className="db-chart">
+                  <div className="db-chart-plot" aria-hidden="true">
+                    {[0, 0.5, 1].map((r) => (
+                      <div key={r} className="db-chart-ligne" style={{ bottom: `${r * 100}%` }}>
+                        {total7 > 0 && <span>{r === 0 ? '0' : abreger(max7 * r)}</span>}
+                      </div>
+                    ))}
+                    {total7 > 0 && (
+                      <div className="db-chart-moy" style={{ bottom: `${Math.min(100, (moyenne7 / max7) * 100)}%` }}>
+                        <span>Moy. {abreger(moyenne7)}</span>
+                      </div>
+                    )}
+                  </div>
+                  {total7 === 0 && <div className="db-chart-vide">Aucune vente sur les 7 derniers jours</div>}
+                  <div className="db-histo" onMouseLeave={() => setJourSurvole(null)}>
+                    {jours7.map((j, i) => (
+                      <div
+                        key={j.cle}
+                        tabIndex={0}
+                        role="img"
+                        aria-label={`${j.titre} : ${fcfa(j.total)} FCFA, ${j.nb} vente(s)`}
+                        className={'db-histo-col' + (j.estAujourdhui ? ' db-histo-col--jour' : '') + (j.total === 0 ? ' db-histo-col--vide' : '')}
+                        onMouseEnter={() => setJourSurvole(i)}
+                        onFocus={() => setJourSurvole(i)}
+                        onBlur={() => setJourSurvole(null)}
+                      >
+                        <span className="db-histo-val">{j.total > 0 ? abreger(j.total) : ''}</span>
+                        <div className="db-histo-barre" style={{ height: j.total > 0 ? Math.max(4, Math.round((j.total / max7) * HAUTEUR_GRAPHIQUE)) : 3 }} />
+                        <span className="db-histo-label">{j.label}</span>
+                      </div>
+                    ))}
+                    {jourSurvole !== null && (
+                      <div
+                        className="db-chart-tip"
+                        style={{
+                          left: `${((jourSurvole + 0.5) / 7) * 100}%`,
+                          bottom: 26 + (jours7[jourSurvole].total > 0 ? Math.max(4, Math.round((jours7[jourSurvole].total / max7) * HAUTEUR_GRAPHIQUE)) : 3) + 22,
+                        }}
+                      >
+                        <strong>{jours7[jourSurvole].titre}</strong>
+                        <span>{fcfa(jours7[jourSurvole].total)} FCFA</span>
+                        <span>{jours7[jourSurvole].nb} vente(s)</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
