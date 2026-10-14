@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { SelecteurBoutique } from '../components/SelecteurBoutique';
 import { useAuth } from '../context/AuthContext';
 import { useLiveEvent } from '../offline/liveEvents';
 
@@ -371,20 +372,7 @@ export function CaissePage() {
       <div className="entete-page">
         <h1>Caisse</h1>
         {estManager && warehouses.length > 0 && (
-          <div className="selecteur-boutique">
-            <span className="selecteur-boutique-icone">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M3 9l1.5-5h15L21 9" />
-                <path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" />
-                <path d="M9 20v-6h6v6" />
-              </svg>
-            </span>
-            <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
-              {warehouses.filter((w) => w.is_active).map((w) => (
-                <option key={w.id} value={w.id}>{w.name}</option>
-              ))}
-            </select>
-          </div>
+          <SelecteurBoutique warehouses={warehouses} value={warehouseId} onChange={setWarehouseId} libelle="Boutique" />
         )}
       </div>
 
