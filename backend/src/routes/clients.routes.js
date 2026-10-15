@@ -6,6 +6,7 @@ const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerPiedDePage, traitSeparateur } = require('../utils/pdfHelpers');
+const { calculerDetailCreances } = require('../utils/creditInvoices');
 
 const router = express.Router();
 router.use(authenticate);
@@ -62,19 +63,47 @@ router.get('/:id', async (req, res) => {
     }
 
     const ordersResult = await pool.query(
-      `SELECT id, status, total_amount, payment_method, created_at
+      `SELECT id, order_seq, status, total_amount, payment_method, created_at, validated_at
        FROM orders WHERE client_id = $1 AND merchant_id = $2
        ORDER BY created_at DESC`,
       [req.params.id, req.user.merchantId]
     );
 
     const reglementsResult = await pool.query(
-      `SELECT cp.id, cp.amount, cp.note, cp.created_at, u.full_name AS recorded_by_name
-       FROM credit_payments cp LEFT JOIN users u ON u.id = cp.recorded_by
+      `SELECT cp.id, cp.amount, cp.note, cp.created_at, cp.order_id, u.full_name AS recorded_by_name,
+              o.order_seq AS order_seq, o.created_at AS order_created_at
+       FROM credit_payments cp
+       LEFT JOIN users u ON u.id = cp.recorded_by
+       LEFT JOIN orders o ON o.id = cp.order_id
        WHERE cp.client_id = $1 AND cp.merchant_id = $2
        ORDER BY cp.created_at DESC`,
       [req.params.id, req.user.merchantId]
     );
+
+    // Factures à crédit : montant, déjà réglé, reste et statut (payée / partielle / impayée).
+    const creditInvoices = await calculerDetailCreances(req.user.merchantId, req.params.id);
+    const factureParId = new Map(creditInvoices.map((f) => [f.id, f]));
+    const historiqueCommandes = ordersResult.rows.map((o) => {
+      const annee = new Date(o.created_at).getFullYear();
+      const order_number = `CMD-${annee}-${String(o.order_seq).padStart(4, '0')}`;
+      let payment_status = null;
+      let reste = null;
+      if (o.status !== 'annulee') {
+        if (o.payment_method === 'a_credit') {
+          const f = factureParId.get(o.id);
+          if (f) { payment_status = f.statut; reste = f.reste; }
+        } else if (o.payment_method !== 'tiers_payant' && o.validated_at) {
+          payment_status = 'payee';
+        }
+      }
+      return { ...o, order_number, payment_status, reste };
+    });
+    const reglements = reglementsResult.rows.map((r) => ({
+      ...r,
+      order_number: r.order_id && r.order_seq != null
+        ? `CMD-${new Date(r.order_created_at).getFullYear()}-${String(r.order_seq).padStart(4, '0')}`
+        : null,
+    }));
 
     // Dossier patient (pharmacie) : ordonnances rattachées à cette fiche, avec
     // pour les renouvelables la quantité prescrite / délivrée par produit.
@@ -116,7 +145,7 @@ router.get('/:id', async (req, res) => {
       }
     }
 
-    res.json({ ...client, orderHistory: ordersResult.rows, creditPayments: reglementsResult.rows, prescriptions });
+    res.json({ ...client, orderHistory: historiqueCommandes, creditPayments: reglements, creditInvoices, prescriptions });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération du client.' });
@@ -126,7 +155,7 @@ router.get('/:id', async (req, res) => {
 // POST /clients/:id/credit-payments — enregistrer un règlement de créance
 // (partiel ou total). Accessible au caissier, au manager et au gérant.
 router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
-  const { amount, note, paymentMethod, warehouseId: warehouseIdInput } = req.body;
+  const { amount, note, paymentMethod, warehouseId: warehouseIdInput, orderId } = req.body;
 
   if (typeof amount !== 'number' || amount <= 0) {
     return res.status(400).json({ error: 'Le montant du règlement doit être un nombre positif.' });
@@ -134,17 +163,31 @@ router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier',
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });
   }
+  if (typeof orderId !== 'string' || !orderId) {
+    return res.status(400).json({ error: 'Choisissez la facture à laquelle ce règlement s\'applique.' });
+  }
 
   try {
     const clientResult = await pool.query(
-      `SELECT id, full_name, (${SOUS_REQUETE_CREANCE}) AS balance_due FROM clients WHERE id = $1 AND merchant_id = $2`,
+      `SELECT id, full_name FROM clients WHERE id = $1 AND merchant_id = $2`,
       [req.params.id, req.user.merchantId]
     );
     const client = clientResult.rows[0];
     if (!client) return res.status(404).json({ error: 'Client introuvable.' });
 
-    if (amount > Number(client.balance_due)) {
-      return res.status(400).json({ error: 'Le montant du règlement dépasse la créance restante.' });
+    // La facture doit être une vente à crédit de ce client ; le versement ne peut pas dépasser son reste à payer.
+    const factures = await calculerDetailCreances(req.user.merchantId, client.id);
+    const facture = factures.find((f) => f.id === orderId);
+    if (!facture) {
+      return res.status(400).json({ error: 'Facture introuvable parmi les ventes à crédit de ce client.' });
+    }
+    if (facture.reste <= 0) {
+      return res.status(400).json({ error: `La facture ${facture.order_number} est déjà entièrement payée.` });
+    }
+    if (amount > facture.reste) {
+      return res.status(400).json({
+        error: `Le montant dépasse le reste à payer de la facture ${facture.order_number} (${Math.round(facture.reste).toLocaleString('fr-FR')} FCFA).`,
+      });
     }
 
     // Caisse qui encaisse : le manager choisit la boutique ; les autres rôles encaissent dans la leur.
@@ -162,16 +205,16 @@ router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier',
     if (boutique.rows.length === 0) return res.status(404).json({ error: 'Boutique introuvable.' });
 
     const result = await pool.query(
-      `INSERT INTO credit_payments (merchant_id, client_id, amount, payment_method, recorded_by, note, warehouse_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [req.user.merchantId, req.params.id, amount, paymentMethod, req.user.id, note || null, boutiqueId]
+      `INSERT INTO credit_payments (merchant_id, client_id, amount, payment_method, recorded_by, note, warehouse_id, order_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [req.user.merchantId, req.params.id, amount, paymentMethod, req.user.id, note || null, boutiqueId, facture.id]
     );
 
     await logActivity({
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'credit_payment',
-      description: `a enregistré un règlement de ${amount.toLocaleString('fr-FR')} pour ${client.full_name}`,
+      description: `a enregistré un règlement de ${amount.toLocaleString('fr-FR')} pour ${client.full_name} (facture ${facture.order_number})`,
     });
 
     getNomUtilisateur(req.user.id).then((nom) => {
@@ -179,7 +222,7 @@ router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier',
         merchantId: req.user.merchantId,
         type: 'reglement_recu',
         titre: 'Règlement client reçu',
-        message: `${nom || 'Un utilisateur'} a enregistré un règlement de ${Math.round(amount).toLocaleString('fr-FR')} FCFA de ${client.full_name}.`,
+        message: `${nom || 'Un utilisateur'} a enregistré un règlement de ${Math.round(amount).toLocaleString('fr-FR')} FCFA de ${client.full_name} (facture ${facture.order_number}).`,
         montant: amount,
         referenceId: result.rows[0].id,
         roles: ['manager', 'gerant'],
@@ -193,45 +236,15 @@ router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier',
   }
 });
 
-// Construit le détail facture par facture : pour chaque vente à crédit,
-// combien a déjà été imputé dessus (les règlements sont enregistrés au
-// niveau du client, pas facture par facture, donc on les impute à la plus
-// ancienne facture d'abord — FIFO) et combien il en reste à payer.
-async function calculerDetailCreances(merchantId, clientId) {
-  const ventesResult = await pool.query(
-    `SELECT id, total_amount, created_at, credit_due_date
-     FROM orders
-     WHERE client_id = $1 AND merchant_id = $2 AND payment_method = 'a_credit' AND status != 'annulee'
-     ORDER BY created_at, id`,
-    [clientId, merchantId]
-  );
-  const paiementsResult = await pool.query(
-    `SELECT COALESCE(SUM(amount), 0) AS total_paye FROM credit_payments WHERE client_id = $1 AND merchant_id = $2`,
-    [clientId, merchantId]
-  );
-  let totalPaye = Number(paiementsResult.rows[0].total_paye);
-
-  return ventesResult.rows.map((vente) => {
-    const montant = Number(vente.total_amount);
-    const avanceImputee = Math.min(Math.max(totalPaye, 0), montant);
-    totalPaye -= avanceImputee;
-    return {
-      id: vente.id,
-      created_at: vente.created_at,
-      credit_due_date: vente.credit_due_date,
-      montant,
-      avance: avanceImputee,
-      reste: montant - avanceImputee,
-    };
-  });
-}
+// Le détail facture par facture (montant, déjà réglé, reste, statut) est calculé dans utils/creditInvoices.js,
+// partagé avec la facture A4 (orders_routes.js).
 
 function texteReleveCompte({ clientName, businessName, factures, totalRestant }) {
   const lignes = factures
     .map((f) => {
       const date = new Date(f.created_at).toLocaleDateString('fr-FR');
       const avance = f.avance > 0 ? `déjà réglé : ${formatMontant(f.avance)} FCFA — ` : '';
-      return `• ${date} : ${formatMontant(f.montant)} FCFA (${avance}reste ${formatMontant(f.reste)} FCFA)`;
+      return `• ${f.order_number} du ${date} : ${formatMontant(f.montant)} FCFA (${avance}reste ${formatMontant(f.reste)} FCFA)`;
     })
     .join('\n');
 

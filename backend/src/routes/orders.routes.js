@@ -10,6 +10,7 @@ const {
   enregistrerPolices, dessinerEmblem, lireLogoCommercant, dessinerLogoCommercant,
 } = require('../utils/pdfHelpers');
 const { FORMATS, TAILLES, MENTION_EDITEUR, mmEnPt, nomFichierPdf, metadonneesPdf } = require('../utils/pdfTheme');
+const { calculerDetailCreances } = require('../utils/creditInvoices');
 const { creerAlerte, getSeuilVenteElevee, getNomUtilisateur } = require('../services/alerts.service');
 const { consumeFEFO } = require('../utils/lots');
 
@@ -183,26 +184,41 @@ router.get('/pdf', async (req, res) => {
     params.push(req.user.warehouseId);
     conditions.push(`o.warehouse_id = $${params.length}`);
   } else if (req.query.warehouseId) {
+    const formatUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    if (!formatUuid.test(req.query.warehouseId)) {
+      return res.status(400).json({ error: 'Boutique invalide.' });
+    }
     params.push(req.query.warehouseId);
     conditions.push(`o.warehouse_id = $${params.length}`);
   }
+  // Boutique filtrée (employé rattaché à une boutique, ou manager qui en a choisi une) : le PDF ne porte que sur elle.
+  const boutiqueFiltreeId = req.user.role !== 'manager' ? req.user.warehouseId : (req.query.warehouseId || null);
 
   try {
     const merchantResult = await pool.query(`SELECT business_name FROM merchants WHERE id = $1`, [req.user.merchantId]);
     const businessName = merchantResult.rows[0]?.business_name;
 
+    let boutiqueNom = null;
+    if (boutiqueFiltreeId) {
+      const w = await pool.query(`SELECT name FROM warehouses WHERE id = $1 AND merchant_id = $2`, [boutiqueFiltreeId, req.user.merchantId]);
+      if (w.rows.length === 0) return res.status(404).json({ error: 'Boutique introuvable.' });
+      boutiqueNom = w.rows[0].name;
+    }
+
     const result = await pool.query(
       `SELECT o.order_seq, o.created_at, o.status, o.total_amount, o.payment_method,
+              o.warehouse_id, COALESCE(w.name, 'Sans boutique') AS warehouse_name,
               c.full_name AS client_name
        FROM orders o
        LEFT JOIN clients c ON c.id = o.client_id
+       LEFT JOIN warehouses w ON w.id = o.warehouse_id
        WHERE ${conditions.join(' AND ')}
-       ORDER BY o.created_at ASC`,
+       ORDER BY warehouse_name ASC, o.created_at ASC`,
       params
     );
     const rows = result.rows.map((o) => ({ ...o, order_number: formatOrderNumber(o) }));
 
-    genererListeVentesPdf(res, rows, from, to, businessName);
+    genererListeVentesPdf(res, rows, from, to, businessName, boutiqueNom);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
@@ -994,9 +1010,9 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
 
     if (aAvance) {
       await pool.query(
-        `INSERT INTO credit_payments (merchant_id, client_id, recorded_by, amount, payment_method, warehouse_id)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [req.user.merchantId, order.client_id, req.user.id, advanceAmount, advancePaymentMethod, order.warehouse_id]
+        `INSERT INTO credit_payments (merchant_id, client_id, recorded_by, amount, payment_method, warehouse_id, order_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [req.user.merchantId, order.client_id, req.user.id, advanceAmount, advancePaymentMethod, order.warehouse_id, req.params.id]
       );
 
       await logActivity({
@@ -1639,7 +1655,7 @@ const LABEL_STATUT_PDF = {
 
 // Historique des ventes sur une période, format liste (comme le journal
 // d'activité) — une ligne par commande, pagination automatique.
-function genererListeVentesPdf(res, orders, from, to, businessName) {
+function genererListeVentesPdf(res, orders, from, to, businessName, boutiqueNom = null) {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${nomFichierPdf('Ventes', `${from}-au-${to}`)}"`);
 
@@ -1655,12 +1671,23 @@ function genererListeVentesPdf(res, orders, from, to, businessName) {
     { texte: 'Montant', x: 485, largeur: 60, aligner: 'right' },
   ];
 
+  // Une seule boutique (filtrée) : le PDF porte son nom. Toutes les boutiques : ventes regroupées par boutique,
+  // avec un sous-total pour chacune puis le total général.
+  const groupes = [];
+  orders.forEach((o) => {
+    const dernier = groupes[groupes.length - 1];
+    if (dernier && dernier.nom === o.warehouse_name) dernier.ventes.push(o);
+    else groupes.push({ nom: o.warehouse_name, ventes: [o] });
+  });
+  const parBoutique = !boutiqueNom && groupes.length > 1;
+
+  const periode = `Du ${new Date(from).toLocaleDateString('fr-FR')} au ${new Date(to).toLocaleDateString('fr-FR')}`;
+  const sousTitre = boutiqueNom
+    ? `${periode} · Boutique : ${boutiqueNom}`
+    : parBoutique ? `${periode} · Par boutique` : periode;
+
   function dessinerEnTete() {
-    let y0 = dessinerEntete(doc, {
-      businessName,
-      titre: 'Historique des ventes',
-      sousTitre: `Du ${new Date(from).toLocaleDateString('fr-FR')} au ${new Date(to).toLocaleDateString('fr-FR')}`,
-    });
+    const y0 = dessinerEntete(doc, { businessName, titre: 'Historique des ventes', sousTitre });
     return dessinerEnteteTableau(doc, y0, COLONNES);
   }
 
@@ -1670,30 +1697,59 @@ function genererListeVentesPdf(res, orders, from, to, businessName) {
     doc.fontSize(10).fillColor(COULEURS.muted).text('Aucune vente sur cette période.', 56, y + 10);
   }
 
-  let totalGeneral = 0;
-  orders.forEach((o, index) => {
-    if (y > doc.page.height - 90) {
+  const verifierPage = (hauteur) => {
+    if (y > doc.page.height - 90 - hauteur) {
       doc.addPage();
       y = dessinerEnTete();
     }
-    if (index % 2 === 1) {
-      doc.rect(50, y, doc.page.width - 100, 20).fill(COULEURS.fondAlterne);
+  };
+
+  const libelleVentes = (n) => `${n} vente${n > 1 ? 's' : ''}`;
+  let totalGeneral = 0;
+
+  groupes.forEach((groupe) => {
+    if (parBoutique) {
+      verifierPage(60);
+      doc.rect(50, y, doc.page.width - 100, 22).fill(COULEURS.fondAlterne);
+      doc.fillColor(COULEURS.encre).font('Helvetica-Bold').fontSize(10).text(groupe.nom, 56, y + 6, { width: 380 });
+      y += 26;
     }
-    doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(9);
-    doc.text(o.order_number, 56, y + 6, { width: 95 });
-    doc.text(new Date(o.created_at).toLocaleDateString('fr-FR'), 155, y + 6, { width: 75 });
-    doc.text(o.client_name || 'Client de passage', 235, y + 6, { width: 150 });
-    doc.text(LABEL_STATUT_PDF[o.status] || o.status, 390, y + 6, { width: 95 });
-    doc.text(formatMontant(o.total_amount), 485, y + 6, { width: 60, align: 'right' });
-    totalGeneral += Number(o.total_amount);
-    y += 20;
+
+    let totalBoutique = 0;
+    groupe.ventes.forEach((o, index) => {
+      verifierPage(0);
+      if (index % 2 === 1) {
+        doc.rect(50, y, doc.page.width - 100, 20).fill(COULEURS.fondAlterne);
+      }
+      doc.fillColor(COULEURS.encre).font('Helvetica').fontSize(9);
+      doc.text(o.order_number, 56, y + 6, { width: 95 });
+      doc.text(new Date(o.created_at).toLocaleDateString('fr-FR'), 155, y + 6, { width: 75 });
+      doc.text(o.client_name || 'Client de passage', 235, y + 6, { width: 150 });
+      doc.text(LABEL_STATUT_PDF[o.status] || o.status, 390, y + 6, { width: 95 });
+      doc.text(formatMontant(o.total_amount), 485, y + 6, { width: 60, align: 'right' });
+      totalBoutique += Number(o.total_amount);
+      y += 20;
+    });
+    totalGeneral += totalBoutique;
+
+    if (parBoutique) {
+      verifierPage(30);
+      traitSeparateur(doc, y + 2);
+      y += 10;
+      doc.font('Helvetica-Bold').fontSize(9).fillColor(COULEURS.encre);
+      doc.text(`Sous-total ${groupe.nom}`, 56, y, { width: 330 });
+      doc.text(libelleVentes(groupe.ventes.length), 390, y, { width: 95 });
+      doc.text(formatMontant(totalBoutique), 485, y, { width: 60, align: 'right' });
+      y += 24;
+    }
   });
 
+  verifierPage(30);
   traitSeparateur(doc, y + 4);
   y += 16;
   doc.font('Helvetica-Bold').fontSize(10).fillColor(COULEURS.encre);
-  doc.text(`${orders.length} vente${orders.length > 1 ? 's' : ''}`, 235, y, { width: 150 });
-  doc.text('TOTAL', 390, y, { width: 95 });
+  doc.text(libelleVentes(orders.length), 235, y, { width: 150 });
+  doc.text(parBoutique ? 'TOTAL GÉNÉRAL' : 'TOTAL', 390, y, { width: 95 });
   doc.text(formatMontant(totalGeneral), 485, y, { width: 60, align: 'right' });
 
   doc.end();
@@ -1868,35 +1924,13 @@ function genererTicketEtroit(res, order) {
 
 // Facture A4, pour un client enregistré — téléchargeable/imprimable,
 // même identité visuelle que les autres documents de l'application.
-// Calcule, pour UNE facture à crédit précise, la part déjà réglée (les
-// règlements sont enregistrés au niveau du client, imputés à la plus
-// ancienne facture d'abord — FIFO, même logique que clients.routes.js) et
-// le reste à payer. Utilisé pour l'afficher directement sur la facture PDF.
+// Calcule, pour UNE facture à crédit précise, la part déjà réglée (règlements rattachés à cette facture, plus
+// les anciens règlements imputés en FIFO — voir utils/creditInvoices.js) et le reste à payer.
+// Utilisé pour l'afficher directement sur la facture PDF.
 async function calculerAvanceFacture(merchantId, clientId, orderId) {
-  const [ventesResult, paiementsResult] = await Promise.all([
-    pool.query(
-      `SELECT id, total_amount
-       FROM orders
-       WHERE client_id = $1 AND merchant_id = $2 AND payment_method = 'a_credit' AND status != 'annulee'
-       ORDER BY created_at, id`,
-      [clientId, merchantId]
-    ),
-    pool.query(
-      `SELECT COALESCE(SUM(amount), 0) AS total_paye FROM credit_payments WHERE client_id = $1 AND merchant_id = $2`,
-      [clientId, merchantId]
-    ),
-  ]);
-  let totalPaye = Number(paiementsResult.rows[0].total_paye);
-
-  for (const vente of ventesResult.rows) {
-    const montant = Number(vente.total_amount);
-    const avanceImputee = Math.min(Math.max(totalPaye, 0), montant);
-    totalPaye -= avanceImputee;
-    if (vente.id === orderId) {
-      return { avance: avanceImputee, reste: montant - avanceImputee };
-    }
-  }
-  return { avance: 0, reste: 0 };
+  const factures = await calculerDetailCreances(merchantId, clientId);
+  const facture = factures.find((f) => f.id === orderId);
+  return facture ? { avance: facture.avance, reste: facture.reste } : { avance: 0, reste: 0 };
 }
 
 // Logo du commerçant : stocké en base (image encodée, parfois plusieurs Mo). On ne le relit et on ne le
@@ -1910,6 +1944,44 @@ async function logoCommercantEnCache(merchantId) {
   const logo = r.rows[0] ? lireLogoCommercant(r.rows[0].merchant_json) : null;
   cacheLogoCommercant.set(merchantId, { logo, expire: Date.now() + DUREE_CACHE_LOGO_MS });
   return logo;
+}
+
+// Statut de paiement d'une facture A4 : 'paye', 'partiel' ou null (rien à tamponner).
+//  - vente à crédit : payée quand le reste est nul, partielle dès qu'un acompte/règlement est versé ;
+//  - autre vente : payée une fois encaissée en caisse ; jamais de cachet sur une commande annulée
+//    ni sur un tiers payant (une partie reste due par l'assureur).
+function statutPaiementFacture(order, creditInfo) {
+  if (order.status === 'annulee') return null;
+  if (order.payment_method === 'a_credit') {
+    if (!creditInfo) return null;
+    if (creditInfo.reste <= 0 && creditInfo.avance > 0) return 'paye';
+    if (creditInfo.avance > 0) return 'partiel';
+    return null;
+  }
+  if (order.payment_method === 'tiers_payant') return null;
+  return order.validated_at ? 'paye' : null;
+}
+
+// Cachet incliné, semi-transparent, centré dans la page courante.
+function dessinerCachetPaiement(doc, statut) {
+  if (!statut) return;
+  const paye = statut === 'paye';
+  const libelle = paye ? 'PAYÉ' : 'PARTIELLEMENT PAYÉ';
+  const couleur = paye ? '#157347' : '#9C4A06';
+  const taille = paye ? 54 : 30;
+  const cx = doc.page.width / 2;
+  const cy = doc.page.height * 0.42;
+
+  doc.save();
+  doc.font('Helvetica-Bold').fontSize(taille);
+  const largeur = doc.widthOfString(libelle) + 44;
+  const hauteur = taille * 1.25 + 16;
+  doc.opacity(0.5);
+  doc.rotate(-18, { origin: [cx, cy] });
+  doc.lineWidth(4).roundedRect(cx - largeur / 2, cy - hauteur / 2, largeur, hauteur, 9).stroke(couleur);
+  doc.lineWidth(1.2).roundedRect(cx - largeur / 2 + 6, cy - hauteur / 2 + 6, largeur - 12, hauteur - 12, 6).stroke(couleur);
+  doc.fillColor(couleur).text(libelle, cx - largeur / 2, cy - taille * 0.58, { width: largeur, align: 'center', lineBreak: false });
+  doc.restore();
 }
 
 function genererFactureA4(res, order, creditInfo, logoPret) {
@@ -2121,6 +2193,9 @@ function genererFactureA4(res, order, creditInfo, logoPret) {
       y += doc.heightOfString(ligne, { width: largeurContenu }) + 3;
     });
   }
+
+  // Cachet « PAYÉ » / « PARTIELLEMENT PAYÉ » par-dessus la facture.
+  dessinerCachetPaiement(doc, statutPaiementFacture(order, creditInfo));
 
   // Le pied de page « Édité avec Amaterasu · n / total » est ajouté par pdfHelpers à la fin du document.
   doc.font('Helvetica').fillColor(COULEURS.encre);

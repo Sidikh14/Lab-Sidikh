@@ -364,7 +364,7 @@ export const api = {
     request(`/orders/${id}/payment`, { method: 'PATCH', body: JSON.stringify(data) }),
   previewOrderReceipt: (id, format) => previewFile(`/orders/${id}/receipt-pdf${format ? `?format=${format}` : ''}`),
   previewDeliveryNote: (id) => previewFile(`/orders/${id}/delivery-note-pdf`),
-  downloadOrdersPdf: (from, to) => previewFile(`/orders/pdf?from=${from}&to=${to}`),
+  downloadOrdersPdf: (from, to, warehouseId) => previewFile(`/orders/pdf?from=${from}&to=${to}${warehouseId ? `&warehouseId=${warehouseId}` : ''}`),
   getZakat: () => request('/zakat'),
   getInventoryReport: (from, to, warehouseId) =>
     request(`/products/inventory-report?from=${from}&to=${to}${warehouseId ? `&warehouseId=${warehouseId}` : ''}`),

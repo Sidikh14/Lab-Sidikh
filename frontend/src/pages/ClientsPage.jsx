@@ -125,6 +125,7 @@ function ClientsTab() {
   const [detailChargement, setDetailChargement] = useState(false);
   const [detailErreur, setDetailErreur] = useState('');
   const [vueReglement, setVueReglement] = useState(false);
+  const [factureReglement, setFactureReglement] = useState('');
   const [montantReglement, setMontantReglement] = useState('');
   const [moyenReglement, setMoyenReglement] = useState('especes');
   const [noteReglement, setNoteReglement] = useState('');
@@ -267,11 +268,31 @@ function ClientsTab() {
     }
   }
 
+  const facturesImpayees = (clientSelectionne?.creditInvoices || []).filter((f) => f.reste > 0);
+  const factureChoisie = facturesImpayees.find((f) => f.id === factureReglement) || null;
+
+  // Ouvre le formulaire de règlement ; la facture est présélectionnée (celle cliquée, sinon la plus ancienne impayée).
+  function ouvrirReglement(factureId) {
+    const cible = facturesImpayees.find((f) => f.id === factureId) || facturesImpayees[0];
+    setDetailErreur('');
+    setFactureReglement(cible ? cible.id : '');
+    setMontantReglement(cible ? String(Math.round(cible.reste)) : '');
+    setVueReglement(true);
+  }
+
   async function handleEnregistrerReglement(e) {
     e.preventDefault();
     const montant = Number(montantReglement);
+    if (!factureChoisie) {
+      setDetailErreur('Choisissez la facture à laquelle ce règlement s\'applique.');
+      return;
+    }
     if (!montant || montant <= 0) {
       setDetailErreur('Le montant du règlement doit être un nombre positif.');
+      return;
+    }
+    if (montant > factureChoisie.reste) {
+      setDetailErreur(`Le montant dépasse le reste à payer de la facture ${factureChoisie.order_number} (${Math.round(factureChoisie.reste).toLocaleString('fr-FR')} FCFA).`);
       return;
     }
     if (estManager && !boutiqueEncaissement) {
@@ -282,12 +303,14 @@ function ClientsTab() {
     setDetailErreur('');
     try {
       await api.recordCreditPayment(clientSelectionne.id, {
+        orderId: factureChoisie.id,
         amount: montant,
         paymentMethod: moyenReglement,
         note: noteReglement || undefined,
         ...(estManager ? { warehouseId: boutiqueEncaissement } : {}),
       });
       setVueReglement(false);
+      setFactureReglement('');
       setMontantReglement('');
       setMoyenReglement('especes');
       setNoteReglement('');
@@ -506,6 +529,44 @@ function ClientsTab() {
                 </p>
                 {detailErreur && <div className="erreur">{detailErreur}</div>}
                 <form onSubmit={handleEnregistrerReglement}>
+                  <div className="champ-groupe">
+                    <span className="etiquette">Facture réglée</span>
+                    {facturesImpayees.length === 0 ? (
+                      <p className="etat-vide" style={{ padding: '8px 0' }}>Aucune facture impayée.</p>
+                    ) : (
+                      <div role="radiogroup" aria-label="Facture réglée" style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
+                        {facturesImpayees.map((f) => {
+                          const actif = f.id === factureReglement;
+                          return (
+                            <label
+                              key={f.id}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: 'pointer',
+                                border: `1.5px solid ${actif ? 'var(--accent)' : 'var(--trait)'}`, borderRadius: 'var(--rayon-petit)',
+                                background: actif ? 'var(--accent-clair)' : 'transparent',
+                              }}
+                            >
+                              <input
+                                type="radio"
+                                name="facture-reglement"
+                                checked={actif}
+                                onChange={() => { setFactureReglement(f.id); setMontantReglement(String(Math.round(f.reste))); }}
+                              />
+                              <span style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
+                                <strong>{f.order_number}</strong> · {new Date(f.created_at).toLocaleDateString('fr-FR')}
+                                <span style={{ display: 'block', fontSize: 12, color: 'var(--encre-douce)' }}>
+                                  Montant {Math.round(f.montant).toLocaleString('fr-FR')} · déjà réglé {Math.round(f.avance).toLocaleString('fr-FR')} FCFA
+                                </span>
+                              </span>
+                              <span className="chiffre" style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                                reste {Math.round(f.reste).toLocaleString('fr-FR')}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                   {estManager && (
                     <div className="champ-groupe">
                       <label className="etiquette" htmlFor="r-boutique">Encaissé dans la caisse de</label>
@@ -529,8 +590,15 @@ function ClientsTab() {
                       className="champ"
                       value={montantReglement}
                       onChange={(e) => setMontantReglement(e.target.value)}
+                      max={factureChoisie ? Math.round(factureChoisie.reste) : undefined}
+                      min={1}
                       autoFocus
                     />
+                    {factureChoisie && (
+                      <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '4px 0 0' }}>
+                        Maximum : {Math.round(factureChoisie.reste).toLocaleString('fr-FR')} FCFA (reste à payer sur {factureChoisie.order_number})
+                      </p>
+                    )}
                   </div>
                   <div className="champ-groupe">
                     <label className="etiquette" htmlFor="r-moyen">Moyen de paiement</label>
@@ -562,7 +630,7 @@ function ClientsTab() {
                     <button type="button" className="btn" onClick={() => setVueReglement(false)} disabled={reglementEnCours}>
                       Annuler
                     </button>
-                    <button type="submit" className="btn btn-principal" disabled={reglementEnCours}>
+                    <button type="submit" className="btn btn-principal" disabled={reglementEnCours || !factureChoisie}>
                       {reglementEnCours ? 'Enregistrement…' : 'Enregistrer le règlement'}
                     </button>
                   </div>
@@ -589,7 +657,7 @@ function ClientsTab() {
 
                 {Number(clientSelectionne.balance_due) > 0 && (
                   <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <button className="btn btn-principal" onClick={() => setVueReglement(true)}>
+                    <button className="btn btn-principal" onClick={() => ouvrirReglement()}>
                       Enregistrer un règlement
                     </button>
                     <button className="btn" onClick={handleEnvoyerReleve} disabled={envoiReleveEnCours || !clientSelectionne.phone}>
@@ -643,19 +711,39 @@ function ClientsTab() {
                   <table className="registre">
                     <thead>
                       <tr>
+                        <th>N°</th>
                         <th>Date</th>
                         <th>Montant</th>
                         <th>Statut</th>
+                        <th>Paiement</th>
                         <th></th>
                       </tr>
                     </thead>
                     <tbody>
                       {clientSelectionne.orderHistory.map((o) => (
                         <tr key={o.id}>
+                          <td>{o.order_number}</td>
                           <td>{new Date(o.created_at).toLocaleDateString('fr-FR')}</td>
                           <td className="chiffre">{Number(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
                           <td><StatusBadge status={o.status} /></td>
                           <td>
+                            {o.payment_status === 'payee' && <span className="tampon tampon-sarcelle">Payée</span>}
+                            {o.payment_status === 'partielle' && (
+                              <span className="tampon tampon-laiton" title={`Reste ${Math.round(o.reste).toLocaleString('fr-FR')} FCFA`}>Partielle</span>
+                            )}
+                            {o.payment_status === 'impayee' && <span className="tampon tampon-brique">Impayée</span>}
+                            {!o.payment_status && '—'}
+                          </td>
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            {(o.payment_status === 'impayee' || o.payment_status === 'partielle') && (
+                              <button
+                                className="btn btn-principal"
+                                style={{ padding: '4px 10px', fontSize: 12, marginRight: 6 }}
+                                onClick={() => ouvrirReglement(o.id)}
+                              >
+                                Régler
+                              </button>
+                            )}
                             <button
                               className="btn"
                               style={{ padding: '4px 10px', fontSize: 12 }}
@@ -677,6 +765,7 @@ function ClientsTab() {
                       <thead>
                         <tr>
                           <th>Date</th>
+                          <th>Facture</th>
                           <th>Montant</th>
                           <th>Enregistré par</th>
                         </tr>
@@ -685,6 +774,7 @@ function ClientsTab() {
                         {clientSelectionne.creditPayments.map((r) => (
                           <tr key={r.id}>
                             <td>{new Date(r.created_at).toLocaleDateString('fr-FR')}</td>
+                            <td>{r.order_number || '—'}</td>
                             <td className="chiffre">{Number(r.amount).toLocaleString('fr-FR')} FCFA</td>
                             <td>{r.recorded_by_name || '—'}</td>
                           </tr>
@@ -697,7 +787,7 @@ function ClientsTab() {
             )}
 
             <div className="actions-modale">
-              <button className="btn" onClick={() => { setClientSelectionne(null); setVueReglement(false); }}>
+              <button className="btn" onClick={() => { setClientSelectionne(null); setVueReglement(false); setFactureReglement(''); }}>
                 Fermer
               </button>
             </div>
