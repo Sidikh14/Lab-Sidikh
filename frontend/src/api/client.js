@@ -607,6 +607,9 @@ export const api = {
   cancelAccountingStatePayment: (id) =>
     request(`/accounting/state-payments/${id}`, { method: 'DELETE' }),
 
+  // Crédit de TVA reporté des périodes précédentes (ouverture de la période).
+  getVatCreditOpening: (params) => request(`/accounting/vat-credit-opening${qs(params)}`),
+
   // Impôt sur les résultats et clôture d'exercice.
   buildAccountingPdf: (payload) => requestBlob('/accounting/pdf', payload),
   // Fiscalité : profil du contribuable, déclarations DGID préparées, dépôts enregistrés.
