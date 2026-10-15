@@ -1946,8 +1946,9 @@ async function logoCommercantEnCache(merchantId) {
   return logo;
 }
 
-// Statut de paiement d'une facture A4 : 'paye', 'partiel' ou null (rien à tamponner).
-//  - vente à crédit : payée quand le reste est nul, partielle dès qu'un acompte/règlement est versé ;
+// Statut de paiement d'une facture A4 : 'paye' (vert), 'partiel' (orange), 'credit' (rouge) ou null (pas de cachet).
+//  - vente à crédit : payée quand le reste est nul, partielle dès qu'un acompte/règlement est versé,
+//    sinon « à crédit » (rien n'a encore été réglé) ;
 //  - autre vente : payée une fois encaissée en caisse ; jamais de cachet sur une commande annulée
 //    ni sur un tiers payant (une partie reste due par l'assureur).
 function statutPaiementFacture(order, creditInfo) {
@@ -1956,30 +1957,36 @@ function statutPaiementFacture(order, creditInfo) {
     if (!creditInfo) return null;
     if (creditInfo.reste <= 0 && creditInfo.avance > 0) return 'paye';
     if (creditInfo.avance > 0) return 'partiel';
-    return null;
+    return 'credit';
   }
   if (order.payment_method === 'tiers_payant') return null;
   return order.validated_at ? 'paye' : null;
 }
 
-// Cachet incliné, semi-transparent, centré dans la page courante.
-function dessinerCachetPaiement(doc, statut) {
-  if (!statut) return;
-  const paye = statut === 'paye';
-  const libelle = paye ? 'PAYÉ' : 'PARTIELLEMENT PAYÉ';
-  const couleur = paye ? '#157347' : '#9C4A06';
-  const taille = paye ? 54 : 30;
-  const cx = doc.page.width / 2;
-  const cy = doc.page.height * 0.42;
+const CACHETS_PAIEMENT = {
+  paye: { libelle: 'PAYÉ', couleur: '#157347', taille: 26 },
+  partiel: { libelle: 'PARTIELLEMENT PAYÉ', couleur: '#E07B00', taille: 15 },
+  credit: { libelle: 'À CRÉDIT', couleur: '#B42318', taille: 24 },
+};
+
+// Petit cachet incliné, centré en bas de la facture, juste après les totaux (yApres = fin du contenu).
+function dessinerCachetPaiement(doc, statut, yApres) {
+  const cachet = CACHETS_PAIEMENT[statut];
+  if (!cachet) return;
+  const { libelle, couleur, taille } = cachet;
 
   doc.save();
   doc.font('Helvetica-Bold').fontSize(taille);
-  const largeur = doc.widthOfString(libelle) + 44;
-  const hauteur = taille * 1.25 + 16;
-  doc.opacity(0.5);
-  doc.rotate(-18, { origin: [cx, cy] });
-  doc.lineWidth(4).roundedRect(cx - largeur / 2, cy - hauteur / 2, largeur, hauteur, 9).stroke(couleur);
-  doc.lineWidth(1.2).roundedRect(cx - largeur / 2 + 6, cy - hauteur / 2 + 6, largeur - 12, hauteur - 12, 6).stroke(couleur);
+  const largeur = doc.widthOfString(libelle) + 30;
+  const hauteur = taille * 1.25 + 12;
+  const cx = doc.page.width / 2;
+  // Sous le contenu ; si la page est presque pleine, collé au-dessus du pied de page.
+  const cy = Math.min(yApres + 36 + hauteur / 2, doc.page.height - 100 - hauteur / 2);
+
+  doc.opacity(0.8);
+  doc.rotate(-6, { origin: [cx, cy] });
+  doc.lineWidth(2.5).roundedRect(cx - largeur / 2, cy - hauteur / 2, largeur, hauteur, 7).stroke(couleur);
+  doc.lineWidth(0.8).roundedRect(cx - largeur / 2 + 4, cy - hauteur / 2 + 4, largeur - 8, hauteur - 8, 4).stroke(couleur);
   doc.fillColor(couleur).text(libelle, cx - largeur / 2, cy - taille * 0.58, { width: largeur, align: 'center', lineBreak: false });
   doc.restore();
 }
@@ -2194,8 +2201,8 @@ function genererFactureA4(res, order, creditInfo, logoPret) {
     });
   }
 
-  // Cachet « PAYÉ » / « PARTIELLEMENT PAYÉ » par-dessus la facture.
-  dessinerCachetPaiement(doc, statutPaiementFacture(order, creditInfo));
+  // Cachet de paiement (vert « PAYÉ », orange « PARTIELLEMENT PAYÉ », rouge « À CRÉDIT »), en bas, après les totaux.
+  dessinerCachetPaiement(doc, statutPaiementFacture(order, creditInfo), y);
 
   // Le pied de page « Édité avec Amaterasu · n / total » est ajouté par pdfHelpers à la fin du document.
   doc.font('Helvetica').fillColor(COULEURS.encre);
