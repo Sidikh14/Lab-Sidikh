@@ -4258,6 +4258,128 @@ router.post('/opening-balances', async (req, res) => {
   }
 });
 
+// ---------- Crédit de TVA initial (avant l'utilisation du logiciel) ----------
+// Écriture unique datée du dernier jour du mois qui précède le premier mois déclaré dans le logiciel :
+// débit 445 « TVA récupérable », crédit 121 « Report à nouveau ». Comme tout le calcul de TVA (chaineTva,
+// déclarations, impôts dus) lit le compte 445 mois par mois, ce crédit est repris automatiquement à la
+// ligne « Crédit de TVA du mois précédent » de la déclaration du premier mois.
+const TYPE_CREDIT_TVA = 'credit_tva_initial';
+const SOURCE_CREDIT_TVA = 'credit-tva-initial';
+
+router.get('/vat-credit-opening', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT e.id, to_char(e.entry_date, 'YYYY-MM-DD') AS entry_date,
+              to_char(e.entry_date::date + 1, 'YYYY-MM') AS first_month,
+              COALESCE((SELECT SUM(l.debit) FROM accounting_lines l
+                         JOIN accounting_accounts a ON a.id = l.account_id
+                        WHERE l.entry_id = e.id AND a.code = '445'), 0) AS amount
+         FROM accounting_entries e
+        WHERE e.merchant_id = $1 AND e.source_type = $2 AND e.source_id = $3
+        LIMIT 1`,
+      [req.user.merchantId, TYPE_CREDIT_TVA, SOURCE_CREDIT_TVA]
+    );
+    if (r.rows.length === 0) return res.json({ exists: false });
+    res.json({
+      exists: true,
+      amount: arrondi(r.rows[0].amount),
+      firstMonth: r.rows[0].first_month,
+      entryDate: r.rows[0].entry_date,
+    });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la lecture du crédit de TVA initial.');
+  }
+});
+
+// POST /accounting/vat-credit-opening { amount, firstMonth: 'AAAA-MM' }
+router.post('/vat-credit-opening', async (req, res) => {
+  const { amount, firstMonth } = req.body || {};
+  const montant = arrondi(amount);
+  if (!Number.isFinite(montant) || montant <= 0) {
+    return res.status(400).json({ error: 'Saisissez un montant de crédit de TVA supérieur à zéro.' });
+  }
+  if (typeof firstMonth !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(firstMonth)) {
+    return res.status(400).json({ error: 'Premier mois déclaré invalide (format AAAA-MM).' });
+  }
+  const [annee, mois] = firstMonth.split('-').map(Number);
+  const dateEcriture = new Date(Date.UTC(annee, mois - 1, 0)).toISOString().slice(0, 10);
+
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const deja = await client.query(
+      `SELECT 1 FROM accounting_entries WHERE merchant_id = $1 AND source_type = $2 AND source_id = $3`,
+      [merchantId, TYPE_CREDIT_TVA, SOURCE_CREDIT_TVA]
+    );
+    if (deja.rows.length > 0) {
+      throw erreurMetier(400, 'Un crédit de TVA initial existe déjà : supprimez-le avant d\'en saisir un autre.');
+    }
+    await verifierExerciceOuvert(client, merchantId, dateEcriture);
+
+    const journal = await client.query(`SELECT id FROM accounting_journals WHERE merchant_id = $1 AND code = 'OD'`, [merchantId]);
+    if (journal.rows.length === 0) throw erreurMetier(400, 'Journal des opérations diverses introuvable.');
+
+    const compteTva = await assurerCompte(client, merchantId, '445', 'État, TVA récupérable sur achats');
+    const compteReport = await assurerCompte(client, merchantId, '121', 'Report à nouveau');
+
+    const num = await client.query(`SELECT COALESCE(MAX(entry_number), 0) + 1 AS n FROM accounting_entries WHERE merchant_id = $1`, [merchantId]);
+    const entree = await client.query(
+      `INSERT INTO accounting_entries (merchant_id, journal_id, entry_number, entry_date, reference, label, source_type, source_id, created_by)
+       VALUES ($1, $2, $3, $4::date, 'CREDIT-TVA', $5, $6, $7, $8) RETURNING id`,
+      [merchantId, journal.rows[0].id, Number(num.rows[0].n), dateEcriture, 'Crédit de TVA initial', TYPE_CREDIT_TVA, SOURCE_CREDIT_TVA, req.user.id]
+    );
+    await client.query(
+      `INSERT INTO accounting_lines (entry_id, merchant_id, account_id, debit, credit, label) VALUES ($1, $2, $3, $4, 0, $5)`,
+      [entree.rows[0].id, merchantId, compteTva, montant, 'Crédit de TVA initial']
+    );
+    await client.query(
+      `INSERT INTO accounting_lines (entry_id, merchant_id, account_id, debit, credit, label) VALUES ($1, $2, $3, 0, $4, $5)`,
+      [entree.rows[0].id, merchantId, compteReport, montant, 'Crédit de TVA initial']
+    );
+    await client.query('COMMIT');
+    await logActivity({
+      merchantId, userId: req.user.id, action: 'accounting_vat_credit_opening',
+      description: `a saisi un crédit de TVA initial de ${montant} FCFA (repris à la déclaration de ${firstMonth})`,
+    });
+    res.status(201).json({ entryId: entree.rows[0].id, amount: montant, firstMonth, entryDate: dateEcriture });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, 'Erreur lors de l\'enregistrement du crédit de TVA initial.');
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/vat-credit-opening', async (req, res) => {
+  const merchantId = req.user.merchantId;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await verrouiller(client, merchantId);
+    const cible = await client.query(
+      `SELECT id, to_char(entry_date, 'YYYY-MM-DD') AS d FROM accounting_entries
+        WHERE merchant_id = $1 AND source_type = $2 AND source_id = $3 FOR UPDATE`,
+      [merchantId, TYPE_CREDIT_TVA, SOURCE_CREDIT_TVA]
+    );
+    if (cible.rows.length === 0) throw erreurMetier(404, 'Aucun crédit de TVA initial à supprimer.');
+    await verifierExerciceOuvert(client, merchantId, cible.rows[0].d);
+    await client.query(`DELETE FROM accounting_entries WHERE id = $1 AND merchant_id = $2`, [cible.rows[0].id, merchantId]);
+    await client.query('COMMIT');
+    await logActivity({
+      merchantId, userId: req.user.id, action: 'accounting_vat_credit_opening_deleted',
+      description: 'a supprimé le crédit de TVA initial',
+    });
+    res.json({ message: 'Crédit de TVA initial supprimé.' });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    repondreErreur(res, err, 'Erreur lors de la suppression du crédit de TVA initial.');
+  } finally {
+    client.release();
+  }
+});
+
 // ---------- Pièces jointes (D5) ----------
 // Corps envoyé tel quel (image ou PDF), métadonnées dans l'URL : cela évite la limite de taille du
 // parseur JSON global. 1,5 Mo maximum par pièce (l'image est compressée côté navigateur), 50 Mo par commerçant.
