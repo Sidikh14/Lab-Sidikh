@@ -46,6 +46,15 @@ export const SECTEURS = {
       { key: 'numeroSerie', label: 'Numéro de série', type: 'text' },
     ],
   },
+  clinique: {
+    label: 'Clinique',
+    theme: null,
+    libelleEquipe: 'Personnel soignant',
+    libelleProduit: 'Acte',
+    libelleBoutique: 'Service',
+    libelleClient: 'Patient',
+    champsProduitSup: [],
+  },
 };
 
 // Secteurs retirés de l'inscription mais encore présents en base : leurs commerces gardent

@@ -19,7 +19,7 @@ const ROLES_ACCEPTES = [...ROLES_ATTRIBUABLES, 'vendeur_caissier'];
 // dépôt (un dépôt sert uniquement au stockage). Seul un gérant peut être affecté à un dépôt.
 const ROLES_VENTE = ['vendeur', 'caissier'];
 // Rôles qui travaillent dans un lieu : une boutique est obligatoire. Le comptable, lui, n'en a pas besoin.
-const ROLES_AVEC_LIEU = ['gerant', 'vendeur', 'caissier'];
+const ROLES_AVEC_LIEU = ['gerant', 'vendeur', 'caissier', 'medecin', 'infirmier', 'sage_femme', 'laborantin'];
 const MSG_DEPOT_RESERVE = "Un dépôt sert uniquement au stockage : seul un gérant peut y être affecté. Choisissez une boutique pour ce rôle.";
 
 // Lit les rôles demandés (liste `roles`, ou ancien champ `role`) et les valide.

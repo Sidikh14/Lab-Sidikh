@@ -14,7 +14,7 @@ const { CATEGORIES_RESTAURATION } = require('../data/restaurationCatalogue');
 const router = express.Router();
 
 // Le secteur textile n'est plus proposé à l'inscription (aucun commerçant concerné) ; sa valeur reste en base.
-const SECTEURS_VALIDES = ['grossiste', 'pharmacie', 'electromenager', 'restauration'];
+const SECTEURS_VALIDES = ['grossiste', 'pharmacie', 'electromenager', 'restauration', 'clinique'];
 
 // Charte personnalisée d'un commerçant : { enabled, palette } — palette calculée à partir de la couleur choisie par l'owner.
 function brandingDepuisLigne(enabled, couleur) {

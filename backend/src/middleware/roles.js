@@ -1,11 +1,13 @@
 // Rôles et droits d'accès.
 //
-// Une personne peut cumuler plusieurs rôles (ex. vendeur + caissier) : ils sont stockés dans users.roles.
-// users.role garde le « rôle principal » (le plus étendu), que tout l'ancien code continue de lire :
-// manager > gérant > vendeur+caissier (ancien « vendeur_caissier ») > caissier > vendeur > comptable.
+// Une personne peut cumuler plusieurs rôles (ex. vendeur + caissier) : ils sont stockés dans users.roles (tableau de texte).
+// users.role garde le « rôle principal » (le plus étendu), que tout l'ancien code continue de lire.
+// Ordre de priorité : owner > manager > gérant > rôles cliniques médicaux > vendeur+caissier > caissier > vendeur > comptable.
 // req.user.roles (rempli par authenticate) contient la liste complète ; requireRole l'utilise.
+// Les droits fins sur les données médicales sont dans middleware/clinique.js, pas ici.
 
-const ROLES_ATTRIBUABLES = ['gerant', 'vendeur', 'caissier', 'comptable'];
+const ROLES_CLINIQUE = ['medecin', 'infirmier', 'sage_femme', 'laborantin', 'accueil'];
+const ROLES_ATTRIBUABLES = ['gerant', 'vendeur', 'caissier', 'comptable', ...ROLES_CLINIQUE];
 
 // Aplatit les rôles reçus : l'ancien rôle « vendeur_caissier » devient vendeur + caissier, sans doublon.
 function normaliserRoles(roles, roleUnique) {
@@ -25,6 +27,11 @@ function rolePrincipal(roles) {
   if (s.has('owner')) return 'owner';
   if (s.has('manager')) return 'manager';
   if (s.has('gerant')) return 'gerant';
+  if (s.has('medecin')) return 'medecin';
+  if (s.has('sage_femme')) return 'sage_femme';
+  if (s.has('infirmier')) return 'infirmier';
+  if (s.has('laborantin')) return 'laborantin';
+  if (s.has('accueil')) return 'accueil';
   if (s.has('vendeur') && s.has('caissier')) return 'vendeur_caissier';
   if (s.has('caissier')) return 'caissier';
   if (s.has('vendeur')) return 'vendeur';
@@ -52,4 +59,4 @@ function requireRole(...allowedRoles) {
   };
 }
 
-module.exports = { requireRole, aRole, normaliserRoles, rolePrincipal, ROLES_ATTRIBUABLES };
+module.exports = { requireRole, aRole, normaliserRoles, rolePrincipal, ROLES_ATTRIBUABLES, ROLES_CLINIQUE };
