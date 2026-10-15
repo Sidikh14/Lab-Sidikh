@@ -30,10 +30,100 @@ const MATRICE = {
     lire: ['medecin', 'laborantin', 'infirmier', 'sage_femme'],
     ecrire: ['laborantin'],
     valider: ['medecin'],
+    publier: ['medecin'],
   },
   facturation: {
     lire: ['caissier', 'accueil', 'gerant', 'manager'],
     ecrire: ['caissier', 'gerant', 'manager'],
+  },
+  rendez_vous: {
+    lire: ['medecin', 'infirmier', 'sage_femme', 'accueil', 'caissier', 'gerant', 'manager'],
+    ecrire: ['accueil', 'gerant', 'manager'],
+  },
+  file_attente: {
+    lire: ['medecin', 'infirmier', 'sage_femme', 'accueil', 'caissier', 'gerant', 'manager'],
+    ecrire: ['accueil', 'medecin', 'infirmier', 'sage_femme', 'gerant', 'manager'],
+  },
+  documents_medicaux: {
+    lire: ['medecin', 'infirmier', 'sage_femme'],
+    ecrire: ['medecin'],
+  },
+  modeles: {
+    lire: ['medecin', 'infirmier', 'sage_femme'],
+    ecrire: ['medecin', 'gerant', 'manager'],
+  },
+  tarifs: {
+    lire: ['medecin', 'infirmier', 'sage_femme', 'accueil', 'caissier', 'gerant', 'manager', 'comptable'],
+    ecrire: ['gerant', 'manager'],
+  },
+  honoraires: {
+    lire: ['gerant', 'manager', 'comptable'],
+    ecrire: ['gerant', 'manager'],
+  },
+  comptabilite: {
+    lire: ['gerant', 'manager', 'comptable'],
+  },
+  pharmacie: {
+    lire: ['medecin', 'infirmier', 'sage_femme', 'gerant', 'manager'],
+    ecrire: ['medecin', 'infirmier', 'sage_femme', 'gerant', 'manager'],
+  },
+  pharmacie_entrees: {
+    ecrire: ['gerant', 'manager'],
+  },
+  examens: {
+    lire: ['medecin', 'laborantin', 'infirmier', 'sage_femme'],
+    ecrire: ['medecin'],
+  },
+  pieces_jointes: {
+    lire: ['medecin', 'laborantin', 'infirmier', 'sage_femme'],
+    ecrire: ['medecin', 'laborantin'],
+  },
+  lits: {
+    lire: ['medecin', 'infirmier', 'sage_femme', 'accueil', 'gerant', 'manager'],
+    ecrire: ['accueil', 'infirmier', 'sage_femme', 'gerant', 'manager'],
+  },
+  lits_gestion: {
+    ecrire: ['gerant', 'manager'],
+  },
+  admissions: {
+    lire: ['medecin', 'infirmier', 'sage_femme', 'accueil', 'gerant', 'manager'],
+    ecrire: ['accueil', 'medecin'],
+  },
+  surveillance: {
+    lire: ['medecin', 'infirmier', 'sage_femme'],
+    ecrire: ['medecin', 'infirmier', 'sage_femme'],
+  },
+  urgences: {
+    lire: ['medecin', 'infirmier', 'sage_femme', 'accueil', 'gerant', 'manager'],
+    ecrire: ['accueil', 'medecin', 'infirmier', 'sage_femme'],
+  },
+  maternite: {
+    lire: ['medecin', 'sage_femme', 'infirmier'],
+    ecrire: ['medecin', 'sage_femme'],
+  },
+  vaccination: {
+    lire: ['medecin', 'infirmier', 'sage_femme'],
+    ecrire: ['medecin', 'infirmier', 'sage_femme'],
+  },
+  vaccins_catalogue: {
+    lire: ['medecin', 'infirmier', 'sage_femme', 'gerant', 'manager'],
+    ecrire: ['medecin', 'gerant', 'manager'],
+  },
+  planning: {
+    lire: ['medecin', 'infirmier', 'sage_femme', 'accueil', 'gerant', 'manager'],
+    ecrire: ['gerant', 'manager'],
+  },
+  primes_garde: {
+    lire: ['gerant', 'manager', 'comptable'],
+  },
+  portail: {
+    ecrire: ['accueil', 'gerant', 'manager'],
+  },
+  alertes: {
+    ecrire: ['gerant', 'manager'],
+  },
+  rapports: {
+    lire: ['gerant', 'manager', 'comptable'],
   },
   journal_acces: {
     lire_journal: ['manager'],
@@ -69,7 +159,8 @@ function requireClinique(ressource, action, options = {}) {
 
       const roles = req.user.roles || [];
       const patientId = options.patient ? req.params[options.patient] : null;
-      const lectureDossier = ressource === 'dossier_medical' && (action === 'lire' || action === 'ecrire');
+      const RESSOURCES_MEDICALES = ['dossier_medical', 'documents_medicaux', 'resultats_examens', 'pharmacie', 'examens', 'pieces_jointes', 'admissions', 'surveillance', 'urgences', 'maternite', 'vaccination'];
+      const lectureDossier = RESSOURCES_MEDICALES.includes(ressource) && (action === 'lire' || action === 'ecrire');
 
       if (estAutorise(roles, ressource, action)) {
         if (lectureDossier) {

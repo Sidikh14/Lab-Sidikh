@@ -4,6 +4,7 @@ const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
 const { requireRole, aRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
+const { enregistrerHonorairesCommande } = require('../services/honoraires.clinique.service'); // clinique : honoraires à reverser
 const { broadcast } = require('../utils/eventsBus');
 const {
   COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerBandeauTotal, dessinerPiedDePage, traitSeparateur, traitPointille,
@@ -332,7 +333,13 @@ async function verifierOrdonnanceRenouvelable(dbClient, merchantId, prescription
 // - authorizeOutOfStock sur un article (manager, et gérant pour les secteurs à reliquat) : vendre un produit dont le stock
 //   disponible est insuffisant (vente en rupture autorisée). Le stock ne
 //   descend jamais sous zéro : il est simplement ramené à 0.
-router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), async (req, res) => {
+// Création de vente : les vendeurs habituels, et en clinique l'accueil et le caissier (facturation des actes).
+function requireRoleVente(req, res, next) {
+  if (req.user?.sector === 'clinique' && aRole(req.user, 'caissier', 'accueil')) return next();
+  return requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')(req, res, next);
+}
+
+router.post('/', requireRoleVente, async (req, res) => {
   const { clientId, items, notes, tvaApplicable, clientOrderId, warehouseId: warehouseIdInput, prescriptionId, tvaRegime, precompte } = req.body;
   // items attendu : [{ productId, quantity, unitId, customPrice, authorizeOutOfStock }, ...]
   // quantity = nombre de conditionnements vendus (ex: 2 cartons) ; unitId
@@ -372,6 +379,10 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
     const resolvedItems = [];
 
     for (const item of items) {
+      if (item.praticienId) {
+        const praticien = await client.query(`SELECT id FROM users WHERE id = $1 AND merchant_id = $2`, [item.praticienId, req.user.merchantId]);
+        if (praticien.rows.length === 0) throw { status: 400, message: 'Praticien introuvable.' };
+      }
       if (!item.productId || typeof item.quantity !== 'number' || item.quantity <= 0) {
         throw { status: 400, message: 'Article de commande invalide.' };
       }
@@ -453,6 +464,7 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
         originalUnitPrice: originalUnitPrice !== null ? originalUnitPrice / quantitePerUnite : null,
         packagingLabel,
         packagingQuantity: packagingLabel ? item.quantity : null,
+        praticienId: item.praticienId || null,
         rupture,
         lineTotal,
       });
@@ -512,9 +524,9 @@ router.post('/', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')
 
     for (const resolved of resolvedItems) {
       const orderItemResult = await client.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity, unit_cost)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity, Number(resolved.product.cost_price) || 0]
+        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity, unit_cost, praticien_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity, Number(resolved.product.cost_price) || 0, resolved.praticienId]
       );
       const orderItemId = orderItemResult.rows[0].id;
 
@@ -974,6 +986,15 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
     );
     const orderMisAJour = result.rows[0];
 
+    // Clinique : honoraires à reverser créés à l'encaissement (H6). Un échec ici ne bloque pas la vente déjà encaissée.
+    if (req.user.sector === 'clinique') {
+      try {
+        await enregistrerHonorairesCommande(pool, req.user.merchantId, req.params.id);
+      } catch (err) {
+        console.error('Erreur honoraires clinique (encaissement) :', err);
+      }
+    }
+
     if (aReduction) {
       await logActivity({
         merchantId: req.user.merchantId,
@@ -1202,6 +1223,11 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
       params
     );
 
+    // Clinique : une vente annulée après encaissement ne doit plus rien devoir aux praticiens (honoraires non versés retirés).
+    if (status === 'annulee' && ['validee', 'livree'].includes(orderExistant.status)) {
+      await client.query(`DELETE FROM practitioner_fee_entries WHERE order_id = $1 AND statut = 'du'`, [req.params.id]);
+    }
+
     await client.query('COMMIT');
 
     const order = result.rows[0];
@@ -1334,6 +1360,10 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
     const resolvedItems = [];
 
     for (const item of items) {
+      if (item.praticienId) {
+        const praticien = await client.query(`SELECT id FROM users WHERE id = $1 AND merchant_id = $2`, [item.praticienId, req.user.merchantId]);
+        if (praticien.rows.length === 0) throw { status: 400, message: 'Praticien introuvable.' };
+      }
       if (!item.productId || typeof item.quantity !== 'number' || item.quantity <= 0) {
         throw { status: 400, message: 'Article de commande invalide.' };
       }
@@ -1412,6 +1442,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
         originalUnitPrice: originalUnitPrice !== null ? originalUnitPrice / quantitePerUnite : null,
         packagingLabel,
         packagingQuantity: packagingLabel ? item.quantity : null,
+        praticienId: item.praticienId || null,
         rupture,
         lineTotal,
       });
@@ -1441,9 +1472,9 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
 
     for (const resolved of resolvedItems) {
       const orderItemResult = await client.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity, unit_cost)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity, Number(resolved.product.cost_price) || 0]
+        `INSERT INTO order_items (order_id, product_id, quantity, unit_price, original_unit_price, packaging_label, packaging_quantity, unit_cost, praticien_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+        [order.id, resolved.product.id, resolved.baseQuantity, resolved.unitPrice, resolved.originalUnitPrice, resolved.packagingLabel, resolved.packagingQuantity, Number(resolved.product.cost_price) || 0, resolved.praticienId]
       );
       const orderItemId = orderItemResult.rows[0].id;
 

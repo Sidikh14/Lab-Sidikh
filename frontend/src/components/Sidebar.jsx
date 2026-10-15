@@ -372,6 +372,34 @@ export function Sidebar({ ouvert = false, onFermer }) {
     lien.module === 'fournisseurs' ? autorises.includes('fournisseurs') || autorises.includes('achats') : autorises.includes(lien.module)
   );
   const voitEquipe = aRole('manager', 'gerant');
+  // Clinique : accès à l'accueil (agenda, file, nouveaux patients) pour l'accueil, le gérant et le manager.
+  if (merchant?.sector === 'clinique' && aRole('accueil', 'manager', 'gerant')) {
+    liensGestion.unshift({ to: '/clinique/accueil', label: 'Accueil', icone: IconBoutique });
+  }
+  if (merchant?.sector === 'clinique' && aRole('medecin')) {
+    liensGestion.unshift({ to: '/clinique/mon-agenda', label: 'Mon agenda', icone: IconBoutique });
+  }
+  if (merchant?.sector === 'clinique' && aRole('gerant', 'manager', 'comptable')) {
+    liensGestion.unshift({ to: '/clinique/rapports', label: 'Rapports', icone: IconBoutique });
+  }
+  if (merchant?.sector === 'clinique' && aRole('medecin', 'infirmier', 'sage_femme', 'accueil', 'gerant', 'manager', 'comptable')) {
+    liensGestion.unshift({ to: '/clinique/planning', label: 'Planning', icone: IconBoutique });
+  }
+  if (merchant?.sector === 'clinique' && aRole('medecin', 'infirmier', 'sage_femme', 'gerant', 'manager')) {
+    liensGestion.unshift({ to: '/clinique/pharmacie', label: 'Pharmacie', icone: IconBoutique });
+  }
+  if (merchant?.sector === 'clinique' && aRole('accueil', 'medecin', 'infirmier', 'sage_femme', 'gerant', 'manager')) {
+    liensGestion.unshift({ to: '/clinique/hospitalisation', label: 'Hospitalisation', icone: IconBoutique });
+  }
+  if (merchant?.sector === 'clinique' && aRole('laborantin', 'medecin')) {
+    liensGestion.unshift({ to: '/clinique/laboratoire', label: 'Laboratoire', icone: IconBoutique });
+  }
+  if (merchant?.sector === 'clinique' && aRole('caissier', 'accueil', 'gerant', 'manager')) {
+    liensGestion.unshift({ to: '/clinique/caisse', label: 'Caisse', icone: IconBoutique });
+  }
+  if (merchant?.sector === 'clinique' && aRole('medecin', 'infirmier', 'sage_femme')) {
+    liensGestion.unshift({ to: '/clinique/dossiers', label: 'Dossiers', icone: IconBoutique });
+  }
   const estManager = user?.role === 'manager';
   // Carte du restaurant (plats, tables et QR, import) : manager et gérant d'un restaurant.
   if (merchant?.sector === 'restauration' && voitEquipe) {

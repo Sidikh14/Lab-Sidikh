@@ -18,6 +18,15 @@ import { FiscalitePage } from './pages/FiscalitePage';
 import { PaiePage } from './pages/PaiePage';
 import { CartePage } from './pages/CartePage';
 import { MenuPublicPage } from './pages/MenuPublicPage';
+import { AccueilCliniquePage } from './pages/clinique/AccueilCliniquePage';
+import { DossierCliniquePage } from './pages/clinique/DossierCliniquePage';
+import { CaisseCliniquePage } from './pages/clinique/CaisseCliniquePage';
+import { LaboratoireCliniquePage } from './pages/clinique/LaboratoireCliniquePage';
+import { HospitalisationCliniquePage } from './pages/clinique/HospitalisationCliniquePage';
+import { PharmacieCliniquePage } from './pages/clinique/PharmacieCliniquePage';
+import { PlanningCliniquePage } from './pages/clinique/PlanningCliniquePage';
+import { RapportsCliniquePage } from './pages/clinique/RapportsCliniquePage';
+import { AgendaMedecinPage } from './pages/clinique/AgendaMedecinPage';
 import { api } from './api/client';
 import OfflineBanner from './offline/OfflineBanner';
 import CreditRequestNotifications from './components/CreditRequestNotifications';
@@ -69,6 +78,13 @@ function RouteCarte({ children }) {
   return <RouteCommercant>{children}</RouteCommercant>;
 }
 
+// Écrans de la clinique : réservés au secteur clinique et aux rôles d'accueil, de gestion.
+function RouteClinique({ children, roles = ['accueil', 'manager', 'gerant'] }) {
+  const { merchant, aRole } = useAuth();
+  if (merchant?.sector !== 'clinique' || !aRole(...roles)) return <Navigate to="/" replace />;
+  return <RouteCommercant>{children}</RouteCommercant>;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -96,6 +112,16 @@ export default function App() {
           <Route path="/equipe" element={<RouteCommercant><TeamPage /></RouteCommercant>} />
           <Route path="/comptabilite" element={<RouteCommercant><ComptabilitePage /></RouteCommercant>} />
           <Route path="/fiscalite" element={<RouteCommercant><FiscalitePage /></RouteCommercant>} />
+          <Route path="/clinique/accueil" element={<RouteClinique><AccueilCliniquePage /></RouteClinique>} />
+          <Route path="/clinique/mon-agenda" element={<RouteClinique roles={['medecin']}><AgendaMedecinPage /></RouteClinique>} />
+          <Route path="/clinique/rapports" element={<RouteClinique roles={['gerant', 'manager', 'comptable']}><RapportsCliniquePage /></RouteClinique>} />
+          <Route path="/clinique/planning" element={<RouteClinique roles={['medecin', 'infirmier', 'sage_femme', 'accueil', 'gerant', 'manager', 'comptable']}><PlanningCliniquePage /></RouteClinique>} />
+          <Route path="/clinique/pharmacie" element={<RouteClinique roles={['medecin', 'infirmier', 'sage_femme', 'gerant', 'manager']}><PharmacieCliniquePage /></RouteClinique>} />
+          <Route path="/clinique/hospitalisation" element={<RouteClinique roles={['accueil', 'medecin', 'infirmier', 'sage_femme', 'gerant', 'manager']}><HospitalisationCliniquePage /></RouteClinique>} />
+          <Route path="/clinique/laboratoire" element={<RouteClinique roles={['laborantin', 'medecin']}><LaboratoireCliniquePage /></RouteClinique>} />
+          <Route path="/clinique/caisse" element={<RouteClinique roles={['caissier', 'accueil', 'gerant', 'manager']}><CaisseCliniquePage /></RouteClinique>} />
+          <Route path="/clinique/dossiers" element={<RouteClinique roles={['medecin', 'infirmier', 'sage_femme']}><DossierCliniquePage /></RouteClinique>} />
+          <Route path="/clinique/dossiers/:patientId" element={<RouteClinique roles={['medecin', 'infirmier', 'sage_femme']}><DossierCliniquePage /></RouteClinique>} />
           <Route
             path="/admin"
             element={
