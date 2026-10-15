@@ -414,7 +414,7 @@ router.use(['/state-dues', '/state-payments', '/tax-settings', '/tax-profile', '
 // Les consultations (journal, grand livre, balance, résultat, bilan) lancent
 // d'abord la synchronisation automatique (au plus une fois toutes les 30 s) :
 // rien n'est à saisir ni à actualiser à la main.
-router.use(['/financing', '/adjustments', '/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues', '/closing-preview', '/fiscal-years', '/declarations', '/reconciliations', '/aged-balance'], async (req, res, next) => {
+router.use(['/dashboard', '/financing', '/adjustments', '/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues', '/closing-preview', '/fiscal-years', '/declarations', '/reconciliations', '/aged-balance'], async (req, res, next) => {
   if (req.method === 'GET') await assurerSynchro(req.user.merchantId, req.user.id);
   next();
 });
@@ -4362,6 +4362,112 @@ router.get('/income-statement', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors du calcul du compte de résultat.' });
+  }
+});
+
+// GET /accounting/dashboard — tableau de bord du comptable, toutes boutiques cumulées :
+// chiffres du mois en cours (CA, résultat, trésorerie, TVA), 12 derniers mois et
+// répartition des charges. Tout est calculé depuis les écritures déjà synchronisées.
+router.get('/dashboard', async (req, res) => {
+  try {
+    const merchantId = req.user.merchantId;
+    const jour = aujourdhui();
+    const [annee, mois] = jour.slice(0, 7).split('-').map(Number);
+    const cles = [];
+    for (let i = 11; i >= 0; i -= 1) {
+      const d = new Date(Date.UTC(annee, mois - 1 - i, 1));
+      cles.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+    }
+    const debut = `${cles[0]}-01`;
+    const moisCourant = cles[11];
+    const moisPrecedent = cles[10];
+    const suivant = new Date(Date.UTC(annee, mois, 1)).toISOString().slice(0, 10); // 1er jour du mois suivant (exclu)
+
+    // Produits et charges (classes 6, 7, 8) par mois : net = crédit − débit.
+    const mouvements = await pool.query(
+      `SELECT to_char(e.entry_date, 'YYYY-MM') AS m, left(a.code, 2) AS cl,
+              COALESCE(SUM(l.credit), 0) - COALESCE(SUM(l.debit), 0) AS net
+       FROM accounting_lines l
+       JOIN accounting_entries e ON e.id = l.entry_id
+       JOIN accounting_accounts a ON a.id = l.account_id
+       WHERE l.merchant_id = $1 AND e.entry_date >= $2::date AND e.entry_date < $3::date
+         AND left(a.code, 1) IN ('6', '7', '8')
+       GROUP BY 1, 2`,
+      [merchantId, debut, suivant]
+    );
+    const net = {};
+    for (const r of mouvements.rows) {
+      net[r.m] = net[r.m] || {};
+      net[r.m][r.cl] = Number(r.net);
+    }
+    const CLASSES_CHARGES = ['60', '61', '62', '63', '64', '65', '66', '67', '68', '69'];
+    const mensuel = cles.map((m) => {
+      const ligne = net[m] || {};
+      return {
+        month: m,
+        revenue: arrondi(ligne['70'] || 0),
+        charges: arrondi(-CLASSES_CHARGES.reduce((t, c) => t + (ligne[c] || 0), 0)),
+        result: arrondi(Object.values(ligne).reduce((t, v) => t + v, 0)),
+      };
+    });
+
+    // Répartition des charges sur les 12 mois : 7 principaux comptes + « Autres ».
+    const repartition = await pool.query(
+      `SELECT a.code, a.label, COALESCE(SUM(l.debit), 0) - COALESCE(SUM(l.credit), 0) AS total
+       FROM accounting_lines l
+       JOIN accounting_entries e ON e.id = l.entry_id
+       JOIN accounting_accounts a ON a.id = l.account_id
+       WHERE l.merchant_id = $1 AND e.entry_date >= $2::date AND e.entry_date < $3::date
+         AND left(a.code, 1) = '6'
+       GROUP BY a.code, a.label
+       HAVING COALESCE(SUM(l.debit), 0) - COALESCE(SUM(l.credit), 0) > 0
+       ORDER BY total DESC`,
+      [merchantId, debut, suivant]
+    );
+    const toutesCharges = repartition.rows.map((r) => ({ code: r.code, label: r.label, total: arrondi(r.total) }));
+    const chargesTotal = arrondi(toutesCharges.reduce((t, c) => t + c.total, 0));
+    const chargeBreakdown = toutesCharges.slice(0, 7);
+    const autres = arrondi(toutesCharges.slice(7).reduce((t, c) => t + c.total, 0));
+    if (autres > 0) chargeBreakdown.push({ code: 'autres', label: 'Autres charges', total: autres });
+
+    // Trésorerie : soldes comptables actuels (caisse, Wave, Orange Money, banque).
+    const comptes = await soldesTresorerie(merchantId, jour);
+    const tresorerie = arrondi(comptes.reduce((t, c) => t + c.bookBalance, 0));
+
+    // TVA : même calcul que « Dettes envers l'État » (collectée 443 − déductible 445, cumul à ce jour).
+    const tvaRows = await pool.query(
+      `SELECT a.code, COALESCE(SUM(l.credit), 0) - COALESCE(SUM(l.debit), 0) AS net
+       FROM accounting_lines l
+       JOIN accounting_entries e ON e.id = l.entry_id
+       JOIN accounting_accounts a ON a.id = l.account_id
+       WHERE l.merchant_id = $1 AND a.code IN ('443', '445') AND e.entry_date <= $2::date
+       GROUP BY a.code`,
+      [merchantId, jour]
+    );
+    const soldeTva = (code) => Number(tvaRows.rows.find((r) => r.code === code)?.net || 0);
+    const collectee = arrondi(soldeTva('443'));
+    const deductible = arrondi(-soldeTva('445'));
+    const tvaNette = arrondi(collectee - deductible);
+
+    const courant = mensuel.find((x) => x.month === moisCourant);
+    const precedent = mensuel.find((x) => x.month === moisPrecedent);
+    res.json({
+      asOf: jour,
+      month: moisCourant,
+      previousMonth: moisPrecedent,
+      kpis: {
+        revenue: { current: courant.revenue, previous: precedent.revenue },
+        result: { current: courant.result, previous: precedent.result },
+        treasury: { total: tresorerie, accounts: comptes.map((c) => ({ code: c.code, label: c.label, balance: c.bookBalance })) },
+        vat: { net: tvaNette, toPay: Math.max(0, tvaNette), credit: Math.max(0, -tvaNette), collected: collectee, deductible },
+      },
+      months: mensuel,
+      chargeBreakdown,
+      chargesTotal,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors du calcul du tableau de bord comptable.' });
   }
 });
 

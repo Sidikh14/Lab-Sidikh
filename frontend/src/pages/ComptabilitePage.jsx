@@ -2437,6 +2437,120 @@ const CHAMPS_OUVERTURE = [
   ['creances', 'Créances clients (ce que vos clients vous doivent)'], ['dettes', 'Dettes fournisseurs (ce que vous devez)'], ['capital', 'Capital social'],
 ];
 
+// Dernier jour du mois qui précède `mois` (AAAA-MM) : date de l'écriture du crédit de TVA initial.
+function finMoisPrecedent(mois) {
+  const [a, m] = mois.split('-').map(Number);
+  return new Date(Date.UTC(a, m - 1, 0)).toISOString().slice(0, 10);
+}
+const libelleMoisCredit = (mois) => {
+  const [a, m] = String(mois).split('-').map(Number);
+  return `${NOMS_MOIS_FR[m - 1]} ${a}`;
+};
+
+function CreditTvaModal({ moisDefaut, onClose, onSaved }) {
+  const [montant, setMontant] = useState('');
+  const [mois, setMois] = useState(moisDefaut);
+  const [erreur, setErreur] = useState('');
+  const [envoi, setEnvoi] = useState(false);
+  const moisValide = /^\d{4}-(0[1-9]|1[0-2])$/.test(mois);
+
+  async function valider(e) {
+    e.preventDefault();
+    setErreur('');
+    setEnvoi(true);
+    try {
+      await api.saveVatCreditOpening({ amount: Number(montant), firstMonth: mois });
+      onSaved();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnvoi(false);
+    }
+  }
+
+  return (
+    <div className="modale-fond" onClick={onClose}>
+      <div className="modale" style={{ maxWidth: 460, width: '96%', maxHeight: '92vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        <h2>Crédit de TVA initial</h2>
+        <form onSubmit={valider}>
+          <p style={{ color: 'var(--encre-douce)', fontSize: 13, marginTop: 0 }}>
+            Le crédit de TVA que le client avait avant d'utiliser le logiciel (dernière déclaration faite ailleurs). À saisir une seule fois.
+          </p>
+          <div className="champ-groupe">
+            <label className="etiquette" htmlFor="ctva-montant">Montant du crédit (FCFA)</label>
+            <input id="ctva-montant" type="number" min="1" step="any" className="champ" value={montant} onChange={(e) => setMontant(e.target.value)} required autoFocus />
+          </div>
+          <div className="champ-groupe">
+            <label className="etiquette" htmlFor="ctva-mois">Premier mois déclaré dans le logiciel</label>
+            <input id="ctva-mois" type="month" className="champ" value={mois} onChange={(e) => setMois(e.target.value)} required />
+            {moisValide && (
+              <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '4px 0 0' }}>
+                Écriture datée du {dateFr(finMoisPrecedent(mois))} : débit 445 « TVA récupérable », crédit 121 « Report à nouveau ».
+                Le crédit apparaîtra à la ligne « Crédit de TVA du mois précédent » de la déclaration de {libelleMoisCredit(mois)}.
+              </p>
+            )}
+          </div>
+          {erreur && <div className="erreur">{erreur}</div>}
+          <div className="actions-modale">
+            <button type="button" className="btn" onClick={onClose}>Annuler</button>
+            <button type="submit" className="btn btn-principal" disabled={envoi || !moisValide}>{envoi ? 'Enregistrement…' : 'Enregistrer'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// Bloc affiché une fois les soldes d'ouverture validés : saisie (ou suppression) du crédit de TVA initial.
+function CreditTvaInitial({ moisDefaut }) {
+  const [version, setVersion] = useState(0);
+  const [etat, erreurChargement] = useDonnees(() => api.getVatCreditOpening(), [version]);
+  const [modale, setModale] = useState(false);
+  const [erreur, setErreur] = useState('');
+
+  async function supprimer() {
+    if (!window.confirm('Supprimer le crédit de TVA initial ? Vous pourrez le ressaisir ensuite.')) return;
+    setErreur('');
+    try {
+      await api.deleteVatCreditOpening();
+      setVersion((v) => v + 1);
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 20, paddingTop: 14, borderTop: '1px solid rgba(128,128,128,0.18)' }}>
+      <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>Crédit de TVA initial</h3>
+      {(erreurChargement || erreur) && <div className="erreur">{erreurChargement || erreur}</div>}
+      {!etat ? (
+        !erreurChargement && <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
+      ) : etat.exists ? (
+        <>
+          <p style={{ margin: '0 0 8px' }}>
+            <strong>{fmt(etat.amount)} FCFA</strong>, repris à la déclaration de {libelleMoisCredit(etat.firstMonth)} (écriture du {dateFr(etat.entryDate)}).
+          </p>
+          <button type="button" className="btn" style={boutonPetit} onClick={supprimer}>Supprimer</button>
+        </>
+      ) : (
+        <>
+          <p style={{ color: 'var(--encre-douce)', fontSize: 13, margin: '0 0 8px' }}>
+            Le client avait un crédit de TVA avant d'utiliser le logiciel ? Saisissez-le ici pour qu'il soit reporté dans la déclaration de TVA.
+          </p>
+          <button type="button" className="btn" onClick={() => setModale(true)}>Crédit de TVA initial</button>
+        </>
+      )}
+      {modale && (
+        <CreditTvaModal
+          moisDefaut={moisDefaut}
+          onClose={() => setModale(false)}
+          onSaved={() => { setModale(false); setVersion((v) => v + 1); }}
+        />
+      )}
+    </div>
+  );
+}
+
 function OuvertureTab() {
   const [etat, erreurChargement] = useDonnees(() => api.getOpeningBalances(), []);
   const [date, setDate] = useState(debutAnnee());
@@ -2476,6 +2590,7 @@ function OuvertureTab() {
             </tbody>
           </table>
         )}
+        <CreditTvaInitial moisDefaut={(etat.opening_date ? String(etat.opening_date) : date).slice(0, 7)} />
       </div>
     );
   }
@@ -2500,6 +2615,17 @@ function OuvertureTab() {
           />
         </div>
       ))}
+      <div className="champ-groupe">
+        <label className="etiquette" htmlFor="ouv-credit-tva">Crédit de TVA reporté (FCFA)</label>
+        <input
+          id="ouv-credit-tva" type="number" min="0" className="champ"
+          value={montants.credit_tva ?? ''} onChange={(e) => setMontants({ ...montants, credit_tva: e.target.value })}
+        />
+        <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '4px 0 0' }}>
+          Crédit de TVA de votre dernière déclaration, avant le logiciel. Il sera repris à la ligne « Crédit de TVA du mois précédent »
+          de la première déclaration (mois de la date d'ouverture).
+        </p>
+      </div>
       <button type="submit" className="btn btn-principal" disabled={envoi}>{envoi ? 'Enregistrement…' : "Valider les soldes d'ouverture"}</button>
     </form>
   );

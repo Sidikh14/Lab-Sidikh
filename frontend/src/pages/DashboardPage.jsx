@@ -283,27 +283,261 @@ button.db-hz:not(:disabled):hover{box-shadow:0 6px 18px rgba(17,24,39,.08)}
 }
 `;
 
-// Un comptable (sans autre rôle) n'a ni stock ni ventes : son tableau de bord se limite aux rappels fiscaux
-// et aux raccourcis vers ses trois modules.
-function DashboardComptable() {
-  const navigate = useNavigate();
-  const raccourcis = [
-    { to: '/comptabilite', titre: 'Comptabilité', texte: 'Écritures, grand livre, bilan, clôture.' },
-    { to: '/fiscalite', titre: 'Fiscalité', texte: 'Déclarations, impôts à payer, profil fiscal.' },
-    { to: '/paie', titre: 'Paie', texte: 'Salaires, bulletins et réglages de paie.' },
-  ];
+// ---------------------------------------------------------------------------
+// Tableau de bord du comptable (sans autre rôle) : rappels fiscaux, chiffres du mois en cours
+// et graphiques sur 12 mois, toutes boutiques cumulées. Style sobre et dense (préfixe cb-),
+// couleurs reprises du thème du client (--accent, --trait, --surface…).
+// ---------------------------------------------------------------------------
+const CSS_COMPTABLE = `
+.cb-periode{margin:-6px 0 16px;font-size:13px;color:var(--encre-douce)}
+.cb-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0 0 16px;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:10px;overflow:hidden}
+.cb-kpi{display:flex;flex-direction:column;gap:3px;min-width:0;padding:14px 16px;border-left:1px solid var(--trait,#e5e7eb)}
+.cb-kpi:first-child{border-left:none}
+.cb-kpi-label{margin:0;font-size:12.5px;font-weight:600;color:var(--encre-douce)}
+.cb-kpi-val{margin:0;font-size:21px;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cb-kpi-val small{font-size:12px;font-weight:500;color:var(--encre-douce)}
+.cb-neg{color:var(--danger,#b91c1c)}
+.cb-var{font-size:12px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.cb-var--haut{color:var(--vif,#157347)}
+.cb-var--bas{color:var(--danger,#b42318)}
+.cb-detail{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:12px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.cb-detail span{white-space:nowrap}
+.cb-grille{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:16px;margin-bottom:24px}
+.cb-carte{background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:10px;padding:14px 16px;min-width:0}
+.cb-carte-tete{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--trait,#e5e7eb)}
+.cb-carte-tete h2{margin:0;font-size:14.5px}
+.cb-carte-tete span{font-size:12.5px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.cb-legende{display:flex;gap:14px;margin:0 0 8px;font-size:12px;color:var(--encre-douce)}
+.cb-legende i{display:inline-block;width:10px;height:10px;margin-right:5px;border-radius:2px;vertical-align:-1px}
+.cb-chart{position:relative;height:190px;margin-top:4px}
+.cb-plot{position:absolute;left:44px;right:0;top:6px;height:150px}
+.cb-grid{position:absolute;left:0;right:0;height:0;border-top:1px solid var(--trait,#e5e7eb)}
+.cb-grid span{position:absolute;left:-44px;width:38px;transform:translateY(-50%);text-align:right;font-size:10.5px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.cb-cols{position:absolute;left:44px;right:0;top:6px;height:174px;display:flex;gap:6px}
+.cb-col{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;outline:none;cursor:default}
+.cb-paire{height:150px;display:flex;align-items:flex-end;justify-content:center;gap:2px}
+.cb-barre{width:42%;max-width:16px;min-height:2px;border-radius:3px 3px 0 0}
+.cb-barre--ca{background:var(--accent)}
+.cb-barre--ch{background:var(--soleil,#f2a81d)}
+.cb-col:hover .cb-paire,.cb-col:focus-visible .cb-paire{filter:brightness(.92)}
+.cb-col:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:4px}
+.cb-col--courant .cb-etiq{color:var(--accent);font-weight:700}
+.cb-etiq{height:24px;line-height:24px;text-align:center;font-size:11px;color:var(--encre-douce);white-space:nowrap}
+.cb-tip{position:absolute;z-index:5;top:0;transform:translateX(-50%);min-width:150px;padding:8px 10px;border-radius:8px;background:var(--encre,#0f2747);color:#fff;font-size:12px;line-height:1.4;box-shadow:0 6px 18px rgba(0,0,0,.25);pointer-events:none}
+.cb-tip strong{display:block;text-transform:capitalize}
+.cb-tip div{display:flex;justify-content:space-between;gap:14px;font-variant-numeric:tabular-nums}
+.cb-vide{position:absolute;left:44px;right:0;top:0;height:150px;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--encre-douce);pointer-events:none}
+.cb-rep{display:flex;flex-direction:column;gap:10px}
+.cb-rep-ligne{min-width:0}
+.cb-rep-haut{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:13px}
+.cb-rep-nom{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cb-rep-val{white-space:nowrap;font-weight:600;font-variant-numeric:tabular-nums}
+.cb-rep-val span{margin-left:6px;font-weight:400;color:var(--encre-douce)}
+.cb-rep-piste{height:6px;margin-top:4px;border-radius:3px;background:var(--fond,#f3f4f6);overflow:hidden}
+.cb-rep-rempli{height:100%;border-radius:3px;background:var(--accent)}
+.cb-sk{height:21px;margin:3px 0;border-radius:4px;background:var(--fond,#f3f4f6)}
+.cb-note{margin:0;font-size:13px;color:var(--encre-douce)}
+@media (max-width:900px){.cb-grille{grid-template-columns:1fr}}
+@media (max-width:760px){
+  .cb-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cb-kpi:nth-child(3){border-left:none}
+  .cb-kpi:nth-child(n+3){border-top:1px solid var(--trait,#e5e7eb)}
+}
+@media (max-width:420px){
+  .cb-kpis{grid-template-columns:1fr}
+  .cb-kpi{border-left:none;border-top:1px solid var(--trait,#e5e7eb)}
+  .cb-kpi:first-child{border-top:none}
+}
+`;
+
+const MOIS_COURTS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin', 'Juil', 'Août', 'Sep', 'Oct', 'Nov', 'Déc'];
+const moisCourt = (cle) => MOIS_COURTS[Number(cle.split('-')[1]) - 1];
+const HAUTEUR_CB = 150;
+
+function variationPct(courant, precedent) {
+  const c = Number(courant) || 0;
+  const p = Number(precedent) || 0;
+  if (p === 0) return null;
+  return Math.round(((c - p) / Math.abs(p)) * 100);
+}
+
+function VariationMois({ courant, precedent }) {
+  const v = variationPct(courant, precedent);
+  if (v === null) return <span className="cb-var">Pas de référence le mois précédent</span>;
+  if (v === 0) return <span className="cb-var">Stable par rapport au mois précédent</span>;
   return (
-    <>
-      <div className="entete-page"><h1>Tableau de bord</h1></div>
-      <RappelsFiscaux lien="/fiscalite" />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-        {raccourcis.map((r) => (
-          <button key={r.to} type="button" className="md-carte" style={{ textAlign: 'left', cursor: 'pointer' }} onClick={() => navigate(r.to)}>
-            <strong style={{ fontSize: 15 }}>{r.titre}</strong>
-            <span style={{ display: 'block', fontSize: 13, color: 'var(--encre-douce)', marginTop: 4 }}>{r.texte}</span>
-          </button>
+    <span className={'cb-var ' + (v > 0 ? 'cb-var--haut' : 'cb-var--bas')}>
+      {v > 0 ? '▲ +' : '▼ '}{v} % par rapport au mois précédent
+    </span>
+  );
+}
+
+function ChiffresMois({ data }) {
+  const { revenue, result, treasury, vat } = data.kpis;
+  const comptesTreso = treasury.accounts.filter((c) => Math.round(c.balance) !== 0);
+  return (
+    <div className="cb-kpis">
+      <div className="cb-kpi">
+        <p className="cb-kpi-label">Chiffre d'affaires</p>
+        <p className="cb-kpi-val">{fcfa(revenue.current)} <small>FCFA</small></p>
+        <VariationMois courant={revenue.current} precedent={revenue.previous} />
+      </div>
+      <div className="cb-kpi">
+        <p className="cb-kpi-label">Résultat</p>
+        <p className={'cb-kpi-val' + (result.current < 0 ? ' cb-neg' : '')}>{fcfa(result.current)} <small>FCFA</small></p>
+        <VariationMois courant={result.current} precedent={result.previous} />
+      </div>
+      <div className="cb-kpi">
+        <p className="cb-kpi-label">Trésorerie</p>
+        <p className={'cb-kpi-val' + (treasury.total < 0 ? ' cb-neg' : '')}>{fcfa(treasury.total)} <small>FCFA</small></p>
+        <div className="cb-detail">
+          {comptesTreso.length === 0
+            ? <span>Aucun solde</span>
+            : comptesTreso.map((c) => <span key={c.code}>{c.label} {fcfa(c.balance)}</span>)}
+        </div>
+      </div>
+      <div className="cb-kpi">
+        <p className="cb-kpi-label">{vat.net < 0 ? 'Crédit de TVA' : 'TVA à reverser'}</p>
+        <p className="cb-kpi-val">{fcfa(vat.net < 0 ? vat.credit : vat.toPay)} <small>FCFA</small></p>
+        <div className="cb-detail">
+          <span>Collectée {fcfa(vat.collected)}</span>
+          <span>Déductible {fcfa(vat.deductible)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GraphiqueMensuel({ mois, moisCourant }) {
+  const [survol, setSurvol] = useState(null);
+  const max = Math.max(1, ...mois.map((m) => Math.max(m.revenue, m.charges, 0)));
+  const vide = mois.every((m) => m.revenue === 0 && m.charges === 0);
+  const haut = (v) => (v > 0 ? Math.max(2, Math.round((v / max) * HAUTEUR_CB)) : 2);
+  const tip = survol !== null ? mois[survol] : null;
+  return (
+    <div className="cb-chart">
+      <div className="cb-plot" aria-hidden="true">
+        {[0, 0.5, 1].map((r) => (
+          <div key={r} className="cb-grid" style={{ bottom: `${r * 100}%` }}>
+            {!vide && <span>{r === 0 ? '0' : abreger(max * r)}</span>}
+          </div>
         ))}
       </div>
+      {vide && <div className="cb-vide">Aucune écriture sur les 12 derniers mois</div>}
+      <div className="cb-cols" onMouseLeave={() => setSurvol(null)}>
+        {mois.map((m, i) => (
+          <div
+            key={m.month}
+            tabIndex={0}
+            role="img"
+            aria-label={`${formatMois(m.month)} : chiffre d'affaires ${fcfa(m.revenue)} FCFA, charges ${fcfa(m.charges)} FCFA, résultat ${fcfa(m.result)} FCFA`}
+            className={'cb-col' + (m.month === moisCourant ? ' cb-col--courant' : '')}
+            onMouseEnter={() => setSurvol(i)}
+            onFocus={() => setSurvol(i)}
+            onBlur={() => setSurvol(null)}
+          >
+            <div className="cb-paire">
+              <div className="cb-barre cb-barre--ca" style={{ height: haut(m.revenue) }} />
+              <div className="cb-barre cb-barre--ch" style={{ height: haut(m.charges) }} />
+            </div>
+            <span className="cb-etiq">{moisCourt(m.month)}</span>
+          </div>
+        ))}
+        {tip && (
+          <div className="cb-tip" style={{ left: `${Math.min(86, Math.max(14, ((survol + 0.5) / mois.length) * 100))}%` }}>
+            <strong>{formatMois(tip.month)}</strong>
+            <div><span>CA</span><span>{fcfa(tip.revenue)}</span></div>
+            <div><span>Charges</span><span>{fcfa(tip.charges)}</span></div>
+            <div><span>Résultat</span><span>{fcfa(tip.result)}</span></div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RepartitionCharges({ lignes, total }) {
+  if (!lignes || lignes.length === 0) return <p className="cb-note">Aucune charge sur les 12 derniers mois.</p>;
+  const max = Math.max(1, ...lignes.map((l) => l.total));
+  return (
+    <div className="cb-rep">
+      {lignes.map((l) => (
+        <div key={l.code} className="cb-rep-ligne">
+          <div className="cb-rep-haut">
+            <span className="cb-rep-nom" title={l.label}>{l.label}</span>
+            <span className="cb-rep-val">
+              {fcfa(l.total)}<span>{total > 0 ? Math.round((l.total / total) * 100) : 0} %</span>
+            </span>
+          </div>
+          <div className="cb-rep-piste">
+            <div className="cb-rep-rempli" style={{ width: `${Math.max(2, (l.total / max) * 100)}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Un comptable (sans autre rôle) n'a ni stock ni ventes : son tableau de bord montre les rappels
+// fiscaux, les chiffres du mois en cours et l'évolution sur 12 mois (toutes boutiques cumulées).
+function DashboardComptable() {
+  const [data, setData] = useState(null);
+  const [erreur, setErreur] = useState('');
+  const [chargement, setChargement] = useState(true);
+
+  function charger() {
+    api.getAccountingDashboard()
+      .then((d) => { setData(d); setErreur(''); })
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargement(false));
+  }
+
+  useEffect(charger, []);
+  useLiveEvent('activity:created', () => charger());
+
+  return (
+    <>
+      <style>{CSS_COMPTABLE}</style>
+      <div className="entete-page"><h1>Tableau de bord</h1></div>
+      <p className="cb-periode">
+        {data ? `Chiffres de ${formatMois(data.month)}` : 'Mois en cours'} · toutes boutiques cumulées
+      </p>
+
+      <RappelsFiscaux lien="/fiscalite" />
+
+      {erreur && !data && <div className="erreur">Chiffres indisponibles : {erreur}</div>}
+
+      {chargement && !data ? (
+        <div className="cb-kpis" aria-busy="true">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="cb-kpi"><div className="cb-sk" style={{ width: '55%' }} /><div className="cb-sk" style={{ width: '80%' }} /></div>
+          ))}
+        </div>
+      ) : data && (
+        <>
+          <ChiffresMois data={data} />
+          <div className="cb-grille">
+            <div className="cb-carte">
+              <div className="cb-carte-tete">
+                <h2>Chiffre d'affaires et charges</h2>
+                <span>12 derniers mois</span>
+              </div>
+              <div className="cb-legende">
+                <span><i style={{ background: 'var(--accent)' }} />Chiffre d'affaires</span>
+                <span><i style={{ background: 'var(--soleil,#f2a81d)' }} />Charges</span>
+              </div>
+              <GraphiqueMensuel mois={data.months} moisCourant={data.month} />
+            </div>
+            <div className="cb-carte">
+              <div className="cb-carte-tete">
+                <h2>Répartition des charges</h2>
+                <span>{fcfa(data.chargesTotal)} FCFA</span>
+              </div>
+              <RepartitionCharges lignes={data.chargeBreakdown} total={data.chargesTotal} />
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }

@@ -527,6 +527,7 @@ export const api = {
   getAccountingLedger: (params) => request(`/accounting/ledger${qs(params)}`),
   getAccountingTrialBalance: (params) => request(`/accounting/trial-balance${qs(params)}`),
   getAccountingIncomeStatement: (params) => request(`/accounting/income-statement${qs(params)}`),
+  getAccountingDashboard: () => request('/accounting/dashboard'),
   getAccountingBalanceSheet: (params) => request(`/accounting/balance-sheet${qs(params)}`),
   syncAccounting: () => request('/accounting/sync', { method: 'POST' }),
   getAccountingCashFlow: (params) => request(`/accounting/cash-flow${qs(params)}`),
