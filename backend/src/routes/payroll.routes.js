@@ -18,6 +18,9 @@ const { formatMontant } = require('../utils/pdfHelpers');
 const { genererBulletinPDF, bulletinEnBuffer, genererBulletinsGroupes, nomMois } = require('../utils/payslipPdf');
 const { sendMailWithAttachments } = require('../utils/alertMailer');
 const { envoyerEtat, sommer } = require('../utils/payrollReports');
+const {
+  preparerDocument, valeursDocument, identiteAEnregistrer, nomFichierDocument, produirePdf,
+} = require('../utils/hrDocuments');
 
 const router = express.Router();
 router.use(authenticate);
@@ -117,10 +120,14 @@ const CHAMPS_REGLAGES = [
   'css_taux_salarial', 'css_taux_patronal', 'css_plafond_mensuel',
   'cfce_taux', 'bareme_irpp', 'trimf_bareme',
   'working_days_base', 'hours_per_day', 'overtime_rates', 'employer_ipres_number', 'employer_css_number',
+  'signatory_name', 'signatory_title', 'signature_city',
 ];
 const CHAMPS_JSON = ['bareme_irpp', 'trimf_bareme', 'overtime_rates'];
 
 function validerReglagesPeriode(body) {
+  ['signatory_name', 'signatory_title', 'signature_city'].forEach((champ) => {
+    if (body[champ] !== undefined) body[champ] = String(body[champ] ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) || null;
+  });
   if (body.working_days_base !== undefined) {
     const n = Number(body.working_days_base);
     if (!Number.isInteger(n) || n < 20 || n > 31) throw erreur(400, 'La base de jours doit être un entier entre 20 et 31.');
@@ -289,6 +296,65 @@ async function chargerEmploye(db, merchantId, empId) {
 // ---------------------------------------------------------------------------
 
 // GET /payroll/mine — bulletins de l'utilisateur connecté, limités aux mois payés.
+// ---------------------------------------------------------------------------
+// Documents RH (attestations, certificat, contrats CDI/CDD) : champs pré-remplis puis PDF à la demande.
+// Rien n'est conservé. Ces routes sont déclarées avant les routes « /:userId/... ».
+// ---------------------------------------------------------------------------
+const UUID_DOC_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function contexteDocument(req, employeeId) {
+  if (!UUID_DOC_RE.test(String(employeeId || ''))) throw erreur(400, 'Employé invalide.');
+  const emp = await pool.query(
+    `SELECT e.*, es.monthly_salary
+     FROM employees e
+     LEFT JOIN employee_salaries es ON es.user_id = e.id
+     WHERE e.id = $1 AND e.merchant_id = $2`,
+    [employeeId, req.user.merchantId]
+  );
+  if (emp.rows.length === 0) throw erreur(404, 'Employé introuvable.');
+  const boutique = await pool.query(
+    'SELECT business_name, address, phone, email, ninea, rccm, logo_data FROM merchants WHERE id = $1',
+    [req.user.merchantId]
+  );
+  const reglages = await recupererOuCreerReglages(req.user.merchantId);
+  return { employe: emp.rows[0], boutique: boutique.rows[0] || {}, reglages };
+}
+
+// GET /payroll/documents-rh/prepare?employeeId=&type= — champs du document, pré-remplis.
+router.get('/documents-rh/prepare', GESTION, async (req, res) => {
+  try {
+    const ctx = await contexteDocument(req, req.query.employeeId);
+    res.json(preparerDocument(String(req.query.type || ''), ctx));
+  } catch (err) {
+    repondre(res, err);
+  }
+});
+
+// POST /payroll/documents-rh/pdf — { employeeId, type, values, saveIdentity } : PDF de ce qui est à l'écran.
+router.post('/documents-rh/pdf', GESTION, async (req, res) => {
+  try {
+    const { employeeId, type, values, saveIdentity } = req.body || {};
+    const ctx = await contexteDocument(req, employeeId);
+    const v = valeursDocument(String(type || ''), values, ctx);
+    if (saveIdentity) {
+      const maj = identiteAEnregistrer(v);
+      const colonnes = Object.keys(maj);
+      if (colonnes.length > 0) {
+        await pool.query(
+          `UPDATE employees SET ${colonnes.map((c, i) => `${c} = $${i + 3}`).join(', ')}, updated_at = now() WHERE id = $1 AND merchant_id = $2`,
+          [ctx.employe.id, req.user.merchantId, ...colonnes.map((c) => maj[c])]
+        );
+      }
+    }
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${nomFichierDocument(type, v.nom)}"`);
+    produirePdf(PDFDocument, res, type, v, ctx.boutique);
+  } catch (err) {
+    if (!res.headersSent) repondre(res, err);
+    else console.error(err);
+  }
+});
+
 router.get('/mine', async (req, res) => {
   try {
     const { rows } = await pool.query(

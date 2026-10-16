@@ -182,6 +182,62 @@ function previewFile(path) {
   return tache;
 }
 
+// Comme previewFile, mais le PDF est produit à partir de données envoyées (POST) : l'onglet est ouvert tout de
+// suite (pendant le clic), puis rempli quand le serveur répond. Utilisé par les Documents RH.
+let apercuPostEnCours = false;
+async function previewPost(path, payload) {
+  if (apercuPostEnCours) return undefined;
+  apercuPostEnCours = true;
+  const onglet = window.open('', '_blank');
+  if (onglet) {
+    try {
+      onglet.document.title = 'Génération du document…';
+      onglet.document.body.style.cssText = 'font-family:sans-serif;padding:32px;color:#0f2747';
+      onglet.document.body.textContent = 'Génération du document en cours…';
+    } catch {
+      // onglet non scriptable : il sera redirigé ensuite
+    }
+  }
+  const fermerOnglet = () => {
+    if (onglet && !onglet.closed) onglet.close();
+  };
+  const controleur = new AbortController();
+  const minuteur = setTimeout(() => controleur.abort(), 90000);
+  try {
+    const token = getToken();
+    const response = await fetch(`${API_URL}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify(payload),
+      signal: controleur.signal,
+    });
+    if (response.status === 401) {
+      fermerOnglet();
+      signalerSessionExpiree();
+      throw new Error('Votre session a expiré. Veuillez vous reconnecter.');
+    }
+    if (!response.ok) {
+      fermerOnglet();
+      const body = await response.json().catch(() => null);
+      if (response.status === 503 && body?.code === 'maintenance') signalerMaintenance(body);
+      throw new Error(body?.error || `Erreur ${response.status}`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    if (onglet && !onglet.closed) onglet.location.href = url;
+    else declencherTelechargement(url, 'document.pdf');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (err) {
+    fermerOnglet();
+    if (err.name === 'AbortError') throw new Error('La génération du document a pris trop de temps. Réessayez dans un instant.');
+    throw err;
+  } finally {
+    clearTimeout(minuteur);
+    apercuPostEnCours = false;
+  }
+  return undefined;
+}
+
 // Génère un PDF à partir de données envoyées (POST) et renvoie le Blob, pour un aperçu
 // intégré à la page (télécharger / imprimer) au lieu d'un nouvel onglet.
 async function requestBlob(path, payload) {
@@ -740,14 +796,10 @@ export const api = {
   getAdvances: (status) => request(`/employees/advances${status ? `?status=${status}` : ''}`),
   addAdvance: (id, data) => request(`/employees/${id}/advances`, { method: 'POST', body: JSON.stringify(data) }),
 
-  // Documents RH
-  getHrTemplates: () => request('/hr-documents/templates'),
-  saveHrTemplate: (type, data) => request(`/hr-documents/templates/${type}`, { method: 'PUT', body: JSON.stringify(data) }),
-  resetHrTemplate: (type) => request(`/hr-documents/templates/${type}`, { method: 'DELETE' }),
-  renderHrDocument: (data) => request('/hr-documents/render', { method: 'POST', body: JSON.stringify(data) }),
-  issueHrDocument: (data) => request('/hr-documents/issue', { method: 'POST', body: JSON.stringify(data) }),
-  getHrIssued: (employeeId) => request(`/hr-documents/issued${employeeId ? `?employeeId=${employeeId}` : ''}`),
-  openHrDocument: (id) => previewFile(`/hr-documents/issued/${id}/pdf`),
+  // Documents RH : champs pré-remplis, puis PDF produit à la demande (rien n'est conservé)
+  prepareHrDocument: (employeeId, type) =>
+    request(`/payroll/documents-rh/prepare?employeeId=${encodeURIComponent(employeeId)}&type=${encodeURIComponent(type)}`),
+  openHrDocumentPdf: (data) => previewPost('/payroll/documents-rh/pdf', data),
 
   getInventorySessions: (warehouseId) => request(`/inventory-sessions${warehouseId ? `?warehouseId=${warehouseId}` : ''}`),
   getInventorySession: (id) => request(`/inventory-sessions/${id}`),

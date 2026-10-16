@@ -51,10 +51,11 @@ const MAJORATIONS_COURANTES = [
 ];
 
 const TYPES_DOC = {
-  attestation_travail: 'Attestation de travail',
-  certificat_travail: 'Certificat de travail',
-  contrat_cdi: 'Contrat CDI',
-  contrat_cdd: 'Contrat CDD',
+  attestation_travail: { label: 'Attestation de travail', sigle: 'AT', sous: "Confirme qu'un employé est en poste dans l'entreprise." },
+  certificat_travail: { label: 'Certificat de travail', sigle: 'CT', sous: "Remis à un employé dont l'emploi est terminé, avec la période travaillée." },
+  attestation_salaire: { label: 'Attestation de salaire', sigle: 'AS', sous: "Indique le salaire mensuel brut, par exemple pour un dossier de banque ou de location." },
+  contrat_cdi: { label: 'Contrat CDI', sigle: 'CI', sous: 'Contrat à durée indéterminée, 10 articles, selon le Code du Travail du Sénégal.' },
+  contrat_cdd: { label: 'Contrat CDD', sigle: 'CD', sous: 'Contrat à durée déterminée (24 mois maximum), 10 articles, avec motif et dates.' },
 };
 
 function initiales(nom) {
@@ -858,169 +859,178 @@ export function AvancesTab() {
 }
 
 // ---------------------------------------------------------------------------
-// Documents RH : modèles modifiables, émission en PDF, journal
+// Documents RH : champs pré-remplis depuis le dossier, modifiables avant impression. Rien n'est conservé.
 // ---------------------------------------------------------------------------
-const EMISSION_VIDE = { employeeId: '', type: 'attestation_travail', lieu: '', dureeEssai: '', dureeHebdomadaire: '', motifCdd: '' };
+const GROUPES_ORDRE = ['Employé', 'Poste', 'Contrat', 'Rémunération', 'Signature'];
+
+function ChampDocument({ champ, valeur, onChange }) {
+  const id = `dr-${champ.code}`;
+  const commun = { id, className: 'champ', value: valeur ?? '', onChange: (e) => onChange(champ.code, e.target.value) };
+  let saisie;
+  if (champ.type === 'select') {
+    saisie = (
+      <select {...commun}>
+        <option value="">Non précisé</option>
+        {champ.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    );
+  } else if (champ.type === 'textarea') {
+    saisie = <textarea {...commun} rows={3} />;
+  } else if (champ.type === 'date') {
+    saisie = <input {...commun} type="date" />;
+  } else if (champ.type === 'amount') {
+    saisie = <input {...commun} inputMode="numeric" />;
+  } else {
+    saisie = <input {...commun} />;
+  }
+  return (
+    <Champ id={id} label={champ.requis ? `${champ.label} (obligatoire)` : champ.label} style={champ.type === 'textarea' ? { gridColumn: '1 / -1' } : undefined}>
+      {saisie}
+      {champ.aide && <p className="md-sous">{champ.aide}</p>}
+    </Champ>
+  );
+}
 
 export function DocumentsRhTab() {
-  const [modeles, setModeles] = useState([]);
-  const [champs, setChamps] = useState([]);
   const [employes, setEmployes] = useState([]);
-  const [journal, setJournal] = useState([]);
-  const [erreur, setErreur] = useState('');
+  const [signataire, setSignataire] = useState({ signatory_name: '', signatory_title: '', signature_city: '' });
   const [message, setMessage] = useState('');
-  const [emission, setEmission] = useState(null);
-  const [texte, setTexte] = useState(null);
-  const [edition, setEdition] = useState(null);
+  const [erreur, setErreur] = useState('');
+  const [docRh, setDocument] = useState(null); // { type, employeeId, champs, valeurs, saveIdentity }
+  const [occupe, setOccupe] = useState(false);
 
-  function charger() {
-    api.getHrTemplates().then((d) => { setModeles(d.templates); setChamps(d.fields); }).catch((e) => setErreur(e.message));
-    api.getHrIssued().then(setJournal).catch(() => {});
-  }
   useEffect(() => {
-    charger();
-    api.getEmployees('tous').then(setEmployes).catch(() => {});
+    api.getEmployees('tous').then((l) => setEmployes(Array.isArray(l) ? l : [])).catch(() => {});
+    api.getPayrollSettings().then((r) => setSignataire({
+      signatory_name: r.signatory_name || '',
+      signatory_title: r.signatory_title || '',
+      signature_city: r.signature_city || '',
+    })).catch(() => {});
   }, []);
 
-  const extra = () => ({ lieu: emission.lieu, dureeEssai: emission.dureeEssai, dureeHebdomadaire: emission.dureeHebdomadaire, motifCdd: emission.motifCdd });
+  async function enregistrerSignataire() {
+    setErreur('');
+    setMessage('');
+    try {
+      await api.updatePayrollSettings(signataire);
+      setMessage('Signataire enregistré. Il apparaîtra sur tous les prochains documents.');
+    } catch (err) {
+      setErreur(err.message);
+    }
+  }
 
-  async function relire() {
+  async function choisirEmploye(employeeId) {
     setErreur('');
+    if (!employeeId) {
+      setDocument((d) => ({ ...d, employeeId: '', champs: null, valeurs: {} }));
+      return;
+    }
     try {
-      setTexte(await api.renderHrDocument({ employeeId: emission.employeeId, type: emission.type, extra: extra() }));
+      const r = await api.prepareHrDocument(employeeId, docRh.type);
+      const valeurs = {};
+      r.fields.forEach((f) => { valeurs[f.code] = f.value || ''; });
+      setDocument((d) => ({ ...d, employeeId, champs: r.fields, valeurs }));
     } catch (err) {
       setErreur(err.message);
     }
   }
-  async function emettre() {
+
+  const majValeur = (code, valeur) => setDocument((d) => ({ ...d, valeurs: { ...d.valeurs, [code]: valeur } }));
+
+  async function genererPdf() {
     setErreur('');
+    setOccupe(true);
     try {
-      const { id } = await api.issueHrDocument({ employeeId: emission.employeeId, type: emission.type, extra: extra() });
-      setMessage('Document émis et enregistré dans le journal.');
-      setEmission(null);
-      setTexte(null);
-      charger();
-      await api.openHrDocument(id);
+      await api.openHrDocumentPdf({
+        employeeId: docRh.employeeId,
+        type: docRh.type,
+        values: docRh.valeurs,
+        saveIdentity: docRh.saveIdentity,
+      });
+      setDocument(null);
     } catch (err) {
       setErreur(err.message);
+    } finally {
+      setOccupe(false);
     }
   }
-  async function sauverModele() {
-    setErreur('');
-    try {
-      await api.saveHrTemplate(edition.type, { title: edition.title, body: edition.body });
-      setEdition(null);
-      charger();
-    } catch (err) {
-      setErreur(err.message);
-    }
-  }
-  async function reinitialiser(type) {
-    if (!window.confirm('Revenir au modèle par défaut ?')) return;
-    await api.resetHrTemplate(type).catch((err) => setErreur(err.message));
-    setEdition(null);
-    charger();
-  }
-  const maj = (champ, valeur) => setEmission((s) => ({ ...s, [champ]: valeur, ...(champ === 'type' || champ === 'employeeId' ? {} : {}) }));
+
+  const groupes = docRh?.champs
+    ? GROUPES_ORDRE.map((nom) => ({ nom, champs: docRh.champs.filter((c) => c.groupe === nom) })).filter((g) => g.champs.length > 0)
+    : [];
+  const aIdentite = Boolean(docRh?.champs?.some((c) => ['date_naissance', 'lieu_naissance', 'nationalite', 'piece_identite', 'civilite'].includes(c.code)));
+  const signataireVide = !signataire.signatory_name.trim() || !signataire.signatory_title.trim();
 
   return (
     <>
-      <div className="md-kpis">
-        <Kpi hero label="Documents émis" valeur={journal.length} sous="attestations, certificats et contrats" />
+      <div className="md-info">
+        Les textes des contrats sont fixes. Seules les informations de l'employé, du poste et de la rémunération changent, et vous pouvez les corriger avant l'impression. Aucun docRh n'est conservé : vous le générez quand vous en avez besoin. Faites valider les modèles de contrat par un professionnel du droit du travail avant tout usage officiel.
       </div>
-
-      <div className="md-outils">
-        <button className="btn btn-principal" onClick={() => { setErreur(''); setMessage(''); setTexte(null); setEmission({ ...EMISSION_VIDE }); }}>Émettre un document</button>
-      </div>
-
-      <div className="md-info">Les modèles fournis sont des points de départ, à faire valider par un professionnel du droit du travail avant tout usage officiel. Les mentions « [à compléter] » signalent une information manquante sur la fiche de l'employé.</div>
-      {erreur && !emission && !edition && <div className="erreur">{erreur}</div>}
+      {erreur && !docRh && <div className="erreur">{erreur}</div>}
       {message && <div className="md-info">{message}</div>}
 
-      <h2 style={{ fontSize: 16, margin: '18px 0 10px' }}>Modèles</h2>
+      <h2 style={{ fontSize: 16, margin: '18px 0 10px' }}>Signataire des documents</h2>
+      <div className="md-fiche-grille">
+        <Champ id="sg-nom" label="Nom du signataire">
+          <input id="sg-nom" className="champ" value={signataire.signatory_name} onChange={(e) => setSignataire((s) => ({ ...s, signatory_name: e.target.value }))} />
+        </Champ>
+        <Champ id="sg-fonction" label="Fonction du signataire">
+          <input id="sg-fonction" className="champ" placeholder="Ex. Directeur Général" value={signataire.signatory_title} onChange={(e) => setSignataire((s) => ({ ...s, signatory_title: e.target.value }))} />
+        </Champ>
+        <Champ id="sg-ville" label="Ville de signature">
+          <input id="sg-ville" className="champ" placeholder="Ex. Dakar" value={signataire.signature_city} onChange={(e) => setSignataire((s) => ({ ...s, signature_city: e.target.value }))} />
+        </Champ>
+      </div>
+      <div className="md-outils">
+        <button className="btn" onClick={enregistrerSignataire}>Enregistrer le signataire</button>
+      </div>
+      {signataireVide && <div className="md-info">Renseignez le nom et la fonction du signataire pour qu'ils soient inscrits automatiquement sur les documents.</div>}
+
+      <h2 style={{ fontSize: 16, margin: '22px 0 10px' }}>Documents</h2>
       <div className="md-liste">
-        {modeles.map((m) => (
+        {Object.entries(TYPES_DOC).map(([type, t]) => (
           <Ligne
-            key={m.type}
-            sigle={(TYPES_DOC[m.type] || m.title).split(' ').map((x) => x[0]).slice(0, 2).join('').toUpperCase()}
-            titre={TYPES_DOC[m.type] || m.title}
-            sous={m.title}
-            tampon={m.custom ? { classe: 'tampon-laiton', texte: 'Personnalisé' } : { classe: 'tampon-sarcelle', texte: 'Par défaut' }}
-            actions={<button className="btn" onClick={() => { setErreur(''); setEdition({ type: m.type, title: m.title, body: m.body, custom: m.custom }); }}>Modifier</button>}
+            key={type}
+            sigle={t.sigle}
+            titre={t.label}
+            sous={t.sous}
+            actions={<button className="btn btn-principal" onClick={() => { setErreur(''); setMessage(''); setDocument({ type, employeeId: '', champs: null, valeurs: {}, saveIdentity: false }); }}>Préparer</button>}
           />
         ))}
       </div>
 
-      <h2 style={{ fontSize: 16, margin: '22px 0 10px' }}>Documents émis</h2>
-      {journal.length === 0 ? <p className="etat-vide">Aucun document émis.</p> : (
-        <div className="md-liste">
-          {journal.map((d) => (
-            <Ligne
-              key={d.id}
-              sigle={initiales(d.employee_name)}
-              titre={d.employee_name}
-              sous={`${d.title} · ${new Date(d.issued_at).toLocaleDateString('fr-FR')}${d.issued_by_name ? ` · ${d.issued_by_name}` : ''}`}
-              actions={<button className="btn" onClick={() => api.openHrDocument(d.id).catch((err) => setErreur(err.message))}>PDF</button>}
-            />
-          ))}
-        </div>
-      )}
-
-      {emission && (
-        <Fenetre sigle="DR" titre="Émettre un document" sous="Le texte exact émis est conservé dans le journal" onClose={() => setEmission(null)}>
-          <Section numero="1" titre="Document">
-            <div className="md-fiche-grille">
-              <Champ id="dr-emp" label="Employé">
-                <select id="dr-emp" className="champ" value={emission.employeeId} onChange={(e) => maj('employeeId', e.target.value)}>
-                  <option value="">— Employé —</option>
-                  {employes.map((e) => <option key={e.id} value={e.id}>{e.full_name}{e.status === 'archive' ? ' (archivé)' : ''}</option>)}
-                </select>
-              </Champ>
-              <Champ id="dr-type" label="Document">
-                <select id="dr-type" className="champ" value={emission.type} onChange={(e) => maj('type', e.target.value)}>
-                  {Object.entries(TYPES_DOC).map(([valeur, label]) => <option key={valeur} value={valeur}>{label}</option>)}
-                </select>
-              </Champ>
-              <Champ id="dr-lieu" label="Lieu de signature"><input id="dr-lieu" className="champ" value={emission.lieu} onChange={(e) => maj('lieu', e.target.value)} /></Champ>
-              {emission.type.startsWith('contrat') && (
-                <>
-                  <Champ id="dr-essai" label="Période d'essai"><input id="dr-essai" className="champ" placeholder="ex. 3 mois" value={emission.dureeEssai} onChange={(e) => maj('dureeEssai', e.target.value)} /></Champ>
-                  <Champ id="dr-heb" label="Durée hebdomadaire"><input id="dr-heb" className="champ" placeholder="ex. 40 heures" value={emission.dureeHebdomadaire} onChange={(e) => maj('dureeHebdomadaire', e.target.value)} /></Champ>
-                </>
-              )}
-              {emission.type === 'contrat_cdd' && (
-                <Champ id="dr-motif" label="Motif du CDD"><input id="dr-motif" className="champ" value={emission.motifCdd} onChange={(e) => maj('motifCdd', e.target.value)} /></Champ>
-              )}
-            </div>
+      {docRh && (
+        <Fenetre sigle={TYPES_DOC[docRh.type].sigle} titre={TYPES_DOC[docRh.type].label} sous="Vérifiez et corrigez les informations avant de générer le PDF" onClose={() => setDocument(null)}>
+          <Section numero="1" titre="Employé concerné">
+            <Champ id="dr-emp" label="Employé">
+              <select id="dr-emp" className="champ" value={docRh.employeeId} onChange={(e) => choisirEmploye(e.target.value)}>
+                <option value="">Choisir un employé</option>
+                {employes.map((e) => <option key={e.id} value={e.id}>{e.full_name}{e.status === 'archive' ? ' (archivé)' : ''}</option>)}
+              </select>
+            </Champ>
           </Section>
 
-          {texte && (
-            <Section numero="2" titre={texte.title}>
-              <p style={{ whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.5 }}>{texte.text}</p>
+          {groupes.map((g, i) => (
+            <Section key={g.nom} numero={String(i + 2)} titre={g.nom}>
+              <div className="md-fiche-grille">
+                {g.champs.map((c) => <ChampDocument key={c.code} champ={c} valeur={docRh.valeurs[c.code]} onChange={majValeur} />)}
+              </div>
             </Section>
+          ))}
+
+          {docRh.champs && aIdentite && (
+            <label className="md-case" style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}>
+              <input type="checkbox" checked={docRh.saveIdentity} onChange={(e) => setDocument((d) => ({ ...d, saveIdentity: e.target.checked }))} />
+              Enregistrer l'identité dans le dossier de l'employé pour les prochains documents
+            </label>
           )}
 
           {erreur && <div className="erreur">{erreur}</div>}
           <div className="actions-modale">
-            <button type="button" className="btn" onClick={() => setEmission(null)}>Fermer</button>
-            <button type="button" className="btn" disabled={!emission.employeeId} onClick={relire}>Relire le texte</button>
-            <button type="button" className="btn btn-principal" disabled={!emission.employeeId} onClick={emettre}>Émettre en PDF</button>
-          </div>
-        </Fenetre>
-      )}
-
-      {edition && (
-        <Fenetre sigle="MD" titre="Modifier le modèle" sous={TYPES_DOC[edition.type]} onClose={() => setEdition(null)}>
-          <div className="md-info">Champs disponibles (à écrire entre doubles accolades) : {champs.map((c) => `{{${c.code}}}`).join(', ')}</div>
-          <Section numero="1" titre="Contenu">
-            <Champ id="md-titre" label="Titre"><input id="md-titre" className="champ" value={edition.title} onChange={(e) => setEdition((s) => ({ ...s, title: e.target.value }))} /></Champ>
-            <Champ id="md-texte" label="Texte"><textarea id="md-texte" className="champ" rows={14} value={edition.body} onChange={(e) => setEdition((s) => ({ ...s, body: e.target.value }))} /></Champ>
-          </Section>
-          {erreur && <div className="erreur">{erreur}</div>}
-          <div className="actions-modale">
-            {edition.custom && <button type="button" className="btn" onClick={() => reinitialiser(edition.type)}>Modèle par défaut</button>}
-            <button type="button" className="btn" onClick={() => setEdition(null)}>Annuler</button>
-            <button type="button" className="btn btn-principal" onClick={sauverModele}>Enregistrer</button>
+            <button type="button" className="btn" onClick={() => setDocument(null)}>Fermer</button>
+            <button type="button" className="btn btn-principal" disabled={!docRh.employeeId || !docRh.champs || occupe} onClick={genererPdf}>
+              {occupe ? 'Génération…' : 'Générer le PDF'}
+            </button>
           </div>
         </Fenetre>
       )}
