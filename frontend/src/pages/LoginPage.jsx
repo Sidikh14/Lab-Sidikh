@@ -5,37 +5,6 @@ import { useAuth } from '../context/AuthContext';
 // ---------------------------------------------------------------------------
 // Icônes
 // ---------------------------------------------------------------------------
-function IconStock() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M3 7l9-4 9 4-9 4-9-4z" />
-      <path d="M3 7v10l9 4 9-4V7" />
-      <path d="M12 11v10" />
-    </svg>
-  );
-}
-
-function IconVentes() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <circle cx="9" cy="20" r="1.4" />
-      <circle cx="18" cy="20" r="1.4" />
-      <path d="M2 3h2l2.4 12.2a2 2 0 0 0 2 1.6h8.4a2 2 0 0 0 2-1.6L21 7H6" />
-    </svg>
-  );
-}
-
-function IconFournisseurs() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <rect x="3" y="10" width="13" height="8" rx="1.3" />
-      <path d="M16 13h3l2 2.5V18h-5" />
-      <circle cx="7.5" cy="19.5" r="1.4" />
-      <circle cx="17" cy="19.5" r="1.4" />
-    </svg>
-  );
-}
-
 function IconMail() {
   return (
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -125,93 +94,45 @@ function IconSecteurRestauration() {
 }
 
 // ---------------------------------------------------------------------------
-// Contenu de la vitrine
+// Aperçu par secteur (illustratif : ce ne sont pas des données réelles)
 // ---------------------------------------------------------------------------
-const SECTEURS_VITRINE = [
+const SECTEURS = [
   {
     nom: 'Grossiste',
-    tagline: 'Distribution & gros volumes',
-    detail: 'Gros volumes, prix par palier et livraisons suivies de bout en bout.',
-    tags: ['Prix par palier', 'Livraisons', 'Fournisseurs'],
     Icone: IconSecteurGrossiste,
+    barres: [38, 52, 44, 70, 58, 82, 64],
+    kpi: '+18 %',
+    kpiLibelle: 'ventes cette semaine',
+    puce: 'Livraison reçue',
   },
   {
     nom: 'Pharmacie',
-    tagline: 'Lots & péremption',
-    detail: 'Lots, dates de péremption, ordonnances et tiers payant, sous contrôle.',
-    tags: ['Péremption', 'Ordonnances', 'Tiers payant'],
     Icone: IconSecteurPharmacie,
+    barres: [60, 48, 66, 40, 72, 34, 56],
+    kpi: '3 lots',
+    kpiLibelle: 'à surveiller',
+    puce: 'Péremption dans 30 jours',
   },
   {
     nom: 'Électroménager',
-    tagline: 'Références & garanties',
-    detail: 'Références précises et garanties suivies pour chaque appareil vendu.',
-    tags: ['Références', 'Garanties', 'Stock'],
     Icone: IconSecteurElectromenager,
+    barres: [30, 44, 40, 58, 52, 76, 88],
+    kpi: '12',
+    kpiLibelle: 'garanties en cours',
+    puce: 'Retour SAV',
   },
   {
     nom: 'Restauration',
-    tagline: 'Menu QR, salle & cuisine',
-    detail: 'Menu en QR code, plan de salle, cuisine et paiements au même endroit.',
-    tags: ['QR code', 'Tables', 'Cuisine'],
     Icone: IconSecteurRestauration,
+    barres: [24, 36, 62, 86, 74, 58, 80],
+    kpi: '14 / 18',
+    kpiLibelle: 'tables occupées',
+    puce: 'Commande en cuisine',
   },
 ];
 
-const MOTS_TITRE = ["qui s'éclaire.", 'qui va vite.', "qui s'adapte.", 'qui simplifie.'];
-const DUREE_SECTEUR_MS = 4200;
-const DUREE_MOT_MS = 3200;
-
-// ---------------------------------------------------------------------------
-// Petits outils d'animation
-// ---------------------------------------------------------------------------
-function useMouvementReduit() {
-  const lire = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const [reduit, setReduit] = useState(lire);
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return undefined;
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const maj = () => setReduit(mq.matches);
-    mq.addEventListener('change', maj);
-    return () => mq.removeEventListener('change', maj);
-  }, []);
-  return reduit;
-}
-
-// Compteur qui monte en douceur jusqu'à la valeur cible.
-function useCompteur(cible, { delai = 0, duree = 1400, reduit = false } = {}) {
-  const [valeur, setValeur] = useState(reduit ? cible : 0);
-  const derniere = useRef(reduit ? cible : 0);
-  useEffect(() => {
-    if (reduit) {
-      derniere.current = cible;
-      setValeur(cible);
-      return undefined;
-    }
-    const depart = derniere.current;
-    const dureeReelle = depart === 0 ? duree : Math.min(duree, 450);
-    let raf = 0;
-    let debut = null;
-    const minuteur = setTimeout(() => {
-      const etape = (ts) => {
-        if (debut === null) debut = ts;
-        const p = Math.min(1, (ts - debut) / dureeReelle);
-        const ease = 1 - (1 - p) ** 3;
-        const v = Math.round(depart + (cible - depart) * ease);
-        derniere.current = v;
-        setValeur(v);
-        if (p < 1) raf = requestAnimationFrame(etape);
-      };
-      raf = requestAnimationFrame(etape);
-    }, depart === 0 ? delai : 0);
-    return () => {
-      clearTimeout(minuteur);
-      cancelAnimationFrame(raf);
-    };
-  }, [cible, delai, duree, reduit]);
-  return valeur;
-}
+const DUREE_SECTEUR_MS = 5000;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function salutation() {
   const h = new Date().getHours();
@@ -220,11 +141,358 @@ function salutation() {
   return 'Bonsoir';
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+// ---------------------------------------------------------------------------
+// Outils : mouvement réduit, pointeur partagé, champ de lumière (canvas), inclinaison 3D
+// ---------------------------------------------------------------------------
+
+// « Mouvement réduit » : préférence du système, ou mode économie de données activé.
+function useMouvementReduit() {
+  const lire = () => {
+    if (typeof window === 'undefined') return false;
+    const systeme = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const economie = Boolean(navigator.connection && navigator.connection.saveData);
+    return systeme || economie;
+  };
+  const [reduit, setReduit] = useState(lire);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const maj = () => setReduit(lire());
+    mq.addEventListener('change', maj);
+    return () => mq.removeEventListener('change', maj);
+  }, []);
+  return reduit;
+}
+
+// Position du pointeur dans la fenêtre, partagée entre toutes les animations (pas de re-rendu React).
+function usePointeur() {
+  const ref = useRef({ x: 0, y: 0, t: 0 });
+  useEffect(() => {
+    const bouger = (e) => {
+      ref.current.x = e.clientX;
+      ref.current.y = e.clientY;
+      ref.current.t = performance.now();
+    };
+    window.addEventListener('pointermove', bouger, { passive: true });
+    return () => window.removeEventListener('pointermove', bouger);
+  }, []);
+  return ref;
+}
+
+const PALETTES = {
+  sombre: {
+    couleurs: ['#f2a81d', '#8fb4ee', '#ffffff'],
+    poids: [0.22, 0.38, 1],
+    lumieres: ['rgba(242, 168, 29, ', 'rgba(31, 95, 191, '],
+    lien: '255, 255, 255',
+    curseur: '242, 168, 29',
+    alpha: 0.95,
+  },
+  clair: {
+    couleurs: ['#1f5fbf', '#f2a81d', '#0f2747'],
+    poids: [0.5, 0.75, 1],
+    lumieres: ['rgba(31, 95, 191, ', 'rgba(242, 168, 29, '],
+    lien: '31, 95, 191',
+    curseur: '31, 95, 191',
+    alpha: 0.6,
+  },
+};
+
+function fabriquerLumiere(debut, alpha) {
+  const lumiere = document.createElement('canvas');
+  lumiere.width = 192;
+  lumiere.height = 192;
+  const c = lumiere.getContext('2d');
+  const g = c.createRadialGradient(96, 96, 0, 96, 96, 96);
+  g.addColorStop(0, `${debut}${alpha})`);
+  g.addColorStop(0.55, `${debut}${(alpha * 0.35).toFixed(3)})`);
+  g.addColorStop(1, `${debut}0)`);
+  c.fillStyle = g;
+  c.fillRect(0, 0, 192, 192);
+  return lumiere;
+}
+
+function fabriquerSprite(couleur) {
+  const sprite = document.createElement('canvas');
+  sprite.width = 48;
+  sprite.height = 48;
+  const c = sprite.getContext('2d');
+  const g = c.createRadialGradient(24, 24, 0, 24, 24, 24);
+  g.addColorStop(0, couleur);
+  g.addColorStop(0.22, `${couleur}cc`);
+  g.addColorStop(1, `${couleur}00`);
+  c.fillStyle = g;
+  c.fillRect(0, 0, 48, 48);
+  return sprite;
+}
+
+// Champ de particules et de lumière : profondeur (parallaxe), répulsion autour du curseur,
+// traits de lumière vers le curseur, onde de choc au clic. La qualité baisse toute seule si
+// l'appareil est lent, et l'animation s'arrête quand l'onglet est caché ou hors écran.
+function useChampLumineux(canvasRef, pointeur, { palette, densite = 1, liens = true, reduit }) {
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas ? canvas.getContext('2d') : null;
+    if (!canvas || !ctx) return undefined;
+    const pal = PALETTES[palette];
+    const sprites = pal.couleurs.map(fabriquerSprite);
+    const lumieres = [fabriquerLumiere(pal.lumieres[0], 0.2), fabriquerLumiere(pal.lumieres[1], 0.22)];
+    const etat = {
+      l: 1, h: 1, rect: canvas.getBoundingClientRect(), particules: [], ondes: [],
+      qualite: 1, ema: 16, images: 0, dernier: 0, lueur: null, raf: 0, visible: true, px: null, py: null,
+    };
+
+    const choisirSprite = () => {
+      const r = Math.random();
+      return pal.poids.findIndex((p) => r <= p);
+    };
+
+    const dimensionner = () => {
+      const r = canvas.getBoundingClientRect();
+      etat.rect = r;
+      etat.l = Math.max(1, r.width);
+      etat.h = Math.max(1, r.height);
+      const dpr = Math.min(window.devicePixelRatio || 1, etat.qualite < 0.75 ? 1 : 2);
+      canvas.width = Math.round(etat.l * dpr);
+      canvas.height = Math.round(etat.h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const surface = etat.l * etat.h;
+      const n = Math.round(Math.min(150, surface / (palette === 'sombre' ? 8000 : 26000)) * densite * etat.qualite);
+      etat.particules = Array.from({ length: n }, () => ({
+        x: Math.random() * etat.l,
+        y: Math.random() * etat.h,
+        z: 0.25 + Math.random() * 0.75,
+        bx: (Math.random() - 0.5) * 0.22,
+        by: (Math.random() - 0.5) * 0.22,
+        vx: 0,
+        vy: 0,
+        s: choisirSprite(),
+        phase: Math.random() * 6.28,
+      }));
+      etat.px = new Float32Array(n);
+      etat.py = new Float32Array(n);
+      if (!etat.lueur) etat.lueur = { x: etat.l / 2, y: etat.h / 2 };
+    };
+
+    const majRect = () => { etat.rect = canvas.getBoundingClientRect(); };
+
+    const dessiner = (t, k) => {
+      const { l, h, rect, particules } = etat;
+      const p = pointeur.current;
+      const maintenant = performance.now();
+      let cx = l * (0.5 + 0.34 * Math.sin(t / 2900));
+      let cy = h * (0.5 + 0.3 * Math.sin(t / 3700 + 1.3));
+      let actif = false;
+      if (p.t && maintenant - p.t < 2500) {
+        const x = p.x - rect.left;
+        const y = p.y - rect.top;
+        if (x > -120 && x < l + 120 && y > -120 && y < h + 120) { cx = x; cy = y; actif = true; }
+      }
+      const lu = etat.lueur;
+      const lisse = Math.min(1, 0.07 * k);
+      lu.x += (cx - lu.x) * lisse;
+      lu.y += (cy - lu.y) * lisse;
+
+      ctx.clearRect(0, 0, l, h);
+      ctx.globalCompositeOperation = 'lighter';
+
+      // Lumières douces qui suivent le curseur (une chaude, une froide à l'opposé)
+      const R = Math.max(l, h) * 0.55;
+      ctx.drawImage(lumieres[0], lu.x - R, lu.y - R, R * 2, R * 2);
+      const x2 = l - lu.x * 0.8;
+      const y2 = h - lu.y * 0.8;
+      ctx.drawImage(lumieres[1], x2 - R * 0.9, y2 - R * 0.9, R * 1.8, R * 1.8);
+
+      // Particules
+      const decalX = lu.x - l / 2;
+      const decalY = lu.y - h / 2;
+      const rayon = 170;
+      const rayon2 = rayon * rayon;
+      const { px: posX, py: posY } = etat;
+      for (let i = 0; i < particules.length; i += 1) {
+        const q = particules[i];
+        const dx = q.x - cx;
+        const dy = q.y - cy;
+        const d2 = dx * dx + dy * dy;
+        let proche = 0;
+        if (d2 < rayon2 && d2 > 0.01) {
+          const d = Math.sqrt(d2);
+          proche = 1 - d / rayon;
+          const f = proche * 0.6 * k * (actif ? 1 : 0.4);
+          q.vx += (dx / d) * f;
+          q.vy += (dy / d) * f;
+        }
+        q.vx += (q.bx - q.vx) * 0.02 * k;
+        q.vy += (q.by - q.vy) * 0.02 * k;
+        q.x += q.vx * k * (0.6 + q.z) * 2;
+        q.y += q.vy * k * (0.6 + q.z) * 2;
+        if (q.x < -20) q.x = l + 20; else if (q.x > l + 20) q.x = -20;
+        if (q.y < -20) q.y = h + 20; else if (q.y > h + 20) q.y = -20;
+
+        const ox = q.x - decalX * 0.07 * q.z;
+        const oy = q.y - decalY * 0.07 * q.z;
+        posX[i] = ox;
+        posY[i] = oy;
+        const scint = 0.55 + 0.45 * Math.sin(t / 900 + q.phase);
+        ctx.globalAlpha = Math.min(1, pal.alpha * scint * (0.4 + 0.6 * q.z) * (1 + proche));
+        const taille = (7 + 17 * q.z) * (1 + proche * 0.9);
+        ctx.drawImage(sprites[q.s], ox - taille / 2, oy - taille / 2, taille, taille);
+      }
+      ctx.globalAlpha = 1;
+
+      // Fils entre particules proches (constellation)
+      if (liens && etat.qualite >= 0.75) {
+        ctx.lineWidth = 0.7;
+        const max = 118;
+        for (let i = 0; i < particules.length; i += 1) {
+          for (let j = i + 1; j < particules.length; j += 1) {
+            const dx = posX[i] - posX[j];
+            if (dx > max || dx < -max) continue;
+            const dy = posY[i] - posY[j];
+            const d2 = dx * dx + dy * dy;
+            if (d2 < max * max) {
+              ctx.strokeStyle = `rgba(${pal.lien}, ${(1 - Math.sqrt(d2) / max) * 0.2})`;
+              ctx.beginPath();
+              ctx.moveTo(posX[i], posY[i]);
+              ctx.lineTo(posX[j], posY[j]);
+              ctx.stroke();
+            }
+          }
+        }
+      }
+
+      // Traits de lumière entre le curseur et les particules proches
+      ctx.lineWidth = 0.9;
+      for (let i = 0; i < particules.length; i += 1) {
+        const dx = posX[i] - lu.x;
+        const dy = posY[i] - lu.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < 165 * 165) {
+          ctx.strokeStyle = `rgba(${pal.curseur}, ${(1 - Math.sqrt(d2) / 165) * 0.5})`;
+          ctx.beginPath();
+          ctx.moveTo(lu.x, lu.y);
+          ctx.lineTo(posX[i], posY[i]);
+          ctx.stroke();
+        }
+      }
+
+      // Ondes de choc
+      ctx.lineWidth = 2;
+      etat.ondes = etat.ondes.filter((o) => maintenant - o.t0 < 900);
+      etat.ondes.forEach((o) => {
+        const age = maintenant - o.t0;
+        ctx.strokeStyle = `rgba(${pal.curseur}, ${(1 - age / 900) * 0.55})`;
+        ctx.beginPath();
+        ctx.arc(o.x, o.y, age * 0.55, 0, Math.PI * 2);
+        ctx.stroke();
+      });
+      ctx.globalCompositeOperation = 'source-over';
+    };
+
+    const image = (t) => {
+      etat.raf = requestAnimationFrame(image);
+      const dt = Math.min(50, etat.dernier ? t - etat.dernier : 16);
+      etat.dernier = t;
+      etat.ema = etat.ema * 0.96 + dt * 0.04;
+      etat.images += 1;
+      // Appareil lent : on allège (moins de particules, pas de fils) au lieu de saccader
+      if (etat.images % 90 === 0 && etat.ema > 28 && etat.qualite > 0.5) {
+        etat.qualite -= 0.25;
+        dimensionner();
+      }
+      dessiner(t, dt / 16.7);
+    };
+
+    const relancer = () => {
+      cancelAnimationFrame(etat.raf);
+      etat.dernier = 0;
+      if (reduit) {
+        dessiner(0, 1);
+      } else if (etat.visible && !document.hidden) {
+        etat.raf = requestAnimationFrame(image);
+      }
+    };
+
+    const clic = (e) => {
+      if (reduit) return;
+      const x = e.clientX - etat.rect.left;
+      const y = e.clientY - etat.rect.top;
+      if (x < 0 || y < 0 || x > etat.l || y > etat.h) return;
+      etat.ondes.push({ x, y, t0: performance.now() });
+      etat.particules.forEach((q) => {
+        const dx = q.x - x;
+        const dy = q.y - y;
+        const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        if (d < 300) {
+          const f = (1 - d / 300) * 5;
+          q.vx += (dx / d) * f;
+          q.vy += (dy / d) * f;
+        }
+      });
+    };
+
+    dimensionner();
+    relancer();
+
+    const observateurTaille = typeof ResizeObserver === 'function' ? new ResizeObserver(() => { dimensionner(); relancer(); }) : null;
+    if (observateurTaille) observateurTaille.observe(canvas);
+    const observateurVue = typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver(([entree]) => { etat.visible = entree.isIntersecting; relancer(); })
+      : null;
+    if (observateurVue) observateurVue.observe(canvas);
+    const surVisibilite = () => relancer();
+    document.addEventListener('visibilitychange', surVisibilite);
+    window.addEventListener('scroll', majRect, { passive: true, capture: true });
+    window.addEventListener('pointerdown', clic, { passive: true });
+
+    return () => {
+      cancelAnimationFrame(etat.raf);
+      if (observateurTaille) observateurTaille.disconnect();
+      if (observateurVue) observateurVue.disconnect();
+      document.removeEventListener('visibilitychange', surVisibilite);
+      window.removeEventListener('scroll', majRect, true);
+      window.removeEventListener('pointerdown', clic);
+    };
+  }, [canvasRef, pointeur, palette, densite, liens, reduit]);
+}
+
+// Inclinaison 3D de la scène : suit le pointeur, et se balance toute seule au repos (téléphone compris).
+function useInclinaison(ref, pointeur, reduit) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    if (reduit) {
+      el.style.setProperty('--rx', '0deg');
+      el.style.setProperty('--ry', '0deg');
+      return undefined;
+    }
+    let raf = 0;
+    let rx = 0;
+    let ry = 0;
+    const borne = (v) => Math.max(-1, Math.min(1, v));
+    const boucle = (t) => {
+      raf = requestAnimationFrame(boucle);
+      const r = el.getBoundingClientRect();
+      const p = pointeur.current;
+      let nx = Math.sin(t / 2600) * 0.5;
+      let ny = Math.cos(t / 3100) * 0.35;
+      if (p.t && performance.now() - p.t < 2500) {
+        nx = borne((p.x - (r.left + r.width / 2)) / Math.max(320, window.innerWidth * 0.4));
+        ny = borne((p.y - (r.top + r.height / 2)) / Math.max(240, window.innerHeight * 0.45));
+      }
+      rx += (-ny * 15 - rx) * 0.08;
+      ry += (nx * 22 - ry) * 0.08;
+      el.style.setProperty('--rx', `${rx.toFixed(2)}deg`);
+      el.style.setProperty('--ry', `${ry.toFixed(2)}deg`);
+    };
+    raf = requestAnimationFrame(boucle);
+    return () => cancelAnimationFrame(raf);
+  }, [ref, pointeur, reduit]);
+}
 
 // ---------------------------------------------------------------------------
-// Styles (propres à cet écran). Les animations utilisent les propriétés individuelles
-// `translate` / `scale`, pour ne jamais écraser un `transform` posé par la feuille globale.
+// Styles (propres à cet écran). Les nouveaux éléments ont leurs propres classes « lp- » ; les
+// animations des éléments existants passent par `translate` / `scale`, jamais par `transform`.
 // ---------------------------------------------------------------------------
 const STYLES = `
   /* L'écran de connexion garde TOUJOURS la charte Amaterasu par défaut : même si la charte d'un
@@ -238,61 +506,26 @@ const STYLES = `
     --accent-clair: #dce8fa;
     --soleil: #f2a81d;
   }
+  .ecran-connexion-partage .panneau-marque,
+  .ecran-connexion-partage .panneau-formulaire { isolation: isolate; }
+
+  .ecran-connexion-partage .lp-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+    pointer-events: none;
+  }
 
   /* Entrée en cascade : un seul moment orchestré au chargement */
   .ecran-connexion-partage .lp-entree {
-    animation: lp-entree 0.75s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+    animation: lp-entree 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both;
     animation-delay: var(--d, 0s);
   }
   @keyframes lp-entree {
-    from { opacity: 0; translate: 0 16px; }
+    from { opacity: 0; translate: 0 18px; }
     to { opacity: 1; translate: 0 0; }
-  }
-
-  /* Fond vivant du panneau de marque */
-  .ecran-connexion-partage .lp-orbe {
-    position: absolute;
-    border-radius: 50%;
-    filter: blur(38px);
-    pointer-events: none;
-    will-change: translate;
-  }
-  .ecran-connexion-partage .lp-orbe--1 {
-    width: 340px; height: 340px; top: -90px; left: -70px;
-    background: radial-gradient(circle, rgba(31, 95, 191, 0.6), transparent 68%);
-    animation: lp-derive-1 16s ease-in-out infinite alternate;
-  }
-  .ecran-connexion-partage .lp-orbe--2 {
-    width: 280px; height: 280px; bottom: -80px; right: -60px;
-    background: radial-gradient(circle, rgba(242, 168, 29, 0.4), transparent 68%);
-    animation: lp-derive-2 20s ease-in-out infinite alternate;
-  }
-  .ecran-connexion-partage .lp-orbe--3 {
-    width: 220px; height: 220px; top: 42%; right: 12%;
-    background: radial-gradient(circle, rgba(220, 232, 250, 0.22), transparent 68%);
-    animation: lp-derive-3 24s ease-in-out infinite alternate;
-  }
-  .ecran-connexion-partage .lp-orbe--form {
-    width: 360px; height: 360px; top: -120px; right: -100px;
-    background: radial-gradient(circle, rgba(31, 95, 191, 0.16), transparent 68%);
-    animation: lp-derive-2 22s ease-in-out infinite alternate;
-  }
-  @keyframes lp-derive-1 { from { translate: 0 0; } to { translate: 90px 60px; } }
-  @keyframes lp-derive-2 { from { translate: 0 0; } to { translate: -80px -50px; } }
-  @keyframes lp-derive-3 { from { translate: 0 0; } to { translate: -60px 70px; } }
-
-  .ecran-connexion-partage .lp-lueur {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: var(--lueur, 0);
-    transition: opacity 0.4s ease;
-    background: radial-gradient(
-      380px circle at var(--mx, 50%) var(--my, 50%),
-      rgba(242, 168, 29, 0.16),
-      rgba(31, 95, 191, 0.1) 45%,
-      transparent 72%
-    );
   }
 
   /* Emblème qui « s'éclaire » */
@@ -304,119 +537,198 @@ const STYLES = `
   .ecran-connexion-partage .lp-logo-halo::before {
     content: '';
     position: absolute;
-    inset: -10px;
+    inset: -12px;
     border-radius: 50%;
     z-index: -1;
-    background: radial-gradient(circle, rgba(242, 168, 29, 0.55), transparent 70%);
+    background: radial-gradient(circle, rgba(242, 168, 29, 0.6), transparent 70%);
     animation: lp-pulse 3.4s ease-in-out infinite;
   }
   @keyframes lp-pulse {
     0%, 100% { opacity: 0.45; scale: 0.9; }
-    50% { opacity: 1; scale: 1.15; }
+    50% { opacity: 1; scale: 1.18; }
   }
 
-  /* Mot du titre qui change */
-  .ecran-connexion-partage .lp-mots {
-    display: inline-grid;
-    vertical-align: top;
+  /* Titre : reflet de lumière qui traverse le mot accentué */
+  .ecran-connexion-partage .titre-marque-accent {
+    background: linear-gradient(100deg, #f2a81d 30%, #fff1c9 48%, #f2a81d 66%);
+    background-size: 260% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    animation: lp-brillance 5.5s ease-in-out infinite;
   }
-  .ecran-connexion-partage .lp-mot {
-    grid-area: 1 / 1;
-    opacity: 0;
-    translate: 0 0.35em;
-    transition: opacity 0.5s ease, translate 0.5s cubic-bezier(0.2, 0.7, 0.2, 1);
-  }
-  .ecran-connexion-partage .lp-mot--actif {
-    opacity: 1;
-    translate: 0 0;
+  @keyframes lp-brillance {
+    0% { background-position: 120% 0; }
+    60%, 100% { background-position: -80% 0; }
   }
 
-  /* Secteurs : cartes interactives qui se mettent en avant à tour de rôle */
-  .secteurs-vitrine {
-    margin: 30px 0 6px;
+  /* Scène 3D : trois couches à des profondeurs différentes, inclinées par le pointeur */
+  .ecran-connexion-partage .lp-scene {
     position: relative;
     z-index: 1;
+    height: 236px;
+    max-width: 540px;
+    margin: 26px 0 10px;
+    perspective: 1100px;
   }
-  .secteurs-vitrine-titre {
-    display: block;
+  .ecran-connexion-partage .lp-plateau {
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d;
+    transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+    will-change: transform;
+  }
+  .ecran-connexion-partage .lp-couche {
+    position: absolute;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.05));
+    box-shadow: 0 26px 50px rgba(2, 10, 30, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    animation: lp-flotte 6s ease-in-out infinite alternate;
+  }
+  @media (min-width: 900px) {
+    .ecran-connexion-partage .lp-couche { backdrop-filter: blur(10px); }
+  }
+  .ecran-connexion-partage .lp-couche--fond {
+    left: 0; top: 6%; width: 56%; height: 80%;
+    padding: 18px 18px 14px;
+    transform: translateZ(-70px);
+  }
+  .ecran-connexion-partage .lp-couche--milieu {
+    left: 42%; top: 24%; width: 52%; height: 58%;
+    padding: 16px 18px;
+    background: linear-gradient(145deg, rgba(15, 39, 71, 0.92), rgba(23, 76, 156, 0.7));
+    text-shadow: 0 1px 8px rgba(2, 10, 30, 0.6);
+    display: flex; flex-direction: column; justify-content: center; gap: 2px;
+    transform: translateZ(20px);
+    animation-duration: 7s; animation-delay: -2s;
+  }
+  .ecran-connexion-partage .lp-couche--avant {
+    left: 6%; bottom: 2%;
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 16px;
+    border-radius: 999px;
+    transform: translateZ(95px);
+    animation-duration: 5s; animation-delay: -1s;
+  }
+  .ecran-connexion-partage .lp-anneau {
+    position: absolute;
+    right: 4%; top: 2%;
+    width: 78px; height: 78px;
+    border-radius: 50%;
+    border: 2px solid rgba(242, 168, 29, 0.7);
+    box-shadow: 0 0 26px rgba(242, 168, 29, 0.45), inset 0 0 18px rgba(242, 168, 29, 0.25);
+    transform: translateZ(130px);
+    animation: lp-flotte 4.5s ease-in-out infinite alternate, lp-tourne 14s linear infinite;
+  }
+  .ecran-connexion-partage .lp-anneau::after {
+    content: '';
+    position: absolute;
+    inset: 9px;
+    border-radius: 50%;
+    border: 1px dashed rgba(255, 255, 255, 0.45);
+  }
+  @keyframes lp-flotte { from { translate: 0 0; } to { translate: 0 -11px; } }
+  @keyframes lp-tourne { to { rotate: 360deg; } }
+
+  .ecran-connexion-partage .lp-barres {
+    display: flex;
+    align-items: flex-end;
+    gap: 7px;
+    height: 100%;
+  }
+  .ecran-connexion-partage .lp-barres i {
+    flex: 1;
+    height: calc(var(--h) * 1%);
+    border-radius: 6px 6px 3px 3px;
+    background: linear-gradient(180deg, #f2a81d, #1f5fbf);
+    transform-origin: bottom;
+    animation: lp-barre 0.75s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    animation-delay: calc(var(--k) * 60ms);
+  }
+  @keyframes lp-barre { from { transform: scaleY(0); opacity: 0; } to { transform: scaleY(1); opacity: 1; } }
+
+  .ecran-connexion-partage .lp-apercu {
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    opacity: 0.55;
+  }
+  .ecran-connexion-partage .lp-kpi {
+    font-size: 34px;
+    font-weight: 800;
+    line-height: 1.05;
+    animation: lp-detail 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .ecran-connexion-partage .lp-kpi-lib {
+    font-size: 12.5px;
+    opacity: 0.75;
+    animation: lp-detail 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) 0.08s both;
+  }
+  .ecran-connexion-partage .lp-puce-icone {
+    display: inline-flex;
+    width: 30px; height: 30px;
+    align-items: center; justify-content: center;
+    border-radius: 50%;
+    color: var(--soleil);
+    background: rgba(242, 168, 29, 0.2);
+  }
+  .ecran-connexion-partage .lp-puce-texte {
     font-size: 13px;
     font-weight: 600;
-    opacity: 0.7;
-    margin-bottom: 14px;
+    animation: lp-detail 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) 0.15s both;
   }
-  .secteurs-grille {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
+  @keyframes lp-detail {
+    from { opacity: 0; translate: 0 9px; }
+    to { opacity: 1; translate: 0 0; }
   }
-  .secteur-carte {
+
+  /* Choix du secteur : pastilles qui s'étendent pour dire leur nom */
+  .ecran-connexion-partage .lp-secteurs {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 9px;
+    margin-top: 14px;
+  }
+  .ecran-connexion-partage .lp-chip {
     appearance: none;
     font: inherit;
     color: inherit;
-    text-align: left;
     cursor: pointer;
     position: relative;
     overflow: hidden;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 11px;
-    width: 100%;
-    padding: 12px 13px;
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.09);
-    transition: border-color 0.25s ease, background 0.25s ease, translate 0.25s ease;
+    gap: 0;
+    height: 44px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.06);
+    transition: gap 0.35s ease, background 0.25s ease, border-color 0.25s ease, translate 0.25s ease;
   }
-  .secteur-carte:hover {
-    border-color: rgba(242, 168, 29, 0.45);
-    background: rgba(255, 255, 255, 0.08);
-    translate: 0 -2px;
-  }
-  .secteur-carte:focus-visible {
-    outline: 2px solid var(--soleil);
-    outline-offset: 2px;
-  }
-  .secteur-carte--actif {
-    border-color: rgba(242, 168, 29, 0.6);
-    background: rgba(255, 255, 255, 0.1);
-  }
-  .secteur-carte-icone {
-    flex-shrink: 0;
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--soleil);
+  .ecran-connexion-partage .lp-chip:hover { translate: 0 -2px; border-color: rgba(242, 168, 29, 0.5); }
+  .ecran-connexion-partage .lp-chip:focus-visible { outline: 2px solid var(--soleil); outline-offset: 2px; }
+  .ecran-connexion-partage .lp-chip--actif {
+    gap: 8px;
     background: rgba(242, 168, 29, 0.16);
-    transition: scale 0.3s cubic-bezier(0.3, 1.5, 0.5, 1), rotate 0.3s ease, background 0.25s ease;
+    border-color: rgba(242, 168, 29, 0.65);
   }
-  .secteur-carte--actif .secteur-carte-icone {
-    scale: 1.1;
-    rotate: -6deg;
-    background: rgba(242, 168, 29, 0.28);
-  }
-  .secteur-carte-texte {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    min-width: 0;
-  }
-  .secteur-carte-texte strong {
-    font-size: 14px;
-    font-weight: 700;
-    line-height: 1.25;
-  }
-  .secteur-carte-texte span {
-    font-size: 11.5px;
-    opacity: 0.65;
-    line-height: 1.3;
-    white-space: nowrap;
+  .ecran-connexion-partage .lp-chip-icone { display: inline-flex; color: var(--soleil); }
+  .ecran-connexion-partage .lp-chip-nom {
+    max-width: 0;
+    opacity: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13.5px;
+    font-weight: 700;
+    transition: max-width 0.4s ease, opacity 0.3s ease;
   }
-  .secteur-progression {
+  .ecran-connexion-partage .lp-chip--actif .lp-chip-nom { max-width: 150px; opacity: 1; }
+  .ecran-connexion-partage .lp-progression {
     position: absolute;
     left: 0; right: 0; bottom: 0;
     height: 2px;
@@ -425,73 +737,6 @@ const STYLES = `
     animation: lp-progression ${DUREE_SECTEUR_MS}ms linear forwards;
   }
   @keyframes lp-progression { from { transform: scaleX(0); } to { transform: scaleX(1); } }
-
-  .secteur-detail {
-    margin-top: 12px;
-    min-height: 74px;
-    padding: 12px 14px;
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px dashed rgba(255, 255, 255, 0.16);
-  }
-  .secteur-detail p {
-    margin: 0 0 8px;
-    font-size: 13px;
-    line-height: 1.45;
-    animation: lp-detail 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-  }
-  .secteur-detail ul {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .secteur-detail li {
-    font-size: 11.5px;
-    font-weight: 600;
-    padding: 3px 10px;
-    border-radius: 999px;
-    color: var(--soleil);
-    background: rgba(242, 168, 29, 0.14);
-    animation: lp-detail 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-    animation-delay: calc(var(--k, 0) * 70ms + 80ms);
-  }
-  @keyframes lp-detail {
-    from { opacity: 0; translate: 0 8px; }
-    to { opacity: 1; translate: 0 0; }
-  }
-
-  /* Cartes flottantes : elles respirent, et le chiffre des ventes bouge en direct */
-  .ecran-connexion-partage .carte-flottante {
-    animation: lp-flotte 6s ease-in-out infinite alternate;
-    transition: scale 0.25s ease;
-  }
-  .ecran-connexion-partage .carte-flottante--2 { animation-duration: 7.5s; animation-delay: -2s; }
-  .ecran-connexion-partage .carte-flottante--3 { animation-duration: 6.8s; animation-delay: -4s; }
-  .ecran-connexion-partage .carte-flottante:hover { scale: 1.05; }
-  @keyframes lp-flotte { from { translate: 0 0; } to { translate: 0 -12px; } }
-  .ecran-connexion-partage .lp-bulle {
-    position: absolute;
-    top: -10px;
-    right: 14px;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 700;
-    font-style: normal;
-    color: var(--marine);
-    background: var(--soleil);
-    pointer-events: none;
-    animation: lp-bulle 1.3s ease-out both;
-  }
-  @keyframes lp-bulle {
-    0% { opacity: 0; translate: 0 8px; scale: 0.8; }
-    18% { opacity: 1; translate: 0 0; scale: 1; }
-    80% { opacity: 1; }
-    100% { opacity: 0; translate: 0 -14px; }
-  }
 
   /* Formulaire : réactions au focus, à la saisie et à l'erreur */
   .ecran-connexion-partage .champ-groupe .etiquette { transition: color 0.2s ease; }
@@ -533,9 +778,7 @@ const STYLES = `
     color: #9c4a06;
     animation: lp-detail 0.3s ease both;
   }
-  .ecran-connexion-partage .lp-erreur {
-    animation: lp-detail 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-  }
+  .ecran-connexion-partage .lp-erreur { animation: lp-detail 0.35s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
   .ecran-connexion-partage .lp-secoue { animation: lp-secousse 0.45s ease; }
   @keyframes lp-secousse {
     0%, 100% { transform: translateX(0); }
@@ -566,10 +809,7 @@ const STYLES = `
     transition: translate 0.7s ease;
   }
   .ecran-connexion-partage .btn-connexion:hover:not(:disabled)::after { translate: 120% 0; }
-  .ecran-connexion-partage .btn-connexion [aria-hidden='true'] {
-    display: inline-block;
-    transition: translate 0.25s ease;
-  }
+  .ecran-connexion-partage .btn-connexion [aria-hidden='true'] { display: inline-block; transition: translate 0.25s ease; }
   .ecran-connexion-partage .btn-connexion:hover:not(:disabled) [aria-hidden='true'] { translate: 5px 0; }
   .ecran-connexion-partage .lp-onde {
     position: absolute;
@@ -623,8 +863,10 @@ const STYLES = `
   @keyframes lp-trace-long { to { stroke-dashoffset: 0; } }
   @keyframes lp-voile { from { opacity: 0; } to { opacity: 1; } }
 
-  @media (max-width: 480px) {
-    .secteurs-grille { grid-template-columns: 1fr; }
+  @media (max-width: 640px) {
+    .ecran-connexion-partage .lp-scene { height: 210px; }
+    .ecran-connexion-partage .lp-kpi { font-size: 28px; }
+    .ecran-connexion-partage .lp-couche--milieu { left: 38%; width: 60%; }
   }
 
   /* Pour les personnes qui préfèrent moins de mouvement : tout reste lisible, rien ne bouge */
@@ -647,6 +889,7 @@ export function LoginPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const reduit = useMouvementReduit();
+  const pointeur = usePointeur();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -658,23 +901,21 @@ export function LoginPage() {
   const [emailTouche, setEmailTouche] = useState(false);
   const [majusculesActives, setMajusculesActives] = useState(false);
   const [ondes, setOndes] = useState([]);
-
   const [secteurActif, setSecteurActif] = useState(0);
   const [pauseSecteurs, setPauseSecteurs] = useState(false);
-  const [motActif, setMotActif] = useState(0);
-  const [ventes, setVentes] = useState(48);
-  const [bulleVente, setBulleVente] = useState(0);
 
-  const panneauRef = useRef(null);
-  const rafSouris = useRef(0);
+  const canvasMarque = useRef(null);
+  const canvasFormulaire = useRef(null);
+  const scene = useRef(null);
   const minuteurs = useRef([]);
 
   const salut = useMemo(salutation, []);
   const emailValide = EMAIL_RE.test(email.trim());
+  const secteur = SECTEURS[secteurActif];
 
-  const stock = useCompteur(312, { delai: 700, reduit });
-  const fournisseurs = useCompteur(12, { delai: 1000, reduit });
-  const ventesAffichees = useCompteur(ventes, { delai: 850, reduit });
+  useChampLumineux(canvasMarque, pointeur, { palette: 'sombre', densite: 1, liens: true, reduit });
+  useChampLumineux(canvasFormulaire, pointeur, { palette: 'clair', densite: 0.8, liens: false, reduit });
+  useInclinaison(scene, pointeur, reduit);
 
   function programmer(fn, delai) {
     const id = setTimeout(fn, delai);
@@ -682,58 +923,14 @@ export function LoginPage() {
     return id;
   }
 
-  useEffect(() => () => {
-    minuteurs.current.forEach(clearTimeout);
-    cancelAnimationFrame(rafSouris.current);
-  }, []);
+  useEffect(() => () => { minuteurs.current.forEach(clearTimeout); }, []);
 
-  // Le mot du titre change doucement
-  useEffect(() => {
-    if (reduit) return undefined;
-    const id = setInterval(() => setMotActif((i) => (i + 1) % MOTS_TITRE.length), DUREE_MOT_MS);
-    return () => clearInterval(id);
-  }, [reduit]);
-
-  // Les secteurs se mettent en avant à tour de rôle (en pause au survol et au clavier)
+  // Les secteurs défilent tout seuls (en pause au survol et au clavier)
   useEffect(() => {
     if (reduit || pauseSecteurs) return undefined;
-    const id = setTimeout(() => setSecteurActif((i) => (i + 1) % SECTEURS_VITRINE.length), DUREE_SECTEUR_MS);
+    const id = setTimeout(() => setSecteurActif((i) => (i + 1) % SECTEURS.length), DUREE_SECTEUR_MS);
     return () => clearTimeout(id);
   }, [secteurActif, pauseSecteurs, reduit]);
-
-  // Le compteur de ventes avance de temps en temps, comme une boutique qui travaille
-  useEffect(() => {
-    if (reduit) return undefined;
-    let id;
-    const prochain = () => {
-      id = setTimeout(() => {
-        setVentes((v) => v + 1);
-        setBulleVente((b) => b + 1);
-        prochain();
-      }, 3500 + Math.random() * 3500);
-    };
-    prochain();
-    return () => clearTimeout(id);
-  }, [reduit]);
-
-  function suivreSouris(e) {
-    if (reduit) return;
-    const el = panneauRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    cancelAnimationFrame(rafSouris.current);
-    rafSouris.current = requestAnimationFrame(() => {
-      el.style.setProperty('--mx', `${x}px`);
-      el.style.setProperty('--my', `${y}px`);
-      el.style.setProperty('--lueur', '1');
-    });
-  }
-
-  function quitterSouris() {
-    panneauRef.current?.style.setProperty('--lueur', '0');
-  }
 
   function secouer() {
     if (reduit) return;
@@ -777,23 +974,13 @@ export function LoginPage() {
     }
   }
 
-  const secteur = SECTEURS_VITRINE[secteurActif];
-
   return (
     <div className="ecran-connexion-partage">
       <style>{STYLES}</style>
-      <div
-        className="panneau-marque"
-        ref={panneauRef}
-        onPointerMove={suivreSouris}
-        onPointerLeave={quitterSouris}
-      >
+      <div className="panneau-marque">
         <div className="fond-motif" aria-hidden="true" />
         <div className="fond-halo" aria-hidden="true" />
-        <div className="lp-orbe lp-orbe--1" aria-hidden="true" />
-        <div className="lp-orbe lp-orbe--2" aria-hidden="true" />
-        <div className="lp-orbe lp-orbe--3" aria-hidden="true" />
-        <div className="lp-lueur" aria-hidden="true" />
+        <canvas ref={canvasMarque} className="lp-canvas" aria-hidden="true" />
 
         <div className="marque-entete lp-entree" style={{ '--d': '0s' }}>
           <span className="lp-logo-halo">
@@ -802,29 +989,17 @@ export function LoginPage() {
           <span className="nom-marque">Amaterasu</span>
         </div>
 
-        <p className="eyebrow-marque lp-entree" style={{ '--d': '0.08s' }}>Plateforme de gestion commerçante</p>
-        <h1 className="titre-marque lp-entree" style={{ '--d': '0.16s' }}>
+        <h1 className="titre-marque lp-entree" style={{ '--d': '0.12s', marginTop: 30 }}>
           La gestion<br />
-          <span className="titre-marque-accent lp-mots">
-            {MOTS_TITRE.map((mot, i) => (
-              <span
-                key={mot}
-                className={'lp-mot' + (i === motActif ? ' lp-mot--actif' : '')}
-                aria-hidden={i !== motActif}
-              >
-                {mot}
-              </span>
-            ))}
-          </span>
+          <span className="titre-marque-accent">qui s'éclaire.</span>
         </h1>
-        <p className="tagline-marque lp-entree" style={{ '--d': '0.24s' }}>
-          Pilotez votre stock, vos ventes, vos clients et vos fournisseurs
-          depuis un espace unique, pensé pour aller vite.
+        <p className="tagline-marque lp-entree" style={{ '--d': '0.2s' }}>
+          Stock, ventes, clients : tout au même endroit.
         </p>
 
         <div
-          className="secteurs-vitrine lp-entree"
-          style={{ '--d': '0.32s' }}
+          className="lp-entree"
+          style={{ '--d': '0.3s' }}
           onMouseEnter={() => setPauseSecteurs(true)}
           onMouseLeave={() => setPauseSecteurs(false)}
           onFocus={() => setPauseSecteurs(true)}
@@ -832,61 +1007,43 @@ export function LoginPage() {
             if (!e.currentTarget.contains(e.relatedTarget)) setPauseSecteurs(false);
           }}
         >
-          <span className="secteurs-vitrine-titre">Un espace pensé pour votre activité</span>
-          <div className="secteurs-grille">
-            {SECTEURS_VITRINE.map(({ nom, tagline, Icone }, i) => (
+          <div className="lp-scene" ref={scene} aria-hidden="true">
+            <div className="lp-plateau">
+              <div className="lp-couche lp-couche--fond">
+                <div className="lp-barres" key={`barres-${secteur.nom}`}>
+                  {secteur.barres.map((h, k) => <i key={k} style={{ '--h': h, '--k': k }} />)}
+                </div>
+              </div>
+              <div className="lp-couche lp-couche--milieu">
+                <span className="lp-apercu">Aperçu</span>
+                <span className="lp-kpi" key={`kpi-${secteur.nom}`}>{secteur.kpi}</span>
+                <span className="lp-kpi-lib" key={`lib-${secteur.nom}`}>{secteur.kpiLibelle}</span>
+              </div>
+              <div className="lp-couche lp-couche--avant">
+                <span className="lp-puce-icone"><secteur.Icone /></span>
+                <span className="lp-puce-texte" key={`puce-${secteur.nom}`}>{secteur.puce}</span>
+              </div>
+              <div className="lp-anneau" />
+            </div>
+          </div>
+
+          <div className="lp-secteurs" role="group" aria-label="Aperçu par secteur">
+            {SECTEURS.map(({ nom, Icone }, i) => (
               <button
                 key={nom}
                 type="button"
-                className={'secteur-carte' + (i === secteurActif ? ' secteur-carte--actif' : '')}
+                className={'lp-chip' + (i === secteurActif ? ' lp-chip--actif' : '')}
+                aria-label={nom}
                 aria-pressed={i === secteurActif}
                 onClick={() => setSecteurActif(i)}
               >
-                <span className="secteur-carte-icone">
-                  <Icone />
-                </span>
-                <span className="secteur-carte-texte">
-                  <strong>{nom}</strong>
-                  <span>{tagline}</span>
-                </span>
+                <span className="lp-chip-icone"><Icone /></span>
+                <span className="lp-chip-nom">{nom}</span>
                 {i === secteurActif && !pauseSecteurs && !reduit && (
-                  <span key={`progression-${secteurActif}`} className="secteur-progression" aria-hidden="true" />
+                  <span key={`progression-${secteurActif}`} className="lp-progression" aria-hidden="true" />
                 )}
               </button>
             ))}
-          </div>
-          <div className="secteur-detail" aria-live="polite">
-            <p key={secteur.nom}>{secteur.detail}</p>
-            <ul>
-              {secteur.tags.map((tag, k) => (
-                <li key={`${secteur.nom}-${tag}`} style={{ '--k': k }}>{tag}</li>
-              ))}
-            </ul>
-          </div>
-        </div>
-
-        <div className="cartes-flottantes lp-entree" style={{ '--d': '0.5s' }}>
-          <div className="carte-flottante carte-flottante--1">
-            <span className="carte-flottante-icone"><IconStock /></span>
-            <div>
-              <strong>{stock}</strong>
-              <span>produits en stock</span>
-            </div>
-          </div>
-          <div className="carte-flottante carte-flottante--2">
-            <span className="carte-flottante-icone"><IconVentes /></span>
-            <div>
-              <strong>{ventesAffichees}</strong>
-              <span>ventes aujourd'hui</span>
-            </div>
-            {bulleVente > 0 && <b key={bulleVente} className="lp-bulle" aria-hidden="true">+1</b>}
-          </div>
-          <div className="carte-flottante carte-flottante--3">
-            <span className="carte-flottante-icone"><IconFournisseurs /></span>
-            <div>
-              <strong>{fournisseurs}</strong>
-              <span>fournisseurs</span>
-            </div>
           </div>
         </div>
       </div>
@@ -894,7 +1051,7 @@ export function LoginPage() {
       <div className="panneau-formulaire">
         <div className="fond-motif fond-motif--clair" aria-hidden="true" />
         <div className="fond-halo fond-halo--clair" aria-hidden="true" />
-        <div className="lp-orbe lp-orbe--form" aria-hidden="true" />
+        <canvas ref={canvasFormulaire} className="lp-canvas" aria-hidden="true" />
 
         <div className="carte-connexion carte-connexion--plate lp-entree" style={{ '--d': '0.2s' }}>
           <span className="pastille-accueil">Connexion</span>
