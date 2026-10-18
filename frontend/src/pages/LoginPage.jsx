@@ -132,6 +132,7 @@ const SECTEURS = [
 ];
 
 const DUREE_SECTEUR_MS = 5000;
+const DUREE_ENTREE_MS = 2400; // durée de l'animation après une connexion réussie
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function salutation() {
@@ -490,6 +491,101 @@ function useInclinaison(ref, pointeur, reduit) {
   }, [ref, pointeur, reduit]);
 }
 
+// Séquence d'entrée : une gerbe de particules jaillit du bouton, puis est aspirée par l'emblème
+// qui s'illumine. Renvoie une fonction de nettoyage.
+function lancerExplosion(canvas, origine, centreEmblem, surEclat) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return () => {};
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const l = window.innerWidth;
+  const h = window.innerHeight;
+  canvas.width = Math.round(l * dpr);
+  canvas.height = Math.round(h * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const couleurs = ['#f2a81d', '#ffd27a', '#8fb4ee', '#ffffff'];
+  const n = l < 640 ? 70 : 120;
+  const ps = Array.from({ length: n }, () => {
+    const a = Math.random() * Math.PI * 2;
+    const v = 2.5 + Math.random() * 8.5;
+    return {
+      x: origine.x, y: origine.y, px: origine.x, py: origine.y,
+      vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+      c: couleurs[Math.floor(Math.random() * couleurs.length)],
+      r: 1.2 + Math.random() * 2.4,
+      mort: false,
+    };
+  });
+  const anneaux = [0, 130, 270];
+  const t0 = performance.now();
+  let dernier = t0;
+  let raf = 0;
+  let absorbees = 0;
+  let eclat = false;
+
+  const boucle = (t) => {
+    const age = t - t0;
+    const dt = Math.min(40, t - dernier) / 16.7;
+    dernier = t;
+    ctx.clearRect(0, 0, l, h);
+
+    anneaux.forEach((retard) => {
+      const a = age - retard;
+      if (a > 0 && a < 900) {
+        ctx.strokeStyle = `rgba(242, 168, 29, ${(1 - a / 900) * 0.7})`;
+        ctx.lineWidth = 3 * (1 - a / 900) + 0.5;
+        ctx.beginPath();
+        ctx.arc(origine.x, origine.y, a * 1.4, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    });
+
+    const aspiration = age > 900;
+    const cible = aspiration ? centreEmblem() : null;
+    ctx.lineCap = 'round';
+    ps.forEach((p) => {
+      if (p.mort) return;
+      p.px = p.x;
+      p.py = p.y;
+      if (aspiration && cible) {
+        const dx = cible.x - p.x;
+        const dy = cible.y - p.y;
+        const d = Math.hypot(dx, dy) || 1;
+        if (d < 14 || age > 2100) {
+          p.mort = true;
+          absorbees += 1;
+          return;
+        }
+        const force = 0.9 * (1 + (age - 900) / 1200);
+        p.vx = (p.vx + (dx / d) * force * dt) * 0.92;
+        p.vy = (p.vy + (dy / d) * force * dt) * 0.92;
+      } else {
+        p.vx *= 0.965;
+        p.vy *= 0.965;
+        p.vy += 0.03 * dt;
+      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      ctx.globalAlpha = aspiration ? 0.95 : Math.max(0.25, 1 - age / 1500);
+      ctx.strokeStyle = p.c;
+      ctx.lineWidth = p.r;
+      ctx.beginPath();
+      ctx.moveTo(p.px, p.py);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+
+    if (!eclat && aspiration && absorbees > n * 0.55) {
+      eclat = true;
+      surEclat();
+    }
+    if (age < 2600) raf = requestAnimationFrame(boucle);
+    else ctx.clearRect(0, 0, l, h);
+  };
+  raf = requestAnimationFrame(boucle);
+  return () => cancelAnimationFrame(raf);
+}
+
 // ---------------------------------------------------------------------------
 // Styles (propres à cet écran). Les nouveaux éléments ont leurs propres classes « lp- » ; les
 // animations des éléments existants passent par `translate` / `scale`, jamais par `transform`.
@@ -833,7 +929,7 @@ const STYLES = `
   }
   @keyframes lp-rotation { to { rotate: 360deg; } }
 
-  /* Connexion réussie : l'écran se referme sur un voile marine avant l'ouverture de l'espace */
+  /* Connexion réussie : un portail marine s'ouvre depuis le bouton, l'emblème s'illumine, puis l'espace s'ouvre */
   .ecran-connexion-partage .lp-succes {
     position: fixed;
     inset: 0;
@@ -841,27 +937,89 @@ const STYLES = `
     display: grid;
     place-content: center;
     justify-items: center;
-    gap: 8px;
+    gap: 10px;
     color: #fff;
     text-align: center;
     background: radial-gradient(circle at 50% 38%, #174c9c, #0f2747 70%);
-    animation: lp-voile 0.45s ease both;
+    clip-path: circle(0 at var(--ox, 50%) var(--oy, 50%));
+    animation: lp-portail 0.85s cubic-bezier(0.65, 0, 0.2, 1) forwards;
   }
-  .ecran-connexion-partage .lp-succes strong { font-size: 20px; }
-  .ecran-connexion-partage .lp-succes span { opacity: 0.75; font-size: 14px; }
-  .ecran-connexion-partage .lp-succes-svg { width: 76px; height: 76px; margin-bottom: 6px; }
-  .ecran-connexion-partage .lp-succes-cercle {
-    fill: none; stroke: var(--soleil); stroke-width: 2.5;
-    stroke-dasharray: 152; stroke-dashoffset: 152;
-    animation: lp-trace-long 0.6s ease 0.1s forwards;
+  @keyframes lp-portail { to { clip-path: circle(150vmax at var(--ox, 50%) var(--oy, 50%)); } }
+  .ecran-connexion-partage .lp-succes-canvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 51;
+    pointer-events: none;
   }
-  .ecran-connexion-partage .lp-succes-trait {
-    fill: none; stroke: #fff; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round;
-    stroke-dasharray: 40; stroke-dashoffset: 40;
-    animation: lp-trace-long 0.4s ease 0.55s forwards;
+  .ecran-connexion-partage .lp-succes-emblem {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 128px;
+    height: 128px;
+    margin-bottom: 8px;
+    opacity: 0;
+    animation: lp-emblem 0.7s cubic-bezier(0.3, 1.5, 0.5, 1) 0.35s forwards;
+  }
+  @keyframes lp-emblem { from { opacity: 0; scale: 0.4; } to { opacity: 1; scale: 1; } }
+  .ecran-connexion-partage .lp-succes-emblem .logo-badge { width: 76px; height: 76px; position: relative; }
+  .ecran-connexion-partage .lp-succes-halo {
+    position: absolute;
+    inset: -30px;
+    border-radius: 50%;
+    opacity: 0;
+    background: radial-gradient(circle, rgba(242, 168, 29, 0.75), transparent 68%);
+  }
+  .ecran-connexion-partage .lp-succes-halo.lp-succes-eclat { animation: lp-eclat 0.85s ease-out both; }
+  @keyframes lp-eclat {
+    0% { opacity: 0; scale: 0.6; }
+    35% { opacity: 1; scale: 1.25; }
+    100% { opacity: 0; scale: 2.1; }
+  }
+  .ecran-connexion-partage .lp-succes-anneau {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    rotate: -90deg;
+  }
+  .ecran-connexion-partage .lp-succes-anneau circle { fill: none; stroke-width: 2.5; stroke-linecap: round; }
+  .ecran-connexion-partage .lp-succes-anneau .lp-fond { stroke: rgba(255, 255, 255, 0.14); }
+  .ecran-connexion-partage .lp-succes-anneau .lp-trait {
+    stroke: var(--soleil);
+    stroke-dasharray: 339;
+    stroke-dashoffset: 339;
+    animation: lp-trace-long 1.5s ease-in-out 0.6s forwards;
   }
   @keyframes lp-trace-long { to { stroke-dashoffset: 0; } }
-  @keyframes lp-voile { from { opacity: 0; } to { opacity: 1; } }
+  .ecran-connexion-partage .lp-succes-titre {
+    font-size: 24px;
+    font-weight: 800;
+    animation: lp-detail 0.6s ease 1s both;
+  }
+  .ecran-connexion-partage .lp-succes-sous {
+    opacity: 0.75;
+    font-size: 14px;
+    animation: lp-detail 0.6s ease 1.2s both;
+  }
+  .ecran-connexion-partage .lp-succes-barre {
+    width: 180px;
+    height: 3px;
+    margin-top: 6px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.15);
+  }
+  .ecran-connexion-partage .lp-succes-barre i {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--soleil), #fff);
+    transform-origin: left center;
+    animation: lp-barre-succes 1.7s ease-in-out 0.55s both;
+  }
+  @keyframes lp-barre-succes { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
   @media (max-width: 640px) {
     .ecran-connexion-partage .lp-scene { height: 210px; }
@@ -903,10 +1061,15 @@ export function LoginPage() {
   const [ondes, setOndes] = useState([]);
   const [secteurActif, setSecteurActif] = useState(0);
   const [pauseSecteurs, setPauseSecteurs] = useState(false);
+  const [origine, setOrigine] = useState({ x: 0, y: 0 });
 
   const canvasMarque = useRef(null);
   const canvasFormulaire = useRef(null);
   const scene = useRef(null);
+  const boutonConnexion = useRef(null);
+  const canvasSucces = useRef(null);
+  const emblemSucces = useRef(null);
+  const haloSucces = useRef(null);
   const minuteurs = useRef([]);
 
   const salut = useMemo(salutation, []);
@@ -931,6 +1094,20 @@ export function LoginPage() {
     const id = setTimeout(() => setSecteurActif((i) => (i + 1) % SECTEURS.length), DUREE_SECTEUR_MS);
     return () => clearTimeout(id);
   }, [secteurActif, pauseSecteurs, reduit]);
+
+  // Séquence d'entrée : gerbe de particules puis aspiration par l'emblème
+  useEffect(() => {
+    if (!succes || reduit || !canvasSucces.current) return undefined;
+    return lancerExplosion(
+      canvasSucces.current,
+      origine,
+      () => {
+        const r = emblemSucces.current ? emblemSucces.current.getBoundingClientRect() : null;
+        return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : { x: window.innerWidth / 2, y: window.innerHeight * 0.4 };
+      },
+      () => haloSucces.current && haloSucces.current.classList.add('lp-succes-eclat'),
+    );
+  }, [succes, reduit, origine]);
 
   function secouer() {
     if (reduit) return;
@@ -963,8 +1140,12 @@ export function LoginPage() {
     setChargement(true);
     try {
       await login(email, password);
+      const bouton = boutonConnexion.current ? boutonConnexion.current.getBoundingClientRect() : null;
+      setOrigine(bouton
+        ? { x: bouton.left + bouton.width / 2, y: bouton.top + bouton.height / 2 }
+        : { x: window.innerWidth / 2, y: window.innerHeight / 2 });
       setSucces(true);
-      await new Promise((resolve) => { programmer(resolve, reduit ? 0 : 1300); });
+      await new Promise((resolve) => { programmer(resolve, reduit ? 0 : DUREE_ENTREE_MS); });
       navigate('/');
     } catch (err) {
       setErreur(err.message);
@@ -1119,6 +1300,7 @@ export function LoginPage() {
             </div>
             <button
               type="submit"
+              ref={boutonConnexion}
               className="btn btn-principal btn-connexion"
               disabled={chargement}
               onPointerDown={ajouterOnde}
@@ -1137,14 +1319,22 @@ export function LoginPage() {
       </div>
 
       {succes && (
-        <div className="lp-succes" role="status">
-          <svg className="lp-succes-svg" viewBox="0 0 52 52" aria-hidden="true">
-            <circle className="lp-succes-cercle" cx="26" cy="26" r="24" />
-            <path className="lp-succes-trait" d="M15 27l8 8 14-16" />
-          </svg>
-          <strong>Connexion réussie</strong>
-          <span>Ouverture de votre espace…</span>
-        </div>
+        <>
+          <div className="lp-succes" role="status" style={{ '--ox': `${origine.x}px`, '--oy': `${origine.y}px` }}>
+            <span className="lp-succes-emblem" ref={emblemSucces}>
+              <span className="lp-succes-halo" ref={haloSucces} aria-hidden="true" />
+              <svg className="lp-succes-anneau" viewBox="0 0 120 120" aria-hidden="true">
+                <circle className="lp-fond" cx="60" cy="60" r="54" />
+                <circle className="lp-trait" cx="60" cy="60" r="54" />
+              </svg>
+              <img className="logo-badge" src="/amaterasu-emblem.svg" alt="" width="76" height="76" />
+            </span>
+            <strong className="lp-succes-titre">{salut}, bienvenue</strong>
+            <span className="lp-succes-sous">Ouverture de votre espace…</span>
+            <span className="lp-succes-barre" aria-hidden="true"><i /></span>
+          </div>
+          <canvas ref={canvasSucces} className="lp-succes-canvas" aria-hidden="true" />
+        </>
       )}
     </div>
   );
