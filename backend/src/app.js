@@ -51,6 +51,16 @@ const alertesRapportsCliniqueRoutes = require('./routes/alertes_rapports_cliniqu
 
 const app = express();
 
+app.set('trust proxy', 1);
+
+// Force HTTPS en production (Render passe par un proxy, donc on lit x-forwarded-proto).
+app.use((req, res, next) => {
+  if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
+    return res.redirect(301, `https://${req.headers.host}${req.url}`);
+  }
+  next();
+});
+
 // En production, seule l'origine du frontend déployé est autorisée.
 // CORS_ORIGIN peut contenir plusieurs origines séparées par des virgules.
 const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').filter(Boolean);
