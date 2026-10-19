@@ -76,15 +76,6 @@ function dateAujourdHui() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function IconCloche() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-      <path d="M13.73 21a2 2 0 01-3.46 0" />
-    </svg>
-  );
-}
-
 function IconCheck() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -128,15 +119,6 @@ const HORIZONS_PEREMPTION = {
   '12_mois': { titre: 'Entre 6 et 12 mois', niveau: 'faible' },
 };
 const infoHorizon = (h) => HORIZONS_PEREMPTION[h] || HORIZONS_PEREMPTION['12_mois'];
-
-// Convertit la clé publique VAPID (base64 URL-safe) en Uint8Array, format
-// attendu par pushManager.subscribe().
-function urlBase64ToUint8Array(base64String) {
-  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
-  const rawData = window.atob(base64);
-  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
-}
 
 const NOMS_MOIS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 function formatMois(moisStr) {
@@ -934,49 +916,6 @@ function DashboardCommerce() {
   }, [estManager, warehouseId]);
 
 
-  // Notifications push : statut affiché sur le tableau de bord manager.
-  const [statutNotifications, setStatutNotifications] = useState('indisponible'); // indisponible | inactif | actif | erreur
-  const [activationEnCours, setActivationEnCours] = useState(false);
-
-  useEffect(() => {
-    if (!estManager) return;
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-      setStatutNotifications('indisponible');
-      return;
-    }
-    navigator.serviceWorker.ready
-      .then((registration) => registration.pushManager.getSubscription())
-      .then((subscription) => setStatutNotifications(subscription ? 'actif' : 'inactif'))
-      .catch(() => setStatutNotifications('inactif'));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [estManager]);
-
-  async function activerNotifications() {
-    setErreur('');
-    setActivationEnCours(true);
-    try {
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        setStatutNotifications('inactif');
-        setErreur("Permission de notification refusée dans le navigateur.");
-        return;
-      }
-      const { publicKey } = await api.getVapidPublicKey();
-      const registration = await navigator.serviceWorker.ready;
-      const subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
-      });
-      await api.subscribeToPush(subscription.toJSON());
-      setStatutNotifications('actif');
-    } catch (err) {
-      setStatutNotifications('erreur');
-      setErreur(err.message || "Impossible d'activer les notifications.");
-    } finally {
-      setActivationEnCours(false);
-    }
-  }
-
   function charger() {
     // Un manager sans boutique sélectionnée ne doit pas appeler /products
     // ni /orders (le backend renverrait 400 "La boutique est requise").
@@ -1397,18 +1336,6 @@ function DashboardCommerce() {
           </>
         ) : (
           <>
-            {estManager && statutNotifications === 'inactif' && (
-              <div className="erreur" style={{ marginBottom: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <IconCloche />
-                  Activez les notifications pour être alerté en temps réel (ventes importantes, ruptures de stock…).
-                </span>
-                <button className="btn btn-principal" onClick={activerNotifications} disabled={activationEnCours}>
-                  {activationEnCours ? 'Activation…' : 'Activer'}
-                </button>
-              </div>
-            )}
-
             {estPharmacie && lotsPerimes && lotsPerimes.count > 0 && (
               <section className="db-perime db-niveau--urgent" role="alert">
                 <header className="db-perime-tete">

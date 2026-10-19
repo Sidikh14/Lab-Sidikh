@@ -23,6 +23,24 @@ function IconMenu() {
   );
 }
 
+function IconClocheBarree() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M6 9a6 6 0 0 1 10.3-4.2M18 9c0 5 2 6 2 6H9" />
+      <path d="M4 4l16 16" />
+      <path d="M10 19a2 2 0 0 0 4 0" />
+    </svg>
+  );
+}
+
+// Convertit la clé publique VAPID (base64 URL-safe) en Uint8Array, format attendu par pushManager.subscribe().
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
+
 const formaterDate = (d) => new Date(d).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 
 export function Topbar({ onOuvrirMenu }) {
@@ -33,6 +51,75 @@ export function Topbar({ onOuvrirMenu }) {
   const [menuOuvert, setMenuOuvert] = useState(false);
 
   const peutVoirAlertes = aRole(...ROLES_ALERTES);
+
+  // Bascule notifications push : visible seulement pour le manager, jamais imposée.
+  const peutGererPush = aRole('manager');
+  const [statutPush, setStatutPush] = useState('indisponible'); // indisponible | inactif | actif | erreur
+  const [pushEnCours, setPushEnCours] = useState(false);
+
+  useEffect(() => {
+    if (!peutGererPush) return undefined;
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setStatutPush('indisponible');
+      return undefined;
+    }
+    navigator.serviceWorker.ready
+      .then((registration) => registration.pushManager.getSubscription())
+      .then((subscription) => setStatutPush(subscription ? 'actif' : 'inactif'))
+      .catch(() => setStatutPush('inactif'));
+    return undefined;
+  }, [peutGererPush]);
+
+  async function activerPush() {
+    setPushEnCours(true);
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        setStatutPush('inactif');
+        return;
+      }
+      const { publicKey } = await api.getVapidPublicKey();
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+      await api.subscribeToPush(subscription.toJSON());
+      setStatutPush('actif');
+    } catch {
+      setStatutPush('erreur');
+    } finally {
+      setPushEnCours(false);
+    }
+  }
+
+  async function desactiverPush() {
+    setPushEnCours(true);
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        try {
+          if (typeof api.unsubscribeFromPush === 'function') await api.unsubscribeFromPush(subscription.endpoint);
+        } catch {
+          /* le serveur oubliera l'abonnement au prochain envoi échoué */
+        }
+        await subscription.unsubscribe();
+      }
+      setStatutPush('inactif');
+    } catch {
+      setStatutPush('erreur');
+    } finally {
+      setPushEnCours(false);
+    }
+  }
+
+  function basculerPush() {
+    if (pushEnCours) return;
+    if (statutPush === 'actif') desactiverPush();
+    else activerPush();
+  }
+
   const [alertes, setAlertes] = useState([]);
   const [nonLues, setNonLues] = useState(0);
   const [panneauOuvert, setPanneauOuvert] = useState(false);
@@ -182,6 +269,25 @@ export function Topbar({ onOuvrirMenu }) {
       </div>
 
       <div className="barre-haut-droite">
+        {peutGererPush && statutPush !== 'indisponible' && (
+          <button
+            type="button"
+            onClick={basculerPush}
+            disabled={pushEnCours}
+            title={statutPush === 'actif' ? 'Désactiver les notifications' : 'Activer les notifications'}
+            aria-label={statutPush === 'actif' ? 'Désactiver les notifications' : 'Activer les notifications'}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 4, border: '1px solid rgba(0,0,0,0.12)',
+              borderRadius: 999, background: statutPush === 'actif' ? 'var(--accent-clair, #eef2ff)' : '#fff',
+              color: statutPush === 'actif' ? 'var(--accent, #6d28d9)' : '#6b7280',
+              fontSize: 11, padding: '3px 8px', cursor: pushEnCours ? 'default' : 'pointer', opacity: pushEnCours ? 0.6 : 1,
+            }}
+          >
+            {statutPush === 'actif' ? <IconCloche /> : <IconClocheBarree />}
+            {statutPush === 'actif' ? 'Notifs actives' : 'Notifs coupées'}
+          </button>
+        )}
+
         <div ref={zoneClocheRef} style={{ position: 'relative' }}>
           <button
             type="button"
