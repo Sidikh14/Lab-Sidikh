@@ -82,6 +82,7 @@ function chargerEquipe(baseFausse) {
     '../middleware/auth': { authenticate: () => {} },
     '../middleware/roles': R,
     '../utils/activityLog': { logActivity: async () => {} },
+    '../utils/motDePasseProvisoire': { genererMotDePasseProvisoire: () => 'Prov1234' },
   };
   const m = { exports: {} };
   new Function('require', 'module', 'exports', src)((n) => faux[n], m, m.exports);

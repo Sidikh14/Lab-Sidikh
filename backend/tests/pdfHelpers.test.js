@@ -1,4 +1,4 @@
-const { formatMontant, COULEURS } = require('../utils/pdfHelpers');
+const { formatMontant, COULEURS } = require('../src/utils/pdfHelpers');
 
 describe('formatMontant', () => {
   test('sépare les milliers avec un espace normal (pas insécable)', () => {
