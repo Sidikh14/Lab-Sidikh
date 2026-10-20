@@ -503,9 +503,14 @@ router.post('/send', GESTION, async (req, res) => {
     const aImprimer = [];
     const comptes = [];
     const erreurs = [];
-    for (const b of bulletins) {
-      const adresse = String(b.email || '').trim();
-      if (adresse) {
+    // Génération du PDF + envoi de l'e-mail en parallèle par petits lots (au lieu d'un par un) :
+    // pendant que le mail N part (attente réseau SMTP), le PDF du mail N+1 se génère déjà.
+    const CONCURRENCE = 5;
+    const aEnvoyer = bulletins.filter((b) => String(b.email || '').trim());
+    for (let i = 0; i < aEnvoyer.length; i += CONCURRENCE) {
+      const lot = aEnvoyer.slice(i, i + CONCURRENCE);
+      await Promise.all(lot.map(async (b) => {
+        const adresse = String(b.email).trim();
         try {
           const pdf = await bulletinEnBuffer(b);
           await sendMailWithAttachments({
@@ -520,11 +525,12 @@ router.post('/send', GESTION, async (req, res) => {
           console.error(err);
           erreurs.push({ id: b.user_id, name: b.full_name, error: err.message || "Échec de l'envoi" });
         }
-      } else if (b.compte_id) {
-        comptes.push({ id: b.user_id, name: b.full_name });
-      } else {
-        aImprimer.push({ id: b.user_id, name: b.full_name });
-      }
+      }));
+    }
+    for (const b of bulletins) {
+      if (String(b.email || '').trim()) continue;
+      if (b.compte_id) comptes.push({ id: b.user_id, name: b.full_name });
+      else aImprimer.push({ id: b.user_id, name: b.full_name });
     }
     if (envoyes.length > 0) {
       await logActivity({

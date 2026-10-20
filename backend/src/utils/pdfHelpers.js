@@ -103,6 +103,11 @@ function tablePolices(avecPolices) {
   };
 }
 
+// pdfkit reparse entièrement un fichier de police (fontkit) à chaque doc.font(nom) : rien n'est mis en
+// cache d'un document à l'autre. Vérifier que les polices se chargent coûte donc cher (~20 ms/police) et
+// n'a besoin d'être fait qu'une fois par processus, pas à chaque PDF généré.
+let policesUtilisables; // résolu une seule fois par processus
+
 function enregistrerPolices(doc) {
   if (doc._styleCharte) return; // déjà appliqué à ce document
   doc._styleCharte = true;
@@ -115,10 +120,15 @@ function enregistrerPolices(doc) {
   if (fichiers) {
     try {
       Object.entries(fichiers).forEach(([nom, fichier]) => doc.registerFont(nom, fichier));
-      // Vérifie tout de suite que les fichiers se chargent (sinon repli sur Helvetica).
-      Object.keys(fichiers).forEach((nom) => fontOrigine(nom));
-      avecPolices = true;
+      if (policesUtilisables === undefined) {
+        // Premier PDF du processus : on vérifie une seule fois que les fichiers se chargent
+        // (sinon repli sur Helvetica pour tout le reste de la durée de vie du processus).
+        Object.keys(fichiers).forEach((nom) => fontOrigine(nom));
+        policesUtilisables = true;
+      }
+      avecPolices = policesUtilisables;
     } catch (err) {
+      policesUtilisables = false;
       console.error('Polices Amaterasu illisibles, repli sur Helvetica :', err.message);
     }
   }

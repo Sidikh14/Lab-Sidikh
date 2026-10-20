@@ -2597,7 +2597,7 @@ router.delete('/filings/:id', async (req, res) => {
 
 // ---------- Synchronisation automatique ----------
 
-const DELAI_SYNCHRO_MS = 30000;
+const DELAI_SYNCHRO_MS = 180000; // 3 min (était 30 s) — la resynchro complète est coûteuse, voir assurerSynchro
 const ETAT_SYNCHRO = new Map(); // merchantId -> { at, dernier, enCours }
 const PLAN_VERIFIE = new Set();
 
