@@ -698,31 +698,43 @@ router.get('/movements/pdf', requireRole('manager', 'gerant'), async (req, res) 
     }
     entete();
 
+    const largeurMouvement = tous ? 140 : 180;
+
     let solde = 0;
     mouvements.forEach((m, index) => {
-      if (y > 750) {
+      const montantSigne = m.sens === 'entree' ? Number(m.amount) : -Number(m.amount);
+      solde += montantSigne;
+
+      // Hauteur de ligne calculée sur la colonne "Mouvement" (la plus susceptible de
+      // déborder) au lieu d'une hauteur fixe de 20 : sinon les libellés longs
+      // (ex. "Sortie de caisse — Remboursement retour client (commande #...)")
+      // débordaient sur la ligne suivante au lieu de rester lisibles.
+      doc.fontSize(8.5).font('Helvetica');
+      const texteMvt = texteMouvement(m);
+      const hauteurTexte = doc.heightOfString(texteMvt, { width: largeurMouvement });
+      const hauteurLigne = Math.max(20, hauteurTexte + 10);
+
+      if (y + hauteurLigne > 760) {
         doc.addPage();
         y = 50;
         entete();
       }
-      const montantSigne = m.sens === 'entree' ? Number(m.amount) : -Number(m.amount);
-      solde += montantSigne;
 
       if (index % 2 === 1) {
-        doc.rect(50, y, doc.page.width - 100, 20).fill(COULEURS.fondAlterne);
+        doc.rect(50, y, doc.page.width - 100, hauteurLigne).fill(COULEURS.fondAlterne);
         doc.fillColor(COULEURS.encre);
       }
       const date = new Date(m.date);
       const auteur = m.user_name || '—';
       doc.fontSize(8.5).fillColor(COULEURS.muted).text(date.toLocaleDateString('fr-FR'), tous ? 54 : 54, y + 5, { width: tous ? 48 : 55 });
-      doc.fillColor(COULEURS.encre).text(texteMouvement(m), tous ? 104 : 111, y + 5, { width: tous ? 140 : 180 });
+      doc.fillColor(COULEURS.encre).text(texteMvt, tous ? 104 : 111, y + 5, { width: largeurMouvement });
       if (tous) {
         doc.fillColor(COULEURS.muted).text(LABEL_METHODE[m.payment_method] || '—', 246, y + 5, { width: 60 });
       }
       doc.fillColor(COULEURS.muted).text(auteur, tous ? 308 : 293, y + 5, { width: tous ? 90 : 100 });
       doc.fillColor(COULEURS.encre).text(`${montantSigne >= 0 ? '+' : ''}${formatMontant(montantSigne)}`, tous ? 400 : 395, y + 5, { width: tous ? 68 : 70, align: 'right' });
       doc.text(formatMontant(solde), tous ? 470 : 467, y + 5, { width: tous ? 75 : 78, align: 'right' });
-      y += 20;
+      y += hauteurLigne;
     });
 
     doc.end();

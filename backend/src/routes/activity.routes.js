@@ -542,22 +542,33 @@ router.get('/pdf', async (req, res) => {
     });
     y += 10;
 
+    const xDescription = 130;
+    const largeurDescription = doc.page.width - 50 - xDescription; // jusqu'à la marge droite, plus de 400pt fixes
+
     activite.forEach((a, index) => {
-      if (y > 760) {
+      // Hauteur de ligne calculée sur le texte réel (nom + description) au lieu d'une
+      // hauteur fixe de 22 : sinon les descriptions longues passaient sur 2-3 lignes
+      // et débordaient sur la ligne suivante (texte illisible, entassé).
+      const texteComplet = `${a.user_name || 'Inconnu'} ${texteActivite(a)}`;
+      doc.fontSize(9).font('Helvetica');
+      const hauteurTexte = doc.heightOfString(texteComplet, { width: largeurDescription });
+      const hauteurLigne = Math.max(22, hauteurTexte + 12);
+
+      if (y + hauteurLigne > 770) {
         doc.addPage();
         y = 50;
       }
       if (index % 2 === 1) {
-        doc.rect(50, y, doc.page.width - 100, 22).fill(COULEURS.fondAlterne);
+        doc.rect(50, y, doc.page.width - 100, hauteurLigne).fill(COULEURS.fondAlterne);
       }
       const date = new Date(a.created_at);
       doc.fillColor(COULEURS.muted).fontSize(8).font('Helvetica')
         .text(date.toLocaleDateString('fr-FR'), 56, y + 6, { width: 60 })
         .text(date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }), 56, y + 6 + 9, { width: 60 });
       doc.fillColor(COULEURS.encre).fontSize(9);
-      doc.font('Helvetica-Bold').text(a.user_name || 'Inconnu', 130, y + 6, { continued: true, width: 400 });
-      doc.font('Helvetica').text(` ${texteActivite(a)}`, { width: 400 });
-      y += 22;
+      doc.font('Helvetica-Bold').text(a.user_name || 'Inconnu', xDescription, y + 6, { continued: true, width: largeurDescription });
+      doc.font('Helvetica').text(` ${texteActivite(a)}`, { width: largeurDescription });
+      y += hauteurLigne;
     });
 
     doc.end();

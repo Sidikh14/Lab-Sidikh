@@ -245,7 +245,7 @@ function SalairesTab() {
     setErreur('');
     setResultatEnvoiBulletins(null);
     try {
-      const resultat = await api.sendPayslips({ month: mois });
+      const resultat = await api.sendPayslips(mois);
       setResultatEnvoiBulletins(resultat);
       charger();
     } catch (err) {
