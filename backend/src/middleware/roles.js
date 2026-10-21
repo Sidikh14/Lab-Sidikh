@@ -59,4 +59,114 @@ function requireRole(...allowedRoles) {
   };
 }
 
-module.exports = { requireRole, aRole, normaliserRoles, rolePrincipal, ROLES_ATTRIBUABLES, ROLES_CLINIQUE };
+// ---------------------------------------------------------------------------
+// Permissions fines par action, à l'intérieur d'un module déjà visible
+// (users.visible_modules continue de décider si la page est accessible du
+// tout ; ceci ne fait que retirer des actions précises à l'intérieur).
+// Stockées dans users.action_permissions (JSONB) : { module: { action: false } }.
+// Absence de clé = autorisé (même logique que visible_modules: null = accès complet).
+// ---------------------------------------------------------------------------
+const CATALOGUE_ACTIONS = {
+  stock: {
+    creer: 'Créer un produit',
+    modifier: 'Modifier (prix, quantité)',
+    supprimer: 'Supprimer un produit',
+    transferer: 'Transférer entre boutiques',
+    rupture: 'Autoriser une vente en rupture de stock',
+    inventaire: 'Ajuster un inventaire',
+  },
+  ventes: {
+    creer: 'Encaisser une vente',
+    annuler: 'Annuler une commande',
+    remise: 'Appliquer une remise',
+    retour: 'Enregistrer un retour client',
+    reservation: 'Créer une réservation (reliquat)',
+  },
+  clients: {
+    creer: 'Créer un client',
+    modifier: 'Modifier un client',
+    supprimer: 'Supprimer un client',
+    credit: 'Valider une vente à crédit',
+    reglement: 'Enregistrer un règlement',
+    releve: 'Envoyer un relevé de compte',
+    export: 'Exporter les factures impayées',
+  },
+  fournisseurs: {
+    creer: 'Créer un fournisseur',
+    modifier: 'Modifier un fournisseur',
+    supprimer: 'Supprimer un fournisseur',
+    reglement: 'Enregistrer un paiement fournisseur',
+  },
+  achats: {
+    creer: 'Créer une commande fournisseur',
+    modifier: 'Modifier une commande fournisseur',
+    annuler: 'Annuler une commande fournisseur',
+    livrer: 'Réceptionner une commande fournisseur',
+  },
+  caisse: {
+    entree: 'Enregistrer une entrée de caisse',
+    sortie: 'Enregistrer une sortie de caisse',
+    cloture: 'Clôturer la caisse',
+    charge: 'Payer une charge depuis la caisse',
+  },
+  comptabilite: {
+    saisir: 'Saisir une écriture comptable',
+    cloture: "Clôturer l'exercice",
+    rapprochement: 'Faire un rapprochement / lettrage',
+    charge: 'Comptabiliser une charge',
+  },
+  fiscalite: {
+    declarer: 'Enregistrer une déclaration',
+    paiement: "Enregistrer un paiement d'impôt",
+  },
+  paie: {
+    bulletin: 'Générer un bulletin de paie',
+    payer: 'Payer un salaire',
+    avance: 'Verser une avance sur salaire',
+    document: 'Émettre un document RH (attestation, contrat)',
+    parametres: 'Modifier les paramètres de paie (taux/barèmes)',
+    envoi: 'Envoyer les bulletins par mail',
+  },
+  equipe: {
+    creer: 'Ajouter un membre',
+    modifier: 'Modifier un membre (rôles, infos)',
+    supprimer: 'Désactiver un membre',
+    permissions: 'Modifier les permissions d\'un membre',
+    mot_de_passe: "Réinitialiser le mot de passe d'un membre",
+  },
+  entreprise: {
+    modifier: "Modifier les informations de l'entreprise",
+  },
+  boutiques: {
+    creer: 'Ajouter une boutique',
+    modifier: 'Modifier une boutique',
+    transferer: 'Transférer du stock entre boutiques',
+  },
+};
+
+// Vrai si l'action est autorisée pour ce membre : seul le manager n'est jamais restreint par ce
+// système (ces permissions fines servent à encadrer gérant/vendeur/caissier/comptable), et une
+// action non explicitement désactivée reste autorisée par défaut.
+function peutAgir(user, module, action) {
+  if (aRole(user, 'manager')) return true;
+  const valeur = user?.actionPermissions?.[module]?.[action];
+  return valeur !== false;
+}
+
+// Restreint une action précise à l'intérieur d'un module déjà accessible.
+// Usage : router.delete('/products/:id', authenticate, requireAction('stock', 'supprimer'), handler)
+function requireAction(module, action) {
+  return (req, res, next) => {
+    if (!peutAgir(req.user, module, action)) {
+      return res.status(403).json({
+        error: "Vous n'avez pas les droits nécessaires pour cette action.",
+      });
+    }
+    next();
+  };
+}
+
+module.exports = {
+  requireRole, aRole, normaliserRoles, rolePrincipal, ROLES_ATTRIBUABLES, ROLES_CLINIQUE,
+  CATALOGUE_ACTIONS, peutAgir, requireAction,
+};

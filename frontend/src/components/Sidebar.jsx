@@ -415,6 +415,9 @@ export function Sidebar({ ouvert = false, onFermer }) {
   if (voitEquipe) {
     liensGestion.push({ to: '/boutiques', label: estManager ? `${secteurConfig.libelleBoutique}s` : 'Transferts', icone: IconBoutique });
   }
+  // Visible pour tous les rôles, y compris ceux sans accès à la page Paie (gestion) :
+  // chaque salarié peut retrouver et télécharger ses propres bulletins une fois payés.
+  liensGestion.push({ to: '/mes-bulletins', label: 'Mes bulletins', icone: IconSalaires });
 
   const liensFinance = [];
   // Le manager voit toujours Comptabilité, Fiscalité et Paie ; sans activation par l'owner, le clic

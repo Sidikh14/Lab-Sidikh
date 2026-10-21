@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const { genererMotDePasseProvisoire } = require('../utils/motDePasseProvisoire');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole, normaliserRoles, rolePrincipal, ROLES_ATTRIBUABLES } = require('../middleware/roles');
+const { requireRole, normaliserRoles, rolePrincipal, ROLES_ATTRIBUABLES, CATALOGUE_ACTIONS } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 
 const router = express.Router();
@@ -185,19 +185,46 @@ router.patch('/:id/status', requireRole('manager'), async (req, res) => {
 // Les trois dernières sont les pages de finance qu'un comptable peut ouvrir (voir middleware/financePermissions.js).
 const MODULES_VALIDES = ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse', 'comptabilite', 'fiscalite', 'paie'];
 
+// actions: { module: { action: false } } — ne retient que les refus explicites (false) ;
+// toute autre valeur (true, absente) est ignorée puisque c'est déjà le comportement par défaut.
+function nettoyerActions(actions) {
+  if (actions == null) return {};
+  if (typeof actions !== 'object' || Array.isArray(actions)) throw new Error('Permissions d\'action invalides.');
+  const propre = {};
+  for (const [module, parActions] of Object.entries(actions)) {
+    if (!CATALOGUE_ACTIONS[module] || typeof parActions !== 'object' || Array.isArray(parActions)) {
+      throw new Error('Permissions d\'action invalides.');
+    }
+    for (const action of Object.keys(parActions)) {
+      if (!(action in CATALOGUE_ACTIONS[module])) throw new Error('Permissions d\'action invalides.');
+      if (parActions[action] === false) {
+        propre[module] = propre[module] || {};
+        propre[module][action] = false;
+      }
+    }
+  }
+  return propre;
+}
+
 router.patch('/:id/permissions', requireRole('manager'), async (req, res) => {
-  const { modules } = req.body;
+  const { modules, actions } = req.body;
 
   if (modules !== null && (!Array.isArray(modules) || !modules.every((m) => MODULES_VALIDES.includes(m)))) {
     return res.status(400).json({ error: 'Liste de modules invalide.' });
   }
+  let actionsPropres;
+  try {
+    actionsPropres = nettoyerActions(actions);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
 
   try {
     const result = await pool.query(
-      `UPDATE users SET visible_modules = $1
+      `UPDATE users SET visible_modules = $1, action_permissions = $4
        WHERE id = $2 AND merchant_id = $3 AND role != 'manager'
-       RETURNING id, full_name, role, visible_modules`,
-      [modules, req.params.id, req.user.merchantId]
+       RETURNING id, full_name, role, visible_modules, action_permissions`,
+      [modules, req.params.id, req.user.merchantId, JSON.stringify(actionsPropres)]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Membre introuvable.' });

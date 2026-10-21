@@ -16,6 +16,7 @@ import { WarehousesPage } from './pages/WarehousesPage';
 import { ComptabilitePage } from './pages/ComptabilitePage';
 import { FiscalitePage } from './pages/FiscalitePage';
 import { PaiePage } from './pages/PaiePage';
+import { MesBulletinsPage } from './pages/MesBulletinsPage';
 import { CartePage } from './pages/CartePage';
 import { MenuPublicPage } from './pages/MenuPublicPage';
 import { AccueilCliniquePage } from './pages/clinique/AccueilCliniquePage';
@@ -107,6 +108,7 @@ export default function App() {
           <Route path="/entreprise" element={<RouteGestion><SettingsPage /></RouteGestion>} />
           <Route path="/salaires" element={<Navigate to="/paie" replace />} />
           <Route path="/paie" element={<RouteCommercant><PaiePage /></RouteCommercant>} />
+          <Route path="/mes-bulletins" element={<RouteCommercant><MesBulletinsPage /></RouteCommercant>} />
           <Route path="/boutiques" element={<RouteGestion><WarehousesPage /></RouteGestion>} />
           <Route path="/transferts" element={<Navigate to="/boutiques?tab=transferts" replace />} />
           <Route path="/equipe" element={<RouteCommercant><TeamPage /></RouteCommercant>} />
