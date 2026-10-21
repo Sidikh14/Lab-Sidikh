@@ -21,6 +21,7 @@ const METHODES = [
   { value: 'virement', label: 'Virement bancaire' },
   { value: 'wave', label: 'Wave' },
   { value: 'orange_money', label: 'Orange Money' },
+  { value: 'cheque', label: 'Chèque' },
 ];
 
 function libelleMethode(value) {
