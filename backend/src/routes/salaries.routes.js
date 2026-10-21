@@ -8,6 +8,7 @@ const { logActivity } = require('../utils/activityLog');
 const { broadcast } = require('../utils/eventsBus');
 const { MODES_CAISSE, UUID_RE, erreurMetier, verifierCaisse, verifierBoutique } = require('../utils/payrollCash');
 const { genererCsv } = require('../utils/payrollReports');
+const { formatMontant } = require('../utils/pdfHelpers');
 
 const router = express.Router();
 router.use(authenticate);
@@ -19,8 +20,8 @@ router.use(requireFinancePage('paie', { '/alert': { show: false, unpaid: [] } })
 // (/alert) répond simplement « rien à afficher » pour ne pas casser le tableau de bord.
 router.use(requireOwnerModule('paie', { '/alert': { show: false, unpaid: [] } }));
 
-const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'virement'];
-const LABEL_METHODE = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', virement: 'Virement' };
+const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'virement', 'cheque'];
+const LABEL_METHODE = { especes: 'Espèces', wave: 'Wave', orange_money: 'Orange Money', virement: 'Virement', cheque: 'Chèque' };
 const MOIS_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 function repondre(res, err) {
@@ -299,7 +300,7 @@ router.post('/:userId/pay', async (req, res) => {
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'salary_payment',
-      description: `a versé le salaire de ${employeeName} (${targetMonth}) - ${Math.round(Number(amount)).toLocaleString('fr-FR')} FCFA via ${LABEL_METHODE[paymentMethod]}`,
+      description: `a versé le salaire de ${employeeName} (${targetMonth}) - ${formatMontant(amount)} FCFA via ${LABEL_METHODE[paymentMethod]}`,
     });
     broadcast(req.user.merchantId, 'activity:created', {});
     res.json({ success: true, amount });
@@ -373,7 +374,7 @@ router.post('/pay-all', async (req, res) => {
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'salary_payment_batch',
-      description: `a payé les salaires de ${month} en une fois : ${aPayer.length} employé(s), ${Math.round(total).toLocaleString('fr-FR')} FCFA`,
+      description: `a payé les salaires de ${month} en une fois : ${aPayer.length} employé(s), ${formatMontant(total)} FCFA`,
     });
     broadcast(req.user.merchantId, 'activity:created', {});
     res.json({
