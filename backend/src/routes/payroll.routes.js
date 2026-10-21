@@ -478,7 +478,7 @@ router.post('/generate-all', GESTION, async (req, res) => {
 async function bulletinsPayesDuMois(merchantId, mois, empIds) {
   const { rows } = await pool.query(
     `SELECT p.*, e.full_name, e.email, e.user_id AS compte_id, COALESCE(e.job_title, u.role::text) AS role,
-            m.business_name, m.ninea, m.rccm, m.address, m.bank_details, m.mobile_money_details, m.payment_terms
+            m.business_name, m.email AS merchant_email, m.ninea, m.rccm, m.address, m.bank_details, m.mobile_money_details, m.payment_terms
      FROM payslips p
      JOIN employees e ON e.id = p.user_id
      LEFT JOIN users u ON u.id = e.user_id
@@ -518,6 +518,8 @@ router.post('/send', GESTION, async (req, res) => {
             subject: `Votre bulletin de paie — ${nomMois(mois)}`,
             text: `Bonjour ${b.full_name},\n\nVeuillez trouver ci-joint votre bulletin de paie de ${nomMois(mois)} (n° ${b.number}).\n\n${b.business_name || ''}`,
             attachments: [{ filename: `bulletin-${b.number}.pdf`, content: pdf, contentType: 'application/pdf' }],
+            fromName: b.business_name,
+            replyTo: String(b.merchant_email || '').trim() || undefined,
           });
           await pool.query('UPDATE payslips SET sent_at = now(), sent_to = $2 WHERE id = $1', [b.id, adresse]);
           envoyes.push({ id: b.user_id, name: b.full_name, to: adresse });

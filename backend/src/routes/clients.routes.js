@@ -186,7 +186,7 @@ router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier',
     }
     if (amount > facture.reste) {
       return res.status(400).json({
-        error: `Le montant dépasse le reste à payer de la facture ${facture.order_number} (${Math.round(facture.reste).toLocaleString('fr-FR')} FCFA).`,
+        error: `Le montant dépasse le reste à payer de la facture ${facture.order_number} (${formatMontant(facture.reste)} FCFA).`,
       });
     }
 
@@ -214,7 +214,7 @@ router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier',
       merchantId: req.user.merchantId,
       userId: req.user.id,
       action: 'credit_payment',
-      description: `a enregistré un règlement de ${amount.toLocaleString('fr-FR')} pour ${client.full_name} (facture ${facture.order_number})`,
+      description: `a enregistré un règlement de ${formatMontant(amount)} pour ${client.full_name} (facture ${facture.order_number})`,
     });
 
     getNomUtilisateur(req.user.id).then((nom) => {
@@ -222,7 +222,7 @@ router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier',
         merchantId: req.user.merchantId,
         type: 'reglement_recu',
         titre: 'Règlement client reçu',
-        message: `${nom || 'Un utilisateur'} a enregistré un règlement de ${Math.round(amount).toLocaleString('fr-FR')} FCFA de ${client.full_name} (facture ${facture.order_number}).`,
+        message: `${nom || 'Un utilisateur'} a enregistré un règlement de ${formatMontant(amount)} FCFA de ${client.full_name} (facture ${facture.order_number}).`,
         montant: amount,
         referenceId: result.rows[0].id,
         roles: ['manager', 'gerant'],
