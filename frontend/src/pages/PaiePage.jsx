@@ -337,12 +337,21 @@ function SalairesTab() {
       </div>
 
       {resultatEnvoiBulletins && (
-        <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 14 }}>
-          {resultatEnvoiBulletins.sent.length} bulletin(s) envoyé(s) par mail.
-          {resultatEnvoiBulletins.accounts.length > 0 && ` ${resultatEnvoiBulletins.accounts.length} salarié(s) sans mail renseigné (bulletin disponible sur leur compte "Mes bulletins").`}
-          {resultatEnvoiBulletins.toPrint.length > 0 && ` ${resultatEnvoiBulletins.toPrint.length} à imprimer (pas de compte ni de mail).`}
-          {resultatEnvoiBulletins.errors.length > 0 && ` ${resultatEnvoiBulletins.errors.length} échec(s) d'envoi.`}
-        </p>
+        <div style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 14 }}>
+          <p>
+            {resultatEnvoiBulletins.sent.length} bulletin(s) envoyé(s) par mail.
+            {resultatEnvoiBulletins.accounts.length > 0 && ` ${resultatEnvoiBulletins.accounts.length} salarié(s) sans mail renseigné (bulletin disponible sur leur compte "Mes bulletins").`}
+            {resultatEnvoiBulletins.toPrint.length > 0 && ` ${resultatEnvoiBulletins.toPrint.length} à imprimer (pas de compte ni de mail).`}
+            {resultatEnvoiBulletins.errors.length > 0 && ` ${resultatEnvoiBulletins.errors.length} échec(s) d'envoi.`}
+          </p>
+          {resultatEnvoiBulletins.errors.length > 0 && (
+            <ul style={{ margin: '4px 0 0', paddingLeft: 18, color: 'var(--erreur, #c0392b)' }}>
+              {resultatEnvoiBulletins.errors.map((e) => (
+                <li key={e.id}>{e.name} : {e.error}</li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       <ActionsMois mois={mois} onChange={charger} />
