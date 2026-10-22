@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { PageModuleNonActive } from '../components/ModuleNonActive';
 import { api } from '../api/client';
 import { useAccountingAccess } from '../hooks/useAccountingAccess';
@@ -2713,9 +2713,54 @@ const ONGLETS = [
   { id: 'ouverture', label: "Soldes d'ouverture", composant: OuvertureTab },
 ];
 
+// Bandeau « Clôture mensuelle » façon SAGFA360 : 4 étapes cliquables qui mènent aux onglets réels
+// (Saisie → Journal, Contrôle → Contrôles, Clôture → Clôture, États financiers → Bilan).
+const ETAPES_CLOTURE = [
+  { id: 'journal', label: 'Saisie' },
+  { id: 'controles', label: 'Contrôle' },
+  { id: 'cloture', label: 'Clôture' },
+  { id: 'bilan', label: 'États financiers' },
+];
+function BandeauClotureCompta({ onChoisir }) {
+  return (
+    <div
+      style={{
+        background: 'var(--marine, var(--encre))', color: '#fff', borderRadius: 'var(--rayon, 14px)',
+        padding: 'var(--space-md, 18px) var(--space-lg, 24px)', marginBottom: 'var(--space-md, 18px)',
+      }}
+    >
+      <p style={{ margin: 0, fontSize: 11, letterSpacing: '0.06em', opacity: 0.75 }}>CLÔTURE MENSUELLE</p>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 10 }}>
+        {ETAPES_CLOTURE.map((e, i) => (
+          <button
+            key={e.id}
+            type="button"
+            onClick={() => onChoisir(e.id)}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, fontSize: 'var(--fs-sm)' }}
+          >
+            <span style={{ width: 18, height: 18, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10.5, background: 'rgba(255,255,255,0.2)' }}>{i + 1}</span>
+            {e.label}
+            {i < ETAPES_CLOTURE.length - 1 && <span style={{ opacity: 0.35, margin: '0 2px' }}>—</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ComptabilitePage() {
   const { enabled, loading } = useAccountingAccess();
-  const [onglet, setOnglet] = useState('vue');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [onglet, setOnglet] = useState(() => (ONGLETS.some((o) => o.id === searchParams.get('onglet')) ? searchParams.get('onglet') : 'vue'));
+  useEffect(() => {
+    const demande = searchParams.get('onglet');
+    if (demande && demande !== onglet && ONGLETS.some((o) => o.id === demande)) setOnglet(demande);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+  function choisirOnglet(id) {
+    setOnglet(id);
+    setSearchParams({ onglet: id }, { replace: true });
+  }
   const [cle, setCle] = useState(0);
   const [synchro, setSynchro] = useState(null);
   const [enSynchro, setEnSynchro] = useState(false);
@@ -2768,7 +2813,8 @@ export function ComptabilitePage() {
       {synchro?.errors?.length > 0 && (
         <div className="erreur">Certaines données n'ont pas pu être reprises : {synchro.errors.join(', ')}.</div>
       )}
-      <BarreSections sections={ONGLETS} actif={onglet} onChoisir={setOnglet} />
+      <BandeauClotureCompta onChoisir={choisirOnglet} />
+      <BarreSections sections={ONGLETS} actif={onglet} onChoisir={choisirOnglet} />
       <Actif key={`${onglet}-${cle}`} />
     </div>
   );

@@ -1603,3 +1603,102 @@ a:not(.nav-lien):hover > svg,
     transform: none !important;
   }
 }
+
+/* ============================================================
+   Design SAGFA360 (21/10) — tailles fluides + mode sombre
+   Ajouté en fin de fichier : les règles qui suivent priment sur
+   les équivalents ci-dessus (même sélecteur, cascade naturelle).
+   Rien n'est supprimé plus haut ; le thème clair reste identique
+   tant que data-theme="dark" n'est pas posé sur <html>.
+   ============================================================ */
+
+:root {
+  /* Échelle fluide : s'ajuste en continu entre un écran de 360px (téléphone) et 1600px (grand écran). */
+  --fs-xs: clamp(10.5px, 0.62vw + 8.6px, 12px);
+  --fs-sm: clamp(12px, 0.7vw + 9.8px, 13.5px);
+  --fs-base: clamp(13px, 0.75vw + 10.6px, 14.5px);
+  --fs-md: clamp(14.5px, 0.9vw + 11.6px, 16.5px);
+  --fs-lg: clamp(18px, 1.4vw + 13.8px, 22px);
+  --fs-xl: clamp(21px, 2vw + 15px, 27px);
+  --fs-2xl: clamp(26px, 2.6vw + 17px, 34px);
+
+  --icon-sm: clamp(14px, 0.9vw + 10.8px, 16px);
+  --icon-md: clamp(16px, 1vw + 12px, 19px);
+  --icon-lg: clamp(20px, 1.4vw + 14px, 24px);
+
+  --space-xs: clamp(4px, 0.3vw + 2.8px, 6px);
+  --space-sm: clamp(8px, 0.5vw + 6px, 11px);
+  --space-md: clamp(14px, 0.9vw + 10px, 19px);
+  --space-lg: clamp(20px, 1.4vw + 14px, 28px);
+  --space-xl: clamp(28px, 2vw + 20px, 40px);
+
+  --largeur-sidebar-pleine: 230px;
+}
+
+html { font-size: var(--fs-base); }
+body { font-size: 1rem; }
+
+.contenu { padding: var(--space-lg) var(--space-xl); }
+.barre-haut { padding: var(--space-sm) var(--space-lg); gap: var(--space-md); }
+.entete-page { gap: var(--space-md); margin-bottom: var(--space-lg); }
+.entete-page h1 { font-size: var(--fs-2xl); }
+.ligne-stats { gap: var(--space-sm); margin-bottom: var(--space-xl); }
+.stat { padding: var(--space-sm) var(--space-md); }
+.stat-icone { width: var(--icon-lg); height: var(--icon-lg); }
+.nav-lien { font-size: var(--fs-sm); padding: var(--space-xs) var(--space-sm) var(--space-xs) var(--space-xs); gap: var(--space-sm); }
+.nav-lien .nav-icone,
+.nav-lien svg { width: var(--icon-sm); height: var(--icon-sm); }
+.carte-entite-icone,
+.carte-produit-icone,
+.carte-flottante-icone { width: var(--icon-lg); height: var(--icon-lg); }
+.onglet { font-size: var(--fs-sm); padding: var(--space-xs) var(--space-md); }
+.btn, button { font-size: var(--fs-sm); }
+.carte-entite, .carte-produit, .carte-activite, .carte-resume-membre, .carte-a-encaisser { padding: var(--space-md); }
+
+@media (max-width: 480px) {
+  .contenu { padding: var(--space-md) var(--space-md); }
+}
+
+/* ------------------------------------------------------------
+   Mode sombre — activé en posant data-theme="dark" sur <html>
+   (voir le bouton lune/soleil ajouté dans Topbar.jsx). Les
+   variables redéfinies ici sont celles déjà utilisées partout
+   dans ce fichier (--fond, --carte, --encre, --encre-douce,
+   --trait, --accent-clair) : aucune classe n'a besoin de changer.
+   ------------------------------------------------------------ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --fond: #11161f;
+  --carte: #1a2130;
+  --encre: #f1f3f8;
+  --encre-douce: #9aa3b5;
+  --trait: rgba(241, 243, 248, 0.12);
+  --accent-clair: rgba(47, 128, 237, 0.18);
+  --ombre-legere: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --ombre-flottante: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="dark"] body {
+  background-color: var(--fond);
+  color: var(--encre);
+}
+
+:root[data-theme="dark"] .zone-principale {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='44' height='44'%3E%3Cpath d='M22 3 L41 22 L22 41 L3 22 Z' fill='none' stroke='rgba(241,243,248,0.07)' stroke-width='1'/%3E%3C/svg%3E");
+}
+
+:root[data-theme="dark"] input,
+:root[data-theme="dark"] select,
+:root[data-theme="dark"] textarea {
+  background-color: #222b3d;
+  color: var(--encre);
+  border-color: var(--trait);
+}
+
+/* Bouton mode sombre, barre du haut */
+.barre-haut-theme {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 999px; border: 1px solid var(--trait);
+  background: var(--carte); color: var(--encre-douce); cursor: pointer;
+}
+.barre-haut-theme:hover { color: var(--encre); border-color: var(--accent, currentColor); }

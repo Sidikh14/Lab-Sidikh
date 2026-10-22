@@ -21,6 +21,7 @@ const { envoyerEtat, sommer } = require('../utils/payrollReports');
 const {
   preparerDocument, valeursDocument, identiteAEnregistrer, nomFichierDocument, produirePdf,
 } = require('../utils/hrDocuments');
+const { simulerSursalairePourNet } = require('../utils/payrollSimulate');
 
 const router = express.Router();
 router.use(authenticate);
@@ -386,22 +387,28 @@ router.get('/preview-month', GESTION, async (req, res) => {
     for (const e of employes) {
       const paye = await pool.query('SELECT 1 FROM salary_payments WHERE user_id = $1 AND month = $2', [e.id, mois]);
       const stocke = await pool.query(
-        `SELECT gross_salary, net_a_payer, ipres_patronal, css_patronal, cfce, cout_total_employeur, number
+        `SELECT gross_salary, net_a_payer, ipres_salarial, ipres_patronal, css_salarial, css_patronal, irpp, trimf, cfce, cout_total_employeur, number
          FROM payslips WHERE user_id = $1 AND month = $2 AND status <> 'remplace' ORDER BY version DESC LIMIT 1`,
         [e.id, mois]
       );
       const ligne = { id: e.id, name: e.full_name, paid: paye.rows.length > 0, hasPayslip: stocke.rows.length > 0, number: stocke.rows[0]?.number || null };
       try {
         if (ligne.paid && stocke.rows.length > 0) {
+          const s = stocke.rows[0];
           Object.assign(ligne, {
-            gross: Number(stocke.rows[0].gross_salary), net: Number(stocke.rows[0].net_a_payer),
-            employerCost: Number(stocke.rows[0].cout_total_employeur),
+            gross: Number(s.gross_salary), net: Number(s.net_a_payer), employerCost: Number(s.cout_total_employeur),
+            irpp: Number(s.irpp), trimf: Number(s.trimf), cfce: Number(s.cfce),
+            ipresTotal: Number(s.ipres_salarial) + Number(s.ipres_patronal), cssTotal: Number(s.css_salarial) + Number(s.css_patronal),
           });
         } else {
           const primes = await primesDuMois(pool, e.id, mois, e.recurring_bonuses);
           const manuelles = await retenuesManuellesDuMois(pool, e.id, mois);
           const { resultat } = await composerBulletin({ db: pool, employe: e, mois, reglagesMarchand, bonuses: primes, deductions: manuelles });
-          Object.assign(ligne, { gross: resultat.gross_salary, net: resultat.net_a_payer, employerCost: resultat.cout_total_employeur });
+          Object.assign(ligne, {
+            gross: resultat.gross_salary, net: resultat.net_a_payer, employerCost: resultat.cout_total_employeur,
+            irpp: resultat.irpp, trimf: resultat.trimf, cfce: resultat.cfce,
+            ipresTotal: resultat.ipres_salarial + resultat.ipres_patronal, cssTotal: resultat.css_salarial + resultat.css_patronal,
+          });
         }
       } catch (err) {
         if (!(err instanceof RetenueError)) throw err;
@@ -410,10 +417,50 @@ router.get('/preview-month', GESTION, async (req, res) => {
       lignes.push(ligne);
     }
     const totaux = lignes.reduce(
-      (t, l) => ({ gross: t.gross + (l.gross || 0), net: t.net + (l.net || 0), employerCost: t.employerCost + (l.employerCost || 0) }),
-      { gross: 0, net: 0, employerCost: 0 }
+      (t, l) => ({
+        gross: t.gross + (l.gross || 0), net: t.net + (l.net || 0), employerCost: t.employerCost + (l.employerCost || 0),
+        irpp: t.irpp + (l.irpp || 0), trimf: t.trimf + (l.trimf || 0), cfce: t.cfce + (l.cfce || 0),
+        ipresTotal: t.ipresTotal + (l.ipresTotal || 0), cssTotal: t.cssTotal + (l.cssTotal || 0),
+        generated: t.generated + (l.hasPayslip ? 1 : 0), paid: t.paid + (l.paid ? 1 : 0),
+      }),
+      { gross: 0, net: 0, employerCost: 0, irpp: 0, trimf: 0, cfce: 0, ipresTotal: 0, cssTotal: 0, generated: 0, paid: 0 }
     );
-    res.json({ month: mois, employees: lignes, totals: totaux });
+    res.json({ month: mois, employees: lignes, totals: totaux, count: lignes.length });
+  } catch (err) {
+    repondre(res, err);
+  }
+});
+
+// POST /payroll/:userId/simulate { month, netSouhaite } — « Simulation de bulletin » : trouve le
+// sursalaire (prime ajoutée) nécessaire pour atteindre le net voulu, à partir du salaire de base et
+// des primes déjà configurées de l'employé pour ce mois. Ne modifie rien, ne consulte pas le mois réel.
+router.post('/:userId/simulate', GESTION, async (req, res) => {
+  try {
+    const empId = await idEmploye(req, req.params.userId);
+    const mois = req.body.month || moisActuel();
+    verifierMois(mois);
+    const netSouhaite = Number(req.body.netSouhaite);
+    if (!(netSouhaite > 0)) return res.status(400).json({ error: 'Net souhaité invalide.' });
+
+    const { rows } = await pool.query(
+      `SELECT ${COLONNES_EMPLOYE} ${SQL_EMPLOYES_DU_MOIS} AND e.id = $3`,
+      [req.user.merchantId, mois, empId]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'Employé introuvable pour ce mois.' });
+    const e = rows[0];
+
+    const reglagesMarchand = await recupererOuCreerReglages(req.user.merchantId);
+    const primes = await primesDuMois(pool, e.id, mois, e.recurring_bonuses);
+
+    const { sursalaire, resultat } = simulerSursalairePourNet({
+      baseSalary: e.monthly_salary,
+      bonusesExistantes: primes,
+      settings: reglagesMarchand,
+      partsFiscales: e.parts_fiscales,
+      netSouhaite,
+    });
+
+    res.json({ month: mois, employeeId: e.id, employeeName: e.full_name, netSouhaite, sursalaire, resultat });
   } catch (err) {
     repondre(res, err);
   }

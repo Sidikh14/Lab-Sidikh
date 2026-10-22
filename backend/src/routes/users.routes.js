@@ -40,7 +40,7 @@ router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.full_name, u.email, u.role, COALESCE(u.roles, ARRAY[u.role::text]) AS roles, u.is_active, u.last_login_at, u.created_at,
-              u.visible_modules, u.warehouse_id, w.name AS warehouse_name, w.type AS warehouse_type
+              u.visible_modules, u.action_permissions, u.warehouse_id, w.name AS warehouse_name, w.type AS warehouse_type
        FROM users u
        LEFT JOIN warehouses w ON w.id = u.warehouse_id
        WHERE u.merchant_id = $1
@@ -363,9 +363,9 @@ router.patch('/:id/role', requireRole('manager'), async (req, res) => {
     }
 
     const result = await pool.query(
-      `UPDATE users SET role = $1, roles = $2, visible_modules = NULL
+      `UPDATE users SET role = $1, roles = $2, visible_modules = NULL, action_permissions = '{}'
        WHERE id = $3 AND merchant_id = $4 AND role != 'manager'
-       RETURNING id, full_name, role, roles, visible_modules`,
+       RETURNING id, full_name, role, roles, visible_modules, action_permissions`,
       [rolePrincipal(roles), roles, req.params.id, req.user.merchantId]
     );
     if (result.rows.length === 0) {

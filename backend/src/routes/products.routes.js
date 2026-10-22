@@ -2,7 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, requireAction } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, traitSeparateur } = require('../utils/pdfHelpers');
 const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
@@ -379,7 +379,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /products
-router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
+router.post('/', requireRole('manager', 'gerant'), requireAction('stock', 'creer'), async (req, res) => {
   const { name, sku, categoryId, unitPrice, costPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes, warehouseId: warehouseIdInput, lotNumber, expiryDate, isDish, description, ingredientsText, station, course, prepMinutes, available, trackStock } = req.body;
 
   if (!name) {
@@ -484,7 +484,7 @@ router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
 });
 
 // POST /products/:id/units — ajouter un conditionnement à un produit existant
-router.post('/:id/units', requireRole('manager', 'gerant'), async (req, res) => {
+router.post('/:id/units', requireRole('manager', 'gerant'), requireAction('stock', 'modifier'), async (req, res) => {
   const { label, price, quantityPerUnit } = req.body;
 
   if (!label || !Number(price) || !Number.isInteger(Number(quantityPerUnit)) || Number(quantityPerUnit) < 1) {
@@ -508,7 +508,7 @@ router.post('/:id/units', requireRole('manager', 'gerant'), async (req, res) => 
 });
 
 // DELETE /products/:id/units/:unitId
-router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), async (req, res) => {
+router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), requireAction('stock', 'modifier'), async (req, res) => {
   try {
     const result = await pool.query(
       `DELETE FROM product_units WHERE id = $1 AND product_id = $2 AND merchant_id = $3 RETURNING id`,
@@ -523,7 +523,7 @@ router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), async (req
 });
 
 // PATCH /products/:id — journalise un changement de prix, s'il y en a un
-router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
+router.patch('/:id', requireRole('manager', 'gerant'), requireAction('stock', 'modifier'), async (req, res) => {
   const { name, sku, categoryId, unitPrice, costPrice, quantityAlertThreshold, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes, isDish, description, ingredientsText, station, course, prepMinutes, available, trackStock } = req.body;
 
   try {
@@ -635,7 +635,7 @@ function lireImportation(body, { total, tva }) {
 
 // Une entrée peut être au comptant ou à crédit ; le crédit exige un
 // fournisseur enregistré (pour pouvoir suivre la dette) et un montant total.
-router.post('/:id/stock-movement', async (req, res) => {
+router.post('/:id/stock-movement', requireAction('stock', 'modifier'), async (req, res) => {
   const {
     movementType, quantity, reason, supplierId, movementDate,
     paymentMethod, totalCost, cashMethod, tvaAmount,
@@ -1008,7 +1008,7 @@ router.post('/purchases/preview', async (req, res) => {
 // (les autres ont total_cost = null) pour que les sommes déjà utilisées
 // ailleurs (dette fournisseur, solde de caisse) ne comptent ce montant
 // qu'une seule fois — cette appli ne suit pas de coût par article.
-router.post('/purchases', async (req, res) => {
+router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) => {
   const {
     items, supplierId, movementDate, paymentMethod, invoiceNumber, cashMethod, discountType, discountValue,
     advanceAmount, advanceCashMethod,
@@ -1325,7 +1325,7 @@ router.post('/purchases', async (req, res) => {
 });
 
 // DELETE /products/:id
-router.delete('/:id', requireRole('manager'), async (req, res) => {
+router.delete('/:id', requireRole('manager'), requireAction('stock', 'supprimer'), async (req, res) => {
   try {
     const avant = await pool.query(
       `SELECT name FROM products WHERE id = $1 AND merchant_id = $2`,
@@ -1383,7 +1383,7 @@ router.get('/:id/lots', async (req, res) => {
 // comptabilité en tire une charge « pertes sur stocks » (débit 6581, crédit 311).
 // Les lots (pharmacie) sont consommés du plus proche de la péremption au plus lointain.
 const MOTIFS_PERTE = { casse: 'Casse', peremption: 'Péremption', vol: 'Vol / démarque', autre: 'Autre perte' };
-router.post('/:id/losses', requireRole('manager', 'gerant'), async (req, res) => {
+router.post('/:id/losses', requireRole('manager', 'gerant'), requireAction('stock', 'supprimer'), async (req, res) => {
   const { quantity, reason, note, warehouseId: warehouseIdInput } = req.body;
   if (typeof quantity !== 'number' || !(quantity > 0)) {
     return res.status(400).json({ error: 'La quantité perdue doit être un nombre positif.' });
@@ -1471,7 +1471,7 @@ router.post('/:id/losses', requireRole('manager', 'gerant'), async (req, res) =>
 // la destruction que d'un lot déjà périmé (expiry_date < aujourd'hui),
 // pour éviter qu'un lot valide soit détruit par erreur au lieu d'être
 // simplement corrigé/vendu.
-router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), async (req, res) => {
+router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), requireAction('stock', 'supprimer'), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1659,7 +1659,7 @@ router.get('/equivalences', async (req, res) => {
 // POST /products/equivalences — lie deux produits comme équivalents
 // (princeps <-> générique). La relation est symétrique : peu importe quel
 // produit est envoyé en premier, elle sert dans les deux sens à la caisse.
-router.post('/equivalences', requireRole('manager', 'gerant'), async (req, res) => {
+router.post('/equivalences', requireRole('manager', 'gerant'), requireAction('stock', 'modifier'), async (req, res) => {
   const { productId1, productId2 } = req.body;
   if (!productId1 || !productId2 || productId1 === productId2) {
     return res.status(400).json({ error: 'Deux produits distincts sont requis.' });
@@ -1702,7 +1702,7 @@ router.post('/equivalences', requireRole('manager', 'gerant'), async (req, res) 
 });
 
 // DELETE /products/equivalences/:linkId
-router.delete('/equivalences/:linkId', requireRole('manager', 'gerant'), async (req, res) => {
+router.delete('/equivalences/:linkId', requireRole('manager', 'gerant'), requireAction('stock', 'modifier'), async (req, res) => {
   try {
     const result = await pool.query(
       `DELETE FROM product_equivalences WHERE id = $1 AND merchant_id = $2 RETURNING id`,

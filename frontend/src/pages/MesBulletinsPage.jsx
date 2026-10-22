@@ -46,6 +46,7 @@ export function MesBulletinsPage() {
         <div className="md-liste">
           {bulletins.map((b) => (
             <div key={b.month} className="md-ligne">
+              <div className="md-avatar">{b.month.slice(5, 7)}</div>
               <div className="md-bloc">
                 <p className="md-titre">{formatMois(b.month)}</p>
                 <p className="md-sous">N° {b.number}</p>

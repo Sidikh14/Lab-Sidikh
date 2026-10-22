@@ -4875,4 +4875,149 @@ router.delete('/reconciliations/:id', async (req, res) => {
   }
 });
 
+// ---------- Impôts directs (IS / minimum forfaitaire, acomptes, patente, contribution foncière) ----------
+// Suivi des échéances, montants et paiements. Aucun taux n'est codé en dur : le montant dû est saisi (ou
+// repris de la déclaration) ; aucune écriture comptable n'est générée par ce suivi.
+const KINDS_IMPOT_DIRECT = {
+  is: 'Impôt sur les sociétés / minimum forfaitaire', acompte: 'Acompte', patente: 'Patente', foncier: 'Contribution foncière',
+};
+
+router.get('/direct-taxes', async (req, res) => {
+  try {
+    const annee = String(req.query.year || new Date().getFullYear());
+    if (!/^\d{4}$/.test(annee)) return res.status(400).json({ error: 'Année invalide.' });
+    const r = await pool.query(
+      `SELECT id, kind, label, year, to_char(due_date, 'YYYY-MM-DD') AS due_date, amount_due, amount_paid,
+              to_char(paid_on, 'YYYY-MM-DD') AS paid_on, payment_method, note
+       FROM accounting_direct_taxes WHERE merchant_id = $1 AND year = $2 ORDER BY due_date, kind`,
+      [req.user.merchantId, annee]
+    );
+    res.json(r.rows.map((l) => ({ ...l, kindLabel: KINDS_IMPOT_DIRECT[l.kind] || l.kind })));
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la lecture des impôts directs.');
+  }
+});
+
+router.post('/direct-taxes', async (req, res) => {
+  const { kind, label, year, dueDate, amountDue, note } = req.body;
+  if (!KINDS_IMPOT_DIRECT[kind]) return res.status(400).json({ error: "Type d'impôt invalide." });
+  if (!/^\d{4}$/.test(String(year || ''))) return res.status(400).json({ error: 'Année invalide.' });
+  if (!dateOk(dueDate)) return res.status(400).json({ error: "Date d'échéance invalide." });
+  const montant = arrondi(amountDue);
+  if (!(montant >= 0)) return res.status(400).json({ error: 'Montant invalide.' });
+  try {
+    await pool.query(
+      `INSERT INTO accounting_direct_taxes (merchant_id, kind, label, year, due_date, amount_due, note, created_by)
+       VALUES ($1, $2, $3, $4, $5::date, $6, $7, $8)`,
+      [req.user.merchantId, kind, String(label || KINDS_IMPOT_DIRECT[kind]).trim().slice(0, 120), String(year), dueDate, montant,
+        note ? String(note).trim().slice(0, 300) : null, req.user.id]
+    );
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de l'enregistrement de l'impôt.");
+  }
+});
+
+// POST /accounting/direct-taxes/:id/pay { amount, paidOn, paymentMethod } — enregistre un paiement (cumulé).
+router.post('/direct-taxes/:id/pay', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Impôt introuvable.' });
+  const { amount, paidOn, paymentMethod } = req.body;
+  const montant = arrondi(amount);
+  if (!(montant > 0)) return res.status(400).json({ error: 'Montant invalide.' });
+  if (!dateOk(paidOn) || paidOn > aujourdhui()) return res.status(400).json({ error: 'Date de paiement invalide.' });
+  try {
+    const r = await pool.query(
+      `UPDATE accounting_direct_taxes SET amount_paid = amount_paid + $1, paid_on = $2::date, payment_method = $3
+       WHERE id = $4 AND merchant_id = $5 RETURNING id`,
+      [montant, paidOn, paymentMethod ? String(paymentMethod).slice(0, 30) : null, req.params.id, req.user.merchantId]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Impôt introuvable.' });
+    res.json({ ok: true });
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de l'enregistrement du paiement.");
+  }
+});
+
+router.delete('/direct-taxes/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Impôt introuvable.' });
+  try {
+    const r = await pool.query(`DELETE FROM accounting_direct_taxes WHERE id = $1 AND merchant_id = $2`, [req.params.id, req.user.merchantId]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Impôt introuvable.' });
+    res.json({ ok: true });
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de la suppression de l'impôt.");
+  }
+});
+
+// ---------- CGU (contribution globale unique) ----------
+// Barème modifiable : liste de tranches { jusqua (chiffre d'affaires, null = sans plafond), montant } enregistrée
+// par commerçant. Aucun chiffre n'est fourni par défaut : le barème est à renseigner (à faire valider par le comptable).
+router.get('/cgu', async (req, res) => {
+  try {
+    const annee = String(req.query.year || new Date().getFullYear());
+    if (!/^\d{4}$/.test(annee)) return res.status(400).json({ error: 'Année invalide.' });
+    const [bareme, histo] = await Promise.all([
+      pool.query(`SELECT bareme FROM accounting_cgu_settings WHERE merchant_id = $1`, [req.user.merchantId]),
+      pool.query(
+        `SELECT id, year, turnover, amount_due, amount_paid, to_char(paid_on, 'YYYY-MM-DD') AS paid_on
+         FROM accounting_cgu_declarations WHERE merchant_id = $1 ORDER BY year DESC LIMIT 20`,
+        [req.user.merchantId]
+      ),
+    ]);
+    res.json({ year: annee, bareme: bareme.rows[0]?.bareme || [], historique: histo.rows });
+  } catch (err) {
+    repondreErreur(res, err, 'Erreur lors de la lecture de la CGU.');
+  }
+});
+
+router.put('/cgu/bareme', async (req, res) => {
+  const tranches = req.body.bareme;
+  if (!Array.isArray(tranches) || tranches.length > 30) return res.status(400).json({ error: 'Barème invalide.' });
+  const propre = [];
+  for (const t of tranches) {
+    const jusqua = t.jusqua === null || t.jusqua === '' || t.jusqua === undefined ? null : Number(t.jusqua);
+    const montant = Number(t.montant);
+    if ((jusqua !== null && !(jusqua > 0)) || !(montant >= 0)) return res.status(400).json({ error: 'Tranche invalide.' });
+    propre.push({ jusqua, montant });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO accounting_cgu_settings (merchant_id, bareme) VALUES ($1, $2::jsonb)
+       ON CONFLICT (merchant_id) DO UPDATE SET bareme = EXCLUDED.bareme, updated_at = now()`,
+      [req.user.merchantId, JSON.stringify(propre)]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de l'enregistrement du barème.");
+  }
+});
+
+// POST /accounting/cgu/declarations { year, turnover, paidAmount?, paidOn? } — calcule le montant selon le barème
+// (première tranche dont le plafond couvre le chiffre d'affaires) et l'enregistre pour l'année.
+router.post('/cgu/declarations', async (req, res) => {
+  const { year, turnover, paidAmount, paidOn } = req.body;
+  if (!/^\d{4}$/.test(String(year || ''))) return res.status(400).json({ error: 'Année invalide.' });
+  const ca = arrondi(turnover);
+  if (!(ca >= 0)) return res.status(400).json({ error: "Chiffre d'affaires invalide." });
+  const paye = paidAmount ? arrondi(paidAmount) : 0;
+  if (paye && (!dateOk(paidOn) || paidOn > aujourdhui())) return res.status(400).json({ error: 'Date de paiement invalide.' });
+  try {
+    const s = await pool.query(`SELECT bareme FROM accounting_cgu_settings WHERE merchant_id = $1`, [req.user.merchantId]);
+    const bareme = s.rows[0]?.bareme || [];
+    if (bareme.length === 0) return res.status(400).json({ error: "Renseignez d'abord le barème de la CGU." });
+    const tranche = bareme.find((t) => t.jusqua === null || ca <= Number(t.jusqua));
+    if (!tranche) return res.status(400).json({ error: "Chiffre d'affaires hors du barème renseigné." });
+    await pool.query(
+      `INSERT INTO accounting_cgu_declarations (merchant_id, year, turnover, amount_due, amount_paid, paid_on, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6::date, $7)
+       ON CONFLICT (merchant_id, year) DO UPDATE SET turnover = EXCLUDED.turnover, amount_due = EXCLUDED.amount_due,
+         amount_paid = EXCLUDED.amount_paid, paid_on = EXCLUDED.paid_on`,
+      [req.user.merchantId, String(year), ca, Number(tranche.montant), paye, paye ? paidOn : null, req.user.id]
+    );
+    res.status(201).json({ ok: true, amountDue: Number(tranche.montant) });
+  } catch (err) {
+    repondreErreur(res, err, "Erreur lors de l'enregistrement de la CGU.");
+  }
+});
+
 module.exports = router;

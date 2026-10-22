@@ -15,6 +15,35 @@ function IconCloche() {
   );
 }
 
+function IconSoleil() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+      <circle cx="12" cy="12" r="4.2" />
+      <path d="M12 2.5v2.4M12 19.1v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7" />
+    </svg>
+  );
+}
+
+function IconLune() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z" />
+    </svg>
+  );
+}
+
+const CLE_THEME = 'themeSombre';
+function lireThemeSombre() {
+  try {
+    const v = localStorage.getItem(CLE_THEME);
+    if (v === '1') return true;
+    if (v === '0') return false;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  } catch {
+    return false;
+  }
+}
+
 function IconMenu() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -49,6 +78,18 @@ export function Topbar({ onOuvrirMenu }) {
   const location = useLocation();
   const [enRupture, setEnRupture] = useState(0);
   const [menuOuvert, setMenuOuvert] = useState(false);
+
+  // Mode sombre : posé sur <html data-theme="dark"> (voir le bloc ajouté dans app.css), mémorisé par la personne.
+  const [themeSombre, setThemeSombre] = useState(lireThemeSombre);
+  useEffect(() => {
+    document.documentElement.dataset.theme = themeSombre ? 'dark' : 'light';
+  }, [themeSombre]);
+  function basculerTheme() {
+    setThemeSombre((v) => {
+      try { localStorage.setItem(CLE_THEME, v ? '0' : '1'); } catch { /* mémorisation facultative */ }
+      return !v;
+    });
+  }
 
   const peutVoirAlertes = aRole(...ROLES_ALERTES);
 
@@ -269,6 +310,16 @@ export function Topbar({ onOuvrirMenu }) {
       </div>
 
       <div className="barre-haut-droite">
+        <button
+          type="button"
+          className="barre-haut-theme"
+          onClick={basculerTheme}
+          aria-label={themeSombre ? 'Passer au thème clair' : 'Passer au thème sombre'}
+          title={themeSombre ? 'Thème clair' : 'Thème sombre'}
+        >
+          {themeSombre ? <IconSoleil /> : <IconLune />}
+        </button>
+
         {peutGererPush && statutPush !== 'indisponible' && (
           <button
             type="button"

@@ -2,7 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, requireAction } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
 const { MOYENS_PAIEMENT, LABEL_METHODE, calculerMouvements, getSoldeActuel } = require('../utils/cashBalance');
@@ -312,7 +312,7 @@ router.get('/summary', requireRole('manager', 'gerant', 'caissier', 'vendeur_cai
 });
 
 // POST /cash/closings — clôture d'un ou plusieurs moyens de paiement pour un jour donné
-router.post('/closings', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
+router.post('/closings', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), requireAction('caisse', 'cloture'), async (req, res) => {
   const { date, entries, notes, warehouseId: warehouseIdInput } = req.body;
   if (!date || !Array.isArray(entries) || entries.length === 0) {
     return res.status(400).json({ error: 'Une date et au moins un moyen de paiement sont requis.' });
@@ -408,7 +408,7 @@ router.get('/closings', requireRole('manager', 'gerant'), async (req, res) => {
 });
 
 // POST /cash/expenses — enregistrer une sortie de caisse manuelle
-router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
+router.post('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), requireAction('caisse', 'sortie'), async (req, res) => {
   const { paymentMethod, amount, reason, expenseDate, warehouseId: warehouseIdInput, chargeAccount, brsBeneficiaryName, brsBeneficiaryRef, brsNature } = req.body;
   // TVA déductible facultative (montant TTC saisi, TVA incluse), seulement avec une nature de charge.
   const tvaSortie = Math.round(Number(req.body.tvaAmount) || 0);
@@ -537,7 +537,7 @@ router.get('/expenses', requireRole('manager', 'gerant', 'caissier', 'vendeur_ca
 // l'argent liquide remis en caisse après l'encaissement d'un chèque à la
 // banque). Symétrique de /cash/expenses, même table (cash_expenses),
 // distinguée par movement_type = 'entree'.
-router.post('/deposits', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
+router.post('/deposits', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), requireAction('caisse', 'entree'), async (req, res) => {
   const { paymentMethod, amount, reason, expenseDate, warehouseId: warehouseIdInput } = req.body;
   if (!MOYENS_PAIEMENT.includes(paymentMethod)) {
     return res.status(400).json({ error: 'Moyen de paiement invalide.' });

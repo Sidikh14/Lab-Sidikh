@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useModulesAccess } from '../hooks/useModulesAccess';
@@ -620,6 +620,273 @@ function ProfilTab() {
 }
 
 // Prochaine date limite de dépôt des déclarations mensuelles : le 15 du mois en cours, ou du mois suivant si passée.
+// État 1024 : rémunérations annuelles versées par salarié, calculées depuis les bulletins — reprend
+// exactement le rapport « Récapitulatif annuel » déjà construit côté Paie (même endpoint), présenté ici
+// dans la Fiscalité comme demandé. Aucun nouveau calcul : les chiffres sont ceux des bulletins validés.
+function Etat1024Tab() {
+  const [annee, setAnnee] = useState(String(new Date().getFullYear()));
+  const [donnees, setDonnees] = useState(null);
+  const [erreur, setErreur] = useState('');
+
+  useEffect(() => {
+    setErreur('');
+    api.getPayrollReport('annuel', { year: annee }).then(setDonnees).catch((e) => setErreur(e.message));
+  }, [annee]);
+
+  function exporter(format) {
+    api.openPayrollReport('annuel', { year: annee }, format).catch((e) => setErreur(e.message));
+  }
+
+  const lignes = donnees?.lignes || [];
+  const totaux = donnees?.totaux || {};
+
+  return (
+    <div>
+      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0, maxWidth: 640 }}>
+        Salaires et rémunérations versés sur l'année, par salarié, calculés depuis les bulletins de paie
+        validés — base du formulaire État 1024 de la DGID.
+      </p>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', marginBottom: 16, flexWrap: 'wrap' }}>
+        <div>
+          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Année</label>
+          <input type="number" value={annee} onChange={(e) => setAnnee(e.target.value)} style={{ width: 100 }} />
+        </div>
+        <button type="button" className="btn" onClick={() => exporter('pdf')}>Exporter en PDF</button>
+        <button type="button" className="btn" onClick={() => exporter('html')}>Aperçu</button>
+      </div>
+      {erreur && <div className="erreur">{erreur}</div>}
+      <table style={tableStyle}>
+        <thead>
+          <tr>
+            <th style={enteteTable}>Employé</th>
+            <th style={enteteTable}>Mois</th>
+            <th style={enteteTable}>Brut annuel</th>
+            <th style={enteteTable}>Cotisations sal.</th>
+            <th style={enteteTable}>IRPP + TRIMF</th>
+            <th style={enteteTable}>Net annuel</th>
+            <th style={enteteTable}>Coût employeur</th>
+          </tr>
+        </thead>
+        <tbody>
+          {lignes.map((l) => (
+            <tr key={l.nom}>
+              <td style={cellule}>{l.nom}</td>
+              <td style={droite}>{l.mois}</td>
+              <td style={droite}>{fmt(l.gross_salary)}</td>
+              <td style={droite}>{fmt(l.cotisations_sal)}</td>
+              <td style={droite}>{fmt(l.impots)}</td>
+              <td style={droite}>{fmt(l.net_a_payer)}</td>
+              <td style={droite}>{fmt(l.cout_total_employeur)}</td>
+            </tr>
+          ))}
+          {lignes.length === 0 && (
+            <tr><td style={cellule} colSpan={7}>Aucun bulletin validé pour {annee}.</td></tr>
+          )}
+        </tbody>
+        {lignes.length > 0 && (
+          <tfoot>
+            <tr style={{ fontWeight: 700 }}>
+              <td style={cellule}>TOTAL</td><td style={droite} />
+              <td style={droite}>{fmt(totaux.gross_salary)}</td>
+              <td style={droite}>{fmt(totaux.cotisations_sal)}</td>
+              <td style={droite}>{fmt(totaux.impots)}</td>
+              <td style={droite}>{fmt(totaux.net_a_payer)}</td>
+              <td style={droite}>{fmt(totaux.cout_total_employeur)}</td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  );
+}
+
+const NATURES_IMPOT = [
+  { value: 'is', label: 'IS / minimum forfaitaire' },
+  { value: 'acompte', label: 'Acompte' },
+  { value: 'patente', label: 'Patente' },
+  { value: 'foncier', label: 'Contribution foncière' },
+];
+
+// Impôts directs : échéances, montants, paiements. Le montant dû est saisi (aucun taux en dur) ; un rappel
+// « en retard » apparaît dès qu'une échéance est dépassée et non soldée.
+function ImpotsDirectsTab() {
+  const [annee, setAnnee] = useState(String(new Date().getFullYear()));
+  const [version, setVersion] = useState(0);
+  const [form, setForm] = useState({ kind: 'is', label: '', dueDate: aujourdhui(), amountDue: '' });
+  const [paiement, setPaiement] = useState(null); // { id, amount, paidOn }
+  const [erreur, setErreur] = useState('');
+  const [lignes, erreurChargement] = useDonnees(() => api.getDirectTaxes(annee), [annee, version]);
+
+  async function ajouter(e) {
+    e.preventDefault();
+    setErreur('');
+    try {
+      await api.createDirectTax({ ...form, year: annee, amountDue: Number(form.amountDue) });
+      setForm({ kind: form.kind, label: '', dueDate: aujourdhui(), amountDue: '' });
+      setVersion((v) => v + 1);
+    } catch (err) { setErreur(err.message); }
+  }
+  async function payer(e) {
+    e.preventDefault();
+    setErreur('');
+    try {
+      await api.payDirectTax(paiement.id, { amount: Number(paiement.amount), paidOn: paiement.paidOn });
+      setPaiement(null);
+      setVersion((v) => v + 1);
+    } catch (err) { setErreur(err.message); }
+  }
+  async function supprimer(id) {
+    if (!window.confirm('Supprimer cette échéance ?')) return;
+    try { await api.deleteDirectTax(id); setVersion((v) => v + 1); } catch (err) { setErreur(err.message); }
+  }
+
+  const aujourdhuiIso = aujourdhui();
+  return (
+    <div>
+      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0, maxWidth: 680 }}>
+        Suivi des impôts directs de l'année : IS / minimum forfaitaire, acomptes, patente, contribution foncière.
+        Aucun montant n'est calculé automatiquement : saisissez le montant de l'avis ou de la déclaration.
+      </p>
+      <div style={{ marginBottom: 14 }}>
+        <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Année</label>
+        <input type="number" value={annee} onChange={(e) => setAnnee(e.target.value)} style={{ width: 100 }} />
+      </div>
+      <form onSubmit={ajouter} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 18 }}>
+        <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
+          {NATURES_IMPOT.map((n) => <option key={n.value} value={n.value}>{n.label}</option>)}
+        </select>
+        <input placeholder="Libellé (facultatif)" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} />
+        <input type="date" value={form.dueDate} onChange={(e) => setForm({ ...form, dueDate: e.target.value })} required />
+        <input type="number" min="0" placeholder="Montant dû (FCFA)" value={form.amountDue} onChange={(e) => setForm({ ...form, amountDue: e.target.value })} required />
+        <button type="submit" className="btn btn-principal">Ajouter l'échéance</button>
+      </form>
+      {(erreur || erreurChargement) && <div className="erreur">{erreur || erreurChargement}</div>}
+      <table style={tableStyle}>
+        <thead>
+          <tr>
+            <th style={enteteTable}>Impôt</th><th style={enteteTable}>Échéance</th><th style={enteteTable}>Dû</th>
+            <th style={enteteTable}>Payé</th><th style={enteteTable}>Reste</th><th style={enteteTable}>Statut</th><th style={enteteTable} />
+          </tr>
+        </thead>
+        <tbody>
+          {(lignes || []).map((l) => {
+            const reste = Number(l.amount_due) - Number(l.amount_paid);
+            const enRetard = reste > 0 && l.due_date < aujourdhuiIso;
+            return (
+              <tr key={l.id}>
+                <td style={cellule}>{l.label || l.kindLabel}</td>
+                <td style={cellule}>{dateFr(l.due_date)}</td>
+                <td style={droite}>{fmt(l.amount_due)}</td>
+                <td style={droite}>{fmt(l.amount_paid)}</td>
+                <td style={droite}>{fmt(Math.max(reste, 0))}</td>
+                <td style={cellule}>{reste <= 0 ? 'Soldé' : enRetard ? 'En retard' : 'À payer'}</td>
+                <td style={cellule}>
+                  {reste > 0 && <button type="button" className="btn" style={boutonPetit} onClick={() => setPaiement({ id: l.id, amount: String(reste), paidOn: aujourdhui() })}>Payer</button>}{' '}
+                  <button type="button" className="btn" style={boutonPetit} onClick={() => supprimer(l.id)}>Supprimer</button>
+                </td>
+              </tr>
+            );
+          })}
+          {lignes && lignes.length === 0 && <tr><td style={cellule} colSpan={7}>Aucune échéance enregistrée pour {annee}.</td></tr>}
+        </tbody>
+      </table>
+      {paiement && (
+        <form onSubmit={payer} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 16 }}>
+          <input type="number" min="1" value={paiement.amount} onChange={(e) => setPaiement({ ...paiement, amount: e.target.value })} required />
+          <input type="date" value={paiement.paidOn} max={aujourdhui()} onChange={(e) => setPaiement({ ...paiement, paidOn: e.target.value })} required />
+          <button type="submit" className="btn btn-principal">Enregistrer le paiement</button>
+          <button type="button" className="btn" onClick={() => setPaiement(null)}>Annuler</button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+// CGU / Annuelle : le barème (tranches de chiffre d'affaires → montant) est modifiable et propre à chaque
+// commerçant. Il est vide au départ : à renseigner avec le comptable, aucun chiffre n'est inventé.
+function CguTab() {
+  const [annee, setAnnee] = useState(String(new Date().getFullYear()));
+  const [version, setVersion] = useState(0);
+  const [donnees, erreurChargement] = useDonnees(() => api.getCgu(annee), [annee, version]);
+  const [tranches, setTranches] = useState([]);
+  const [ca, setCa] = useState('');
+  const [paye, setPaye] = useState('');
+  const [erreur, setErreur] = useState('');
+  const [message, setMessage] = useState('');
+
+  useEffect(() => {
+    if (donnees) setTranches(donnees.bareme.map((t) => ({ jusqua: t.jusqua === null ? '' : String(t.jusqua), montant: String(t.montant) })));
+  }, [donnees]);
+
+  async function enregistrerBareme() {
+    setErreur(''); setMessage('');
+    try {
+      await api.saveCguBareme(tranches.map((t) => ({ jusqua: t.jusqua === '' ? null : Number(t.jusqua), montant: Number(t.montant) })));
+      setMessage('Barème enregistré.');
+      setVersion((v) => v + 1);
+    } catch (err) { setErreur(err.message); }
+  }
+  async function calculer(e) {
+    e.preventDefault();
+    setErreur(''); setMessage('');
+    try {
+      const r = await api.saveCguDeclaration({ year: annee, turnover: Number(ca), paidAmount: paye ? Number(paye) : undefined, paidOn: paye ? aujourdhui() : undefined });
+      setMessage(`CGU ${annee} : ${fmt(r.amountDue)} FCFA.`);
+      setVersion((v) => v + 1);
+    } catch (err) { setErreur(err.message); }
+  }
+
+  return (
+    <div>
+      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0, maxWidth: 680 }}>
+        Contribution globale unique : le montant se déduit du chiffre d'affaires de l'année selon le barème ci-dessous
+        (à faire valider par votre comptable).
+      </p>
+      {(erreur || erreurChargement) && <div className="erreur">{erreur || erreurChargement}</div>}
+      {message && <p style={{ color: '#137a4b' }}>{message}</p>}
+
+      <h3 style={{ fontSize: 14 }}>Barème</h3>
+      {tranches.map((t, i) => (
+        <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+          <input type="number" min="0" placeholder="CA jusqu'à (vide = sans plafond)" value={t.jusqua}
+            onChange={(e) => setTranches(tranches.map((x, j) => (j === i ? { ...x, jusqua: e.target.value } : x)))} />
+          <input type="number" min="0" placeholder="Montant de la CGU" value={t.montant}
+            onChange={(e) => setTranches(tranches.map((x, j) => (j === i ? { ...x, montant: e.target.value } : x)))} />
+          <button type="button" className="btn" style={boutonPetit} onClick={() => setTranches(tranches.filter((_, j) => j !== i))}>Retirer</button>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 22 }}>
+        <button type="button" className="btn" onClick={() => setTranches([...tranches, { jusqua: '', montant: '' }])}>Ajouter une tranche</button>
+        <button type="button" className="btn btn-principal" onClick={enregistrerBareme}>Enregistrer le barème</button>
+      </div>
+
+      <h3 style={{ fontSize: 14 }}>Calcul pour l'année</h3>
+      <form onSubmit={calculer} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 20 }}>
+        <input type="number" value={annee} onChange={(e) => setAnnee(e.target.value)} style={{ width: 100 }} />
+        <input type="number" min="0" placeholder="Chiffre d'affaires (FCFA)" value={ca} onChange={(e) => setCa(e.target.value)} required />
+        <input type="number" min="0" placeholder="Déjà payé (facultatif)" value={paye} onChange={(e) => setPaye(e.target.value)} />
+        <button type="submit" className="btn btn-principal">Calculer et enregistrer</button>
+      </form>
+
+      <h3 style={{ fontSize: 14 }}>Historique</h3>
+      <table style={tableStyle}>
+        <thead>
+          <tr><th style={enteteTable}>Année</th><th style={enteteTable}>Chiffre d'affaires</th><th style={enteteTable}>CGU due</th><th style={enteteTable}>Payée</th><th style={enteteTable}>Reste</th></tr>
+        </thead>
+        <tbody>
+          {(donnees?.historique || []).map((h) => (
+            <tr key={h.id}>
+              <td style={cellule}>{h.year}</td><td style={droite}>{fmt(h.turnover)}</td><td style={droite}>{fmt(h.amount_due)}</td>
+              <td style={droite}>{fmt(h.amount_paid)}</td><td style={droite}>{fmt(Math.max(Number(h.amount_due) - Number(h.amount_paid), 0))}</td>
+            </tr>
+          ))}
+          {donnees && donnees.historique.length === 0 && <tr><td style={cellule} colSpan={5}>Aucune CGU enregistrée.</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function prochaineEcheance() {
   const auj = new Date();
   const d = new Date(auj.getFullYear(), auj.getMonth(), 15);
@@ -679,7 +946,17 @@ function VueEnsembleFiscalite() {
 export function FiscalitePage() {
   const { user, aRole } = useAuth();
   const { loaded, accounting, fiscalite } = useModulesAccess();
-  const [onglet, setOnglet] = useState('vue');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [onglet, setOnglet] = useState(() => searchParams.get('onglet') || 'vue');
+  useEffect(() => {
+    const demande = searchParams.get('onglet');
+    if (demande && demande !== onglet) setOnglet(demande);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+  function choisirOnglet(id) {
+    setOnglet(id);
+    setSearchParams({ onglet: id }, { replace: true });
+  }
 
   // Manager, ou comptable (même cumulé avec un autre rôle, ex. gérant + comptable) ayant la page Fiscalité
   // dans ses permissions (rien de personnalisé = les trois pages de finance).
@@ -690,9 +967,12 @@ export function FiscalitePage() {
   if (!accounting || !fiscalite) return <PageModuleNonActive nom="Fiscalité" />;
 
   const onglets = [
-    { id: 'vue', label: "Vue d'ensemble" },
+    { id: 'vue', label: 'Échéancier' },
     { id: 'declarations', label: 'Déclarations' },
     { id: 'impots', label: 'Impôts' },
+    { id: 'etat1024', label: 'État 1024' },
+    { id: 'impotsdirects', label: 'Impôts directs' },
+    { id: 'cgu', label: 'CGU / Annuelle' },
     { id: 'profil', label: 'Profil fiscal' },
   ];
 
@@ -707,10 +987,13 @@ export function FiscalitePage() {
           </p>
         </div>
       </div>
-      <BarreSections sections={onglets} actif={onglet} onChoisir={setOnglet} />
+      <BarreSections sections={onglets} actif={onglet} onChoisir={choisirOnglet} />
       {onglet === 'vue' && <VueEnsembleFiscalite />}
       {onglet === 'declarations' && <DeclarationsTab />}
       {onglet === 'impots' && <ImpotsTab />}
+      {onglet === 'etat1024' && <Etat1024Tab />}
+      {onglet === 'impotsdirects' && <ImpotsDirectsTab />}
+      {onglet === 'cgu' && <CguTab />}
       {onglet === 'profil' && <ProfilTab />}
     </div>
   );

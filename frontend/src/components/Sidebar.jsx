@@ -325,34 +325,60 @@ function IconFermer() {
   );
 }
 
-// Accordéon : un seul groupe est déplié à la fois. Ouvrir l'un referme l'autre.
-const TITRES_GROUPES = { gestion: 'Gestion & Stock', finance: 'Finance & Admin' };
-const CHEMINS_FINANCE = ['/comptabilite', '/fiscalite', '/paie', '/entreprise', '/equipe'];
+// Accordéon à 3 sections (Pilotage / Métiers / Administration) : un seul groupe déplié à la fois.
+const TITRES_GROUPES = { pilotage: 'Pilotage', metiers: 'Métiers', administration: 'Administration' };
+const CHEMINS_ADMINISTRATION = ['/comptabilite', '/fiscalite', '/paie', '/entreprise', '/equipe'];
 const CLE_GROUPE = 'sidebarGroupeOuvert';
 
 function groupeDuChemin(pathname) {
-  if (CHEMINS_FINANCE.some((c) => pathname === c || pathname.startsWith(`${c}/`))) return 'finance';
-  if (pathname === '/') return null;
-  return 'gestion';
+  if (pathname === '/') return 'pilotage';
+  if (CHEMINS_ADMINISTRATION.some((c) => pathname === c || pathname.startsWith(`${c}/`))) return 'administration';
+  return 'metiers';
 }
 
 // Au chargement : le dernier choix mémorisé (« aucun » = tout est replié), sinon le groupe de la page affichée.
 function lireGroupeOuvert(pathname) {
   try {
     const v = localStorage.getItem(CLE_GROUPE);
-    if (v === 'aucun' || v === 'gestion' || v === 'finance') return v;
+    if (v === 'aucun' || v === 'pilotage' || v === 'metiers' || v === 'administration') return v;
   } catch {
     // lecture facultative
   }
-  return groupeDuChemin(pathname) || 'gestion';
+  return groupeDuChemin(pathname) || 'metiers';
 }
+
+// Pages Paie / Fiscalité / Comptabilité : sous-menus vers leurs onglets internes réels, via ?onglet=.
+// Les id d'onglet reprennent exactement ceux déjà utilisés dans PaiePage.jsx / FiscalitePage.jsx / ComptabilitePage.jsx.
+const SOUS_MENUS = {
+  '/paie': [
+    { onglet: 'cycle', label: 'Cycle du mois' },
+    { onglet: 'salaires', label: 'Salariés' },
+    { onglet: 'simulation', label: 'Simulation' },
+    { onglet: 'reglages-paie', label: 'Paramètres & barèmes' },
+  ],
+  '/fiscalite': [
+    { onglet: 'vue', label: 'Échéancier' },
+    { onglet: 'declarations', label: 'Déclarations' },
+    { onglet: 'etat1024', label: 'État 1024' },
+    { onglet: 'impotsdirects', label: 'Impôts directs' },
+    { onglet: 'cgu', label: 'CGU / Annuelle' },
+    { onglet: 'profil', label: 'Profil fiscal' },
+  ],
+  '/comptabilite': [
+    { onglet: 'vue', label: 'Tableau de bord' },
+    { onglet: 'journal', label: 'Journal' },
+    { onglet: 'grandlivre', label: 'Grand-livre' },
+    { onglet: 'plan', label: 'Plan comptable' },
+  ],
+};
+const CLE_SOUS_MENU = 'sidebarSousMenuOuvert';
 
 export function Sidebar({ ouvert = false, onFermer }) {
   const { user, merchant, logout, aRole, branding, brandingCharge } = useAuth();
   // Logo de l'entreprise : il remplace celui d'Amaterasu en haut de la barre, pour tous les secteurs.
   // Sans logo enregistré, le logo Amaterasu reste affiché.
   const logoClient = branding?.logo || null;
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const secteurConfig = getSecteurConfig(merchant?.sector);
   // Comptabilité, Fiscalité et Paie : visibles seulement si l'owner a donné l'accès.
   const { enabled: comptaOriginale } = useAccountingAccess();
@@ -431,11 +457,22 @@ export function Sidebar({ ouvert = false, onFermer }) {
   if (voitEquipe) liensFinance.push({ to: '/equipe', label: secteurConfig.libelleEquipe, icone: IconEquipe });
 
   const groupes = [
-    { id: 'gestion', liens: liensGestion },
-    { id: 'finance', liens: liensFinance },
+    { id: 'pilotage', liens: [{ to: '/', label: 'Tableau de bord', icone: IconDashboard, fin: true }] },
+    { id: 'metiers', liens: liensGestion },
+    { id: 'administration', liens: liensFinance },
   ].filter((g) => g.liens.length > 0);
 
   const [groupeOuvert, setGroupeOuvert] = useState(() => lireGroupeOuvert(pathname));
+  // Sous-menu Paie/Fiscalité/Comptabilité déplié (un seul à la fois), mémorisé comme le groupe principal.
+  const [sousMenuOuvert, setSousMenuOuvert] = useState(() => {
+    try {
+      const v = localStorage.getItem(CLE_SOUS_MENU);
+      if (v && SOUS_MENUS[v]) return v;
+    } catch {
+      // lecture facultative
+    }
+    return SOUS_MENUS[pathname] ? pathname : null;
+  });
   const [reduiteChoisie, setReduiteChoisie] = useState(lireReduite);
   // Le tiroir mobile (ouvert) reste toujours complet ; le rail ne concerne que la barre fixe.
   const rail = reduiteChoisie && !ouvert;
@@ -473,6 +510,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
   useEffect(() => {
     const g = groupeDuChemin(pathname);
     if (g) setGroupeOuvert(g);
+    if (SOUS_MENUS[pathname]) setSousMenuOuvert(pathname);
   }, [pathname]);
 
   // Clic sur un groupe : il s'ouvre (l'autre se referme) ; un second clic le referme.
@@ -495,8 +533,57 @@ export function Sidebar({ ouvert = false, onFermer }) {
     .join('')
     .toUpperCase();
 
+  function basculerSousMenu(chemin) {
+    setSousMenuOuvert((courant) => {
+      const suivant = courant === chemin ? null : chemin;
+      try {
+        if (suivant) localStorage.setItem(CLE_SOUS_MENU, suivant);
+        else localStorage.removeItem(CLE_SOUS_MENU);
+      } catch {
+        // mémorisation facultative
+      }
+      return suivant;
+    });
+  }
+
   const lienNav = (lien) => {
     const Icone = lien.icone;
+    const sousMenu = !lien.verrouille && SOUS_MENUS[lien.to];
+    if (sousMenu) {
+      const ouvertS = sousMenuOuvert === lien.to;
+      const onglet = new URLSearchParams(search).get('onglet');
+      return (
+        <li key={lien.to} style={{ listStyle: 'none' }}>
+          <button
+            type="button"
+            className={'nav-lien nav-groupe-bouton' + (pathname === lien.to ? ' actif' : '')}
+            style={{ width: '100%' }}
+            aria-expanded={ouvertS}
+            onClick={() => basculerSousMenu(lien.to)}
+            onMouseEnter={(e) => montrerInfobulle(e, lien.label)}
+            onMouseLeave={cacherInfobulle}
+          >
+            <Icone />
+            <span className="nav-texte">{lien.label}</span>
+          </button>
+          {ouvertS && (
+            <ul className="nav-liste nav-groupe-liens">
+              {sousMenu.map((s) => (
+                <li key={s.onglet}>
+                  <NavLink
+                    to={`${lien.to}?onglet=${s.onglet}`}
+                    className={() => 'nav-lien' + (pathname === lien.to && (onglet === s.onglet || (!onglet && s.onglet === sousMenu[0].onglet)) ? ' actif' : '')}
+                    onClick={onFermer}
+                  >
+                    <span className="nav-texte">{s.label}</span>
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          )}
+        </li>
+      );
+    }
     if (lien.verrouille) {
       return (
         <li key={lien.to}>
@@ -522,6 +609,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
       <li key={lien.to}>
         <NavLink
           to={lien.to}
+          end={lien.fin}
           className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')}
           onClick={onFermer}
           aria-label={lien.label}
@@ -569,16 +657,6 @@ export function Sidebar({ ouvert = false, onFermer }) {
         </div>
       </div>
       <ul className="nav-liste">
-        <li>
-          <NavLink
-            to="/" end className={({ isActive }) => 'nav-lien' + (isActive ? ' actif' : '')} onClick={onFermer}
-            aria-label="Tableau de bord"
-            onMouseEnter={(e) => montrerInfobulle(e, 'Tableau de bord')} onMouseLeave={cacherInfobulle}
-          >
-            <IconDashboard />
-            <span className="nav-texte">Tableau de bord</span>
-          </NavLink>
-        </li>
         {groupes.length === 1 && groupes[0].liens.map(lienNav)}
         {groupes.length > 1 && rail && groupes.map((g) => (
           <li key={g.id} style={{ listStyle: 'none' }}>
@@ -596,7 +674,7 @@ export function Sidebar({ ouvert = false, onFermer }) {
                 aria-expanded={ouvertG}
                 onClick={() => basculerGroupe(g.id)}
               >
-                {g.id === 'finance' ? <IconGroupeFinance /> : <IconGroupeGestion />}
+                {g.id === 'administration' ? <IconGroupeFinance /> : g.id === 'pilotage' ? <IconDashboard /> : <IconGroupeGestion />}
                 <span className="nav-texte">{TITRES_GROUPES[g.id]}</span>
               </button>
               {ouvertG && <ul className="nav-liste nav-groupe-liens">{g.liens.map(lienNav)}</ul>}

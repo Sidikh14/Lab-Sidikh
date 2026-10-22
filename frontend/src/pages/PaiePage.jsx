@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useModulesAccess } from '../hooks/useModulesAccess';
@@ -59,6 +59,7 @@ function IconCadenas() {
 }
 
 function SalairesTab() {
+  const [, setSearchParams] = useSearchParams();
   const [mois, setMois] = useState(null);
   const [moisMax, setMoisMax] = useState(null);
   const [employes, setEmployes] = useState([]);
@@ -632,6 +633,13 @@ function SalairesTab() {
 
                 <div className="actions-modale">
                   <button type="button" className="btn" onClick={() => setEmployeBulletin(null)}>Fermer</button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => { const id = employeBulletin.id; setEmployeBulletin(null); setSearchParams({ onglet: 'simulation', employe: id }); }}
+                  >
+                    Simuler
+                  </button>
                   {bulletinCalcule && (
                     <button
                       type="button"
@@ -929,12 +937,343 @@ function ReglagesPaieTab() {
   );
 }
 
+const ETAPES_CYCLE = [
+  { id: 'saisie', label: 'Saisie' },
+  { id: 'bulletins', label: 'Bulletins' },
+  { id: 'controle', label: 'Contrôle' },
+  { id: 'declarations', label: 'Déclarations' },
+  { id: 'virement', label: 'Virement' },
+  { id: 'ecritures', label: 'Écritures' },
+];
+
+// Bandeau « Cycle du mois » : reprend le design SAGFA360 (fond marine, étapes numérotées, cartes de
+// chiffres). Les statuts des 2 premières et de « Virement » sont calculés depuis /payroll/preview-month
+// (bulletins générés, salaires payés) ; « Contrôle », « Déclarations » et « Écritures » sont déduits de
+// l'avancement des étapes précédentes en attendant un lien direct avec la Fiscalité/Comptabilité.
+function CycleDuMoisTab({ onAllerSalaries }) {
+  const [mois, setMois] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [donnees, setDonnees] = useState(null);
+  const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState('');
+  const [filtre, setFiltre] = useState('');
+  const [enCours, setEnCours] = useState(false);
+
+  function charger() {
+    setChargement(true);
+    api.previewPayrollMonth(mois)
+      .then(setDonnees)
+      .catch((err) => setErreur(err.message))
+      .finally(() => setChargement(false));
+  }
+  useEffect(charger, [mois]);
+
+  async function validerToutLaPaie() {
+    if (!window.confirm('Générer les bulletins manquants de tous les salariés pour ce mois ?')) return;
+    setEnCours(true);
+    try {
+      await api.generateAllPayslips(mois);
+      charger();
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnCours(false);
+    }
+  }
+
+  if (chargement && !donnees) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
+  if (erreur) return <div className="erreur">{erreur}</div>;
+  if (!donnees) return null;
+
+  const { employees, totals, count } = donnees;
+  const genFraction = count > 0 ? totals.generated / count : 0;
+  const paidFraction = count > 0 ? totals.paid / count : 0;
+  const statutEtape = (id) => {
+    if (id === 'saisie') return 'fait';
+    if (id === 'bulletins') return genFraction >= 1 ? 'fait' : genFraction > 0 ? 'en_cours' : 'a_faire';
+    if (id === 'controle') return genFraction >= 1 ? 'fait' : 'a_faire';
+    if (id === 'virement') return paidFraction >= 1 ? 'fait' : paidFraction > 0 ? 'en_cours' : 'a_faire';
+    // Déclarations et Écritures : pas encore reliées à la Fiscalité/Comptabilité — proxy sur le virement.
+    return paidFraction >= 1 ? 'fait' : 'a_faire';
+  };
+  const CIBLE_ONGLET = { saisie: 'salaires', bulletins: 'salaires', controle: 'salaires', declarations: null, virement: 'salaires', ecritures: null };
+
+  const employesFiltres = employees.filter((e) => !filtre || e.name.toLowerCase().includes(filtre.toLowerCase()));
+  const aValider = count - totals.generated;
+
+  const cartes = [
+    { label: 'Masse salariale brute', valeur: totals.gross },
+    { label: 'Net à payer', valeur: totals.net },
+    { label: 'Charges patronales', valeur: totals.employerCost - totals.gross },
+    { label: 'Coût employeur', valeur: totals.employerCost },
+    { label: 'À reverser', valeur: totals.irpp + totals.trimf + totals.cfce + totals.ipresTotal + totals.cssTotal },
+    { label: 'Bulletins', valeur: `${totals.generated} / ${count}`, brut: true },
+  ];
+  const cartesCotisations = [
+    { label: 'IR', valeur: totals.irpp },
+    { label: 'TRIMF', valeur: totals.trimf },
+    { label: 'IPRES', valeur: totals.ipresTotal },
+    { label: 'CSS', valeur: totals.cssTotal },
+    { label: 'CFCE', valeur: totals.cfce },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
+        <input type="month" value={mois} onChange={(e) => setMois(e.target.value)} />
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="btn" onClick={onAllerSalaries}>Salariés</button>
+          <button type="button" className="btn" onClick={() => window.print()}>Imprimer tout</button>
+          <button type="button" className="btn btn-principal" disabled={enCours || aValider === 0} onClick={validerToutLaPaie}>
+            {enCours ? 'Génération…' : aValider > 0 ? `Valider toute la paie (${aValider})` : 'Tout est validé'}
+          </button>
+        </div>
+      </div>
+
+      <div
+        style={{
+          background: 'var(--marine, var(--encre))', color: '#fff', borderRadius: 'var(--rayon, 14px)',
+          padding: 'var(--space-md, 18px) var(--space-lg, 24px)', marginBottom: 'var(--space-lg, 24px)',
+        }}
+      >
+        <p style={{ margin: 0, fontSize: 11, letterSpacing: '0.06em', opacity: 0.75 }}>
+          CYCLE DU MOIS · {formatMois(mois)}
+        </p>
+        <p style={{ margin: '2px 0 14px', fontWeight: 700, fontSize: 'var(--fs-lg, 18px)' }}>
+          {aValider > 0 ? `${aValider} bulletin(s) à valider` : 'Tous les bulletins sont validés'}
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+          {ETAPES_CYCLE.map((etape, i) => {
+            const statut = statutEtape(etape.id);
+            const cible = CIBLE_ONGLET[etape.id];
+            return (
+              <button
+                key={etape.id}
+                type="button"
+                disabled={!cible}
+                onClick={() => cible && onAllerSalaries()}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none',
+                  color: statut === 'fait' ? '#fff' : 'rgba(255,255,255,0.55)', cursor: cible ? 'pointer' : 'default',
+                  fontSize: 'var(--fs-sm)', fontWeight: statut === 'fait' ? 700 : 500, padding: 0,
+                }}
+              >
+                <span
+                  style={{
+                    width: 18, height: 18, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 10.5, background: statut === 'fait' ? 'var(--soleil, #e8b400)' : statut === 'en_cours' ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)',
+                    color: statut === 'fait' ? 'var(--marine, #0f2747)' : '#fff',
+                  }}
+                >
+                  {i + 1}
+                </span>
+                {etape.label}
+                {i < ETAPES_CYCLE.length - 1 && <span style={{ opacity: 0.35, margin: '0 2px' }}>—</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="ligne-stats">
+        {cartes.map((c) => (
+          <div key={c.label} className="stat">
+            <p style={{ margin: '0 0 4px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--encre-douce)' }}>{c.label}</p>
+            <p style={{ margin: 0, fontWeight: 700, fontSize: 'var(--fs-md)', fontFamily: 'var(--font-chiffres)' }}>
+              {c.brut ? c.valeur : `${fmt(c.valeur)} F`}
+            </p>
+          </div>
+        ))}
+      </div>
+      <div className="ligne-stats">
+        {cartesCotisations.map((c) => (
+          <div key={c.label} className="stat">
+            <p style={{ margin: '0 0 4px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--encre-douce)' }}>{c.label}</p>
+            <p style={{ margin: 0, fontWeight: 700, fontSize: 'var(--fs-md)', fontFamily: 'var(--font-chiffres)' }}>{fmt(c.valeur)} F</p>
+          </div>
+        ))}
+      </div>
+
+      <input
+        placeholder="Filtrer les salariés…" value={filtre} onChange={(e) => setFiltre(e.target.value)}
+        style={{ width: '100%', marginBottom: 14 }}
+      />
+      <div className="grille-resume-equipe">
+        {employesFiltres.map((e) => (
+          <div key={e.id} className="carte-resume-membre">
+            <span className="avatar">{initialesMembre(e.name)}</span>
+            <div style={{ minWidth: 0 }}>
+              <p className="carte-resume-membre-nom">{e.name}</p>
+              <p className="carte-resume-membre-detail">
+                Brut {fmt(e.gross)} F
+                {e.error && <span style={{ color: '#b3261e' }}> · {e.error}</span>}
+              </p>
+            </div>
+            <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+              <p className="carte-resume-membre-total">{fmt(e.net)} F</p>
+              <span
+                style={{
+                  fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
+                  background: e.paid ? 'rgba(19,122,75,0.12)' : e.hasPayslip ? 'rgba(161,92,0,0.12)' : 'rgba(128,128,128,0.15)',
+                  color: e.paid ? '#137a4b' : e.hasPayslip ? '#a15c00' : 'var(--encre-douce)',
+                }}
+              >
+                {e.paid ? 'Payé' : e.hasPayslip ? 'À valider' : 'À générer'}
+              </span>
+            </div>
+          </div>
+        ))}
+        {employesFiltres.length === 0 && <p style={{ color: 'var(--encre-douce)' }}>Aucun salarié ne correspond.</p>}
+      </div>
+    </div>
+  );
+}
+
+function fmt(n) {
+  return Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 });
+}
+
+// « Simulation de bulletin » : net souhaité → sursalaire, sans toucher au mois réel (aucune écriture,
+// aucun bulletin créé). S'appuie sur le nouvel endpoint POST /payroll/:userId/simulate.
+function SimulationBulletinTab() {
+  const [employes, setEmployes] = useState([]);
+  const [mois, setMois] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [searchParams] = useSearchParams();
+  const [employeId, setEmployeId] = useState(() => searchParams.get('employe') || '');
+  const [netSouhaite, setNetSouhaite] = useState('');
+  const [resultat, setResultat] = useState(null);
+  const [erreur, setErreur] = useState('');
+  const [enCours, setEnCours] = useState(false);
+
+  useEffect(() => {
+    api.getEmployees('actif').then(setEmployes).catch(() => {});
+  }, []);
+
+  async function calculer(e) {
+    e.preventDefault();
+    setErreur('');
+    setResultat(null);
+    if (!employeId) { setErreur('Choisissez un salarié.'); return; }
+    setEnCours(true);
+    try {
+      const r = await api.simulatePayslip(employeId, mois, Number(netSouhaite));
+      setResultat(r);
+    } catch (err) {
+      setErreur(err.message);
+    } finally {
+      setEnCours(false);
+    }
+  }
+
+  const r = resultat?.resultat;
+
+  return (
+    <div>
+      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0, maxWidth: 640 }}>
+        Simule le sursalaire (prime) à ajouter pour atteindre un net à payer précis, à partir du salaire de
+        base et des primes déjà configurées du salarié ce mois-ci. Rien n'est enregistré tant que le
+        bulletin n'est pas généré depuis l'onglet Salariés.
+      </p>
+      <form onSubmit={calculer} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 20 }}>
+        <div>
+          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Salarié *</label>
+          <select value={employeId} onChange={(e) => setEmployeId(e.target.value)} required>
+            <option value="">Choisir un salarié</option>
+            {employes.map((e) => <option key={e.id} value={e.id}>{e.full_name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Mois</label>
+          <input type="month" value={mois} onChange={(e) => setMois(e.target.value)} />
+        </div>
+        <div>
+          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Net à payer souhaité (FCFA) *</label>
+          <input type="number" min="0" value={netSouhaite} onChange={(e) => setNetSouhaite(e.target.value)} required />
+        </div>
+        <button type="submit" className="btn btn-principal" disabled={enCours}>
+          {enCours ? 'Calcul…' : 'Calculer le sursalaire'}
+        </button>
+        {r && (
+          <button type="button" className="btn" onClick={() => window.print()}>Imprimer la simulation</button>
+        )}
+      </form>
+      {erreur && <div className="erreur">{erreur}</div>}
+      {r && resultat.sursalaire === 0 && r.net_a_payer > Number(netSouhaite) && (
+        <p style={{ color: '#a15c00', fontSize: 13 }}>
+          Le net actuel ({fmt(r.net_a_payer)} FCFA) dépasse déjà le net souhaité : aucun sursalaire n'est nécessaire.
+        </p>
+      )}
+
+      {r && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 1fr) 280px', gap: 20 }}>
+          <div className="carte-activite">
+            <p className="carte-activite-titre">Gains</p>
+            <table style={{ width: '100%', fontSize: 13.5, borderCollapse: 'collapse' }}>
+              <tbody>
+                <tr><td style={{ padding: '6px 0' }}>Salaire de base</td><td style={{ textAlign: 'right' }}>{fmt(r.base_salary)}</td></tr>
+                {r.bonuses_detail.map((b, i) => (
+                  <tr key={i}><td style={{ padding: '6px 0' }}>{b.label}</td><td style={{ textAlign: 'right' }}>{fmt(b.amount)}</td></tr>
+                ))}
+                <tr style={{ borderTop: '1px solid var(--trait)', fontWeight: 700 }}>
+                  <td style={{ padding: '8px 0' }}>Total salaire brut</td><td style={{ textAlign: 'right' }}>{fmt(r.gross_salary)} FCFA</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="carte-activite-titre" style={{ marginTop: 18 }}>Retenues salariales</p>
+            <table style={{ width: '100%', fontSize: 13.5, borderCollapse: 'collapse' }}>
+              <tbody>
+                <tr><td style={{ padding: '6px 0' }}>Impôt sur le revenu (IR)</td><td style={{ textAlign: 'right' }}>−{fmt(r.irpp)}</td></tr>
+                <tr><td style={{ padding: '6px 0' }}>IPRES — Régime général</td><td style={{ textAlign: 'right' }}>−{fmt(r.ipres_salarial)}</td></tr>
+                <tr><td style={{ padding: '6px 0' }}>CSS</td><td style={{ textAlign: 'right' }}>−{fmt(r.css_salarial)}</td></tr>
+                <tr><td style={{ padding: '6px 0' }}>TRIMF</td><td style={{ textAlign: 'right' }}>−{fmt(r.trimf)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div style={{ background: 'var(--marine, var(--encre))', color: '#fff', borderRadius: 'var(--rayon, 14px)', padding: 20, height: 'fit-content' }}>
+            <p style={{ margin: 0, fontSize: 11, letterSpacing: '0.06em', opacity: 0.75 }}>NET À PAYER SIMULÉ</p>
+            <p style={{ margin: '4px 0 2px', fontWeight: 700, fontSize: 'var(--fs-2xl)', fontFamily: 'var(--font-chiffres)' }}>{fmt(r.net_a_payer)}</p>
+            <p style={{ margin: '0 0 16px', fontSize: 12, opacity: 0.75 }}>FCFA · {formatMois(mois)}</p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+              <span>Brut</span><span>{fmt(r.gross_salary)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0' }}>
+              <span>Retenues salariales</span><span>−{fmt(r.irpp + r.ipres_salarial + r.css_salarial + r.trimf)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0' }}>
+              <span>Charges patronales</span><span>{fmt(r.ipres_patronal + r.css_patronal + r.cfce)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0', fontWeight: 700 }}>
+              <span>Coût employeur</span><span>{fmt(r.cout_total_employeur)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Gestion de la paie : séparée de la page Équipe. Réservée au manager et au comptable, et seulement si
 // l'owner a activé le module Paie pour ce commerçant.
 export function PaiePage() {
   const { user, aRole } = useAuth();
   const { loaded, payroll, accounting, fiscalite } = useModulesAccess();
-  const [onglet, setOnglet] = useState('salaires');
+  const [searchParams, setSearchParams] = useSearchParams();
+  // L'onglet d'ouverture suit ?onglet=... (sidebar, sous-menu Paie) ; « cycle » reste la page d'accueil par défaut.
+  const [onglet, setOnglet] = useState(() => searchParams.get('onglet') || 'cycle');
+  useEffect(() => {
+    const demande = searchParams.get('onglet');
+    if (demande && demande !== onglet) setOnglet(demande);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+  function choisirOnglet(id) {
+    setOnglet(id);
+    setSearchParams({ onglet: id }, { replace: true });
+  }
   // Le paiement des cotisations s'appuie sur la comptabilité et le module Fiscalité (activés par l'owner).
   const cotisationsDisponibles = Boolean(accounting && fiscalite);
 
@@ -950,26 +1289,34 @@ export function PaiePage() {
       </div>
 
       <div className="onglets" style={{ marginBottom: 20 }}>
-        <button className={onglet === 'salaires' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('salaires')}>
-          Salaires
+        <button className={onglet === 'cycle' ? 'onglet actif' : 'onglet'} onClick={() => choisirOnglet('cycle')}>
+          Cycle du mois
         </button>
-        <button className={onglet === 'employes' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('employes')}>Employés</button>
-        <button className={onglet === 'absences' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('absences')}>Absences et heures</button>
-        <button className={onglet === 'avances' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('avances')}>Avances</button>
-        <button className={onglet === 'documents' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('documents')}>Documents RH</button>
-        <button className={onglet === 'etats' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('etats')}>États</button>
-        <button className={onglet === 'reglages-paie' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('reglages-paie')}>
+        <button className={onglet === 'salaires' ? 'onglet actif' : 'onglet'} onClick={() => choisirOnglet('salaires')}>
+          Salariés
+        </button>
+        <button className={onglet === 'simulation' ? 'onglet actif' : 'onglet'} onClick={() => choisirOnglet('simulation')}>
+          Simulation
+        </button>
+        <button className={onglet === 'employes' ? 'onglet actif' : 'onglet'} onClick={() => choisirOnglet('employes')}>Employés</button>
+        <button className={onglet === 'absences' ? 'onglet actif' : 'onglet'} onClick={() => choisirOnglet('absences')}>Absences et heures</button>
+        <button className={onglet === 'avances' ? 'onglet actif' : 'onglet'} onClick={() => choisirOnglet('avances')}>Avances</button>
+        <button className={onglet === 'documents' ? 'onglet actif' : 'onglet'} onClick={() => choisirOnglet('documents')}>Documents RH</button>
+        <button className={onglet === 'etats' ? 'onglet actif' : 'onglet'} onClick={() => choisirOnglet('etats')}>États</button>
+        <button className={onglet === 'reglages-paie' ? 'onglet actif' : 'onglet'} onClick={() => choisirOnglet('reglages-paie')}>
           Réglages paie
         </button>
         {cotisationsDisponibles && (
-          <button className={onglet === 'cotisations' ? 'onglet actif' : 'onglet'} onClick={() => setOnglet('cotisations')}>
+          <button className={onglet === 'cotisations' ? 'onglet actif' : 'onglet'} onClick={() => choisirOnglet('cotisations')}>
             Cotisations CSS / IPRES
           </button>
         )}
       </div>
 
       <AlertesPaie />
+      {onglet === 'cycle' && <CycleDuMoisTab onAllerSalaries={() => choisirOnglet('salaires')} />}
       {onglet === 'salaires' && <SalairesTab />}
+      {onglet === 'simulation' && <SimulationBulletinTab />}
       {onglet === 'employes' && <EmployesTab />}
       {onglet === 'absences' && <AbsencesHeuresTab />}
       {onglet === 'avances' && <AvancesTab />}
