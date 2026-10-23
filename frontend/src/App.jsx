@@ -132,6 +132,8 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          {/* Adresse inconnue (ancien lien, page supprimée) : retour à l'accueil au lieu d'une page blanche. */}
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

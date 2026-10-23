@@ -631,7 +631,7 @@ function Etat1024Tab() {
 
   useEffect(() => {
     setErreur('');
-    api.getPayrollReport('annuel', { year: annee }).then(setDonnees).catch((e) => setErreur(e.message));
+    Promise.resolve().then(() => api.getPayrollReport('annuel', { year: annee })).then(setDonnees).catch((e) => setErreur(e.message));
   }, [annee]);
 
   function exporter(format) {
@@ -716,7 +716,7 @@ function ImpotsDirectsTab() {
   const [form, setForm] = useState({ kind: 'is', label: '', dueDate: aujourdhui(), amountDue: '' });
   const [paiement, setPaiement] = useState(null); // { id, amount, paidOn }
   const [erreur, setErreur] = useState('');
-  const [lignes, erreurChargement] = useDonnees(() => api.getDirectTaxes(annee), [annee, version]);
+  const [lignes, erreurChargement] = useDonnees(async () => api.getDirectTaxes(annee), [annee, version]);
 
   async function ajouter(e) {
     e.preventDefault();
@@ -808,7 +808,7 @@ function ImpotsDirectsTab() {
 function CguTab() {
   const [annee, setAnnee] = useState(String(new Date().getFullYear()));
   const [version, setVersion] = useState(0);
-  const [donnees, erreurChargement] = useDonnees(() => api.getCgu(annee), [annee, version]);
+  const [donnees, erreurChargement] = useDonnees(async () => api.getCgu(annee), [annee, version]);
   const [tranches, setTranches] = useState([]);
   const [ca, setCa] = useState('');
   const [paye, setPaye] = useState('');

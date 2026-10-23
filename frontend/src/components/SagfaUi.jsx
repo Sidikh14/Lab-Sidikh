@@ -2,10 +2,11 @@
 // champs modernes). Le style vit dans app.css (classes « sg-… »).
 
 export function IconeFeuille({ ton = 'feuille' }) {
-  const couleurs = { feuille: '#2f6b5c', or: '#c7a45f', marine: '#12343b' };
+  // Couleurs prises dans la charte du commerçant (variables CSS), pas figées.
+  const couleurs = { feuille: 'var(--accent)', or: 'var(--soleil)', marine: 'var(--marine)' };
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M2 14C2 7 6 2.5 14 2c0 7-3.5 11.5-10 11.5-.7 0-1.3 0-2 .5z" fill={couleurs[ton] || couleurs.feuille} />
+      <path d="M2 14C2 7 6 2.5 14 2c0 7-3.5 11.5-10 11.5-.7 0-1.3 0-2 .5z" style={{ fill: couleurs[ton] || couleurs.feuille }} />
     </svg>
   );
 }

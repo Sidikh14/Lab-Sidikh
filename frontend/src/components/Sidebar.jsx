@@ -415,9 +415,12 @@ export function Sidebar({ ouvert = false, onFermer }) {
   if (voitEquipe) {
     liensGestion.push({ to: '/boutiques', label: estManager ? `${secteurConfig.libelleBoutique}s` : 'Transferts', icone: IconBoutique });
   }
-  // Visible pour tous les rôles, y compris ceux sans accès à la page Paie (gestion) :
-  // chaque salarié peut retrouver et télécharger ses propres bulletins une fois payés.
-  liensGestion.push({ to: '/mes-bulletins', label: 'Mes bulletins', icone: IconSalaires });
+  // Pour manager/gérant, le lien "/equipe" est déjà poussé plus bas (liensFinance) et ouvre la
+  // page Équipe. Pour les autres rôles, la même page /equipe affiche automatiquement et
+  // uniquement l'onglet "Mes bulletins" (TeamPage.jsx) : on leur donne juste un lien pour l'atteindre.
+  if (!voitEquipe) {
+    liensGestion.push({ to: '/equipe', label: 'Mes bulletins', icone: IconSalaires });
+  }
 
   const liensFinance = [];
   // Le manager voit toujours Comptabilité, Fiscalité et Paie ; sans activation par l'owner, le clic

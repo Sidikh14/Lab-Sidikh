@@ -7,6 +7,7 @@ import { ActiviteListe, initiales, couleurPour } from '../components/ActiviteLis
 import { ModaleEncaissement } from '../components/ModaleEncaissement';
 import { useLiveEvent } from '../offline/liveEvents';
 import { RappelsFiscaux } from '../components/RappelsFiscaux';
+import { ChampListe } from '../components/SagfaUi';
 
 // Quantités : la base renvoie NUMERIC(12,3) sous forme de texte ("12.000").
 // On retire les décimales inutiles ("12"), et on garde une vraie décimale pour
@@ -139,7 +140,7 @@ function abreger(n) {
 // Styles du tableau de bord (préfixe db-). Ils s'appuient sur les variables
 // CSS existantes (--accent, --trait, --surface, --encre-douce, --danger…).
 const CSS_DASHBOARD = `
-.db-salut{margin:-6px 0 18px;font-size:14px;color:var(--encre-douce)}
+.db-salut{margin:-6px 0 18px;font-size:var(--fs-md);color:var(--encre-douce)}
 .db-actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
 .db-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:20px}
 .db-kpi{display:flex;flex-direction:column;gap:4px;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:14px;padding:12px 14px;transition:border-color .15s,box-shadow .15s}
@@ -147,93 +148,93 @@ const CSS_DASHBOARD = `
 .db-kpi--clic:hover{border-color:var(--accent);box-shadow:0 6px 18px rgba(17,24,39,.08)}
 .db-kpi-icone{display:flex;align-items:center;justify-content:center;width:30px;height:30px;margin-bottom:6px;border-radius:9px;background:#eef2ff;background:var(--accent-clair,#eef2ff);color:var(--accent)}
 .db-kpi--alerte .db-kpi-icone{background:var(--danger-clair,#fef2f2);color:var(--danger,#b91c1c)}
-.db-kpi-label{margin:0;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--encre-douce)}
-.db-kpi-valeur{margin:0;font-size:20px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
-.db-kpi-valeur small{font-size:12px;font-weight:500;color:var(--encre-douce)}
-.db-kpi-sous{margin:0;font-size:11px;color:var(--encre-douce)}
+.db-kpi-label{margin:0;font-size:var(--fs-xs);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--encre-douce)}
+.db-kpi-valeur{margin:0;font-size:var(--fs-xl);font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.db-kpi-valeur small{font-size:var(--fs-sm);font-weight:500;color:var(--encre-douce)}
+.db-kpi-sous{margin:0;font-size:var(--fs-xs);color:var(--encre-douce)}
 .db-kpi--hero{background:var(--accent);border-color:var(--accent);color:#fff}
 .db-kpi--hero .db-kpi-icone{background:rgba(255,255,255,.18);color:#fff}
 .db-kpi--hero .db-kpi-label,.db-kpi--hero .db-kpi-sous,.db-kpi--hero .db-kpi-valeur small{color:rgba(255,255,255,.8)}
 .db-grille{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:16px;margin-bottom:24px}
 .db-carte{background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:16px;padding:18px}
 .db-carte-tete{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:14px}
-.db-carte-tete h2{margin:0;font-size:15px}
-.db-carte-tete span{font-size:13px;font-weight:600;color:var(--encre-douce);font-variant-numeric:tabular-nums}
-.db-lien{padding:0;border:none;background:none;color:var(--accent);font-size:13px;cursor:pointer}
-.db-chart-resume{margin:-4px 0 10px;font-size:12px;color:var(--encre-douce)}
+.db-carte-tete h2{margin:0;font-size:var(--fs-md)}
+.db-carte-tete span{font-size:var(--fs-sm);font-weight:600;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.db-lien{padding:0;border:none;background:none;color:var(--accent);font-size:var(--fs-sm);cursor:pointer}
+.db-chart-resume{margin:-4px 0 10px;font-size:var(--fs-sm);color:var(--encre-douce)}
 .db-chart-resume strong{font-weight:700}
 .db-chart-up{color:var(--vif,#157347)}
 .db-chart-down{color:var(--danger,#b42318)}
 .db-chart{position:relative;height:196px;margin-top:6px}
 .db-chart-plot{position:absolute;left:40px;right:0;bottom:26px;height:140px}
 .db-chart-ligne{position:absolute;left:0;right:0;height:0;border-top:1px solid var(--trait,#e5e7eb)}
-.db-chart-ligne span{position:absolute;left:-40px;width:34px;transform:translateY(-50%);text-align:right;font-size:10.5px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.db-chart-ligne span{position:absolute;left:-40px;width:34px;transform:translateY(-50%);text-align:right;font-size:var(--fs-xs);color:var(--encre-douce);font-variant-numeric:tabular-nums}
 .db-chart-moy{position:absolute;left:0;right:0;height:0;border-top:1.5px dashed var(--soleil,#f2a81d);z-index:2;pointer-events:none}
-.db-chart-moy span{position:absolute;right:0;bottom:3px;padding:1px 6px;border-radius:6px;font-size:10.5px;font-weight:600;background:var(--surface,#fff);color:var(--encre-douce)}
+.db-chart-moy span{position:absolute;right:0;bottom:3px;padding:1px 6px;border-radius:6px;font-size:var(--fs-xs);font-weight:600;background:var(--surface,#fff);color:var(--encre-douce)}
 .db-histo{position:absolute;left:40px;right:0;top:0;bottom:0;display:flex;align-items:flex-end;gap:10px}
 .db-histo-col{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;cursor:default;outline:none}
 .db-histo-barre{width:100%;max-width:44px;border-radius:7px 7px 3px 3px;background:color-mix(in srgb,var(--accent) 40%,transparent);transition:height .3s,background .15s}
 .db-histo-col--vide .db-histo-barre{background:color-mix(in srgb,var(--accent) 14%,transparent)}
 .db-histo-col:hover .db-histo-barre,.db-histo-col:focus-visible .db-histo-barre{background:color-mix(in srgb,var(--accent) 65%,transparent)}
 .db-histo-col--jour .db-histo-barre,.db-histo-col--jour:hover .db-histo-barre{background:var(--accent)}
-.db-histo-val{height:18px;line-height:18px;font-size:11px;white-space:nowrap;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.db-histo-val{height:18px;line-height:18px;font-size:var(--fs-xs);white-space:nowrap;color:var(--encre-douce);font-variant-numeric:tabular-nums}
 .db-histo-col--jour .db-histo-val{color:var(--accent);font-weight:700}
-.db-histo-label{height:26px;line-height:26px;font-size:12px;text-transform:capitalize;color:var(--encre-douce)}
+.db-histo-label{height:26px;line-height:26px;font-size:var(--fs-sm);text-transform:capitalize;color:var(--encre-douce)}
 .db-histo-col--jour .db-histo-label{color:var(--accent);font-weight:700}
-.db-chart-tip{position:absolute;z-index:5;transform:translateX(-50%);min-width:140px;padding:8px 10px;border-radius:10px;background:var(--encre,#0f2747);color:#fff;font-size:12px;line-height:1.35;box-shadow:0 8px 20px rgba(0,0,0,.25);pointer-events:none;text-align:left}
-.db-chart-tip strong{display:block;font-size:12px;text-transform:capitalize}
+.db-chart-tip{position:absolute;z-index:5;transform:translateX(-50%);min-width:140px;padding:8px 10px;border-radius:10px;background:var(--encre,#0f2747);color:#fff;font-size:var(--fs-sm);line-height:1.35;box-shadow:0 8px 20px rgba(0,0,0,.25);pointer-events:none;text-align:left}
+.db-chart-tip strong{display:block;font-size:var(--fs-sm);text-transform:capitalize}
 .db-chart-tip span{display:block;opacity:.85}
-.db-chart-vide{position:absolute;left:40px;right:0;top:0;bottom:26px;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--encre-douce);pointer-events:none}
+.db-chart-vide{position:absolute;left:40px;right:0;top:0;bottom:26px;display:flex;align-items:center;justify-content:center;font-size:var(--fs-sm);color:var(--encre-douce);pointer-events:none}
 .db-cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start;margin-bottom:24px}
 .db-puces{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:6px}
-.db-puce{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--trait,#e5e7eb);border-radius:999px;background:var(--surface,#fff);color:var(--encre-douce);font-size:12px;cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.db-puce{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid var(--trait,#e5e7eb);border-radius:999px;background:var(--surface,#fff);color:var(--encre-douce);font-size:var(--fs-sm);cursor:pointer;transition:background .15s,color .15s,border-color .15s}
 .db-puce:hover{border-color:var(--accent)}
 .db-puce.actif{background:var(--accent);border-color:var(--accent);color:#fff}
 .db-puce span{opacity:.75;font-variant-numeric:tabular-nums}
-.db-titre-section{margin:14px 0 4px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--encre-douce)}
+.db-titre-section{margin:14px 0 4px;font-size:var(--fs-xs);font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--encre-douce)}
 .db-ligne{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--trait,#e5e7eb)}
 .db-ligne:first-of-type{border-top:none}
 .db-titre-section + .db-ligne{border-top:none}
-.db-pastille{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:38px;height:38px;border-radius:11px;font-size:14px;font-weight:700;background:#eef2ff;background:var(--accent-clair,#eef2ff);color:var(--accent)}
+.db-pastille{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:38px;height:38px;border-radius:11px;font-size:var(--fs-md);font-weight:700;background:#eef2ff;background:var(--accent-clair,#eef2ff);color:var(--accent)}
 .db-pastille--danger{background:var(--danger-clair,#fef2f2);color:var(--danger,#b91c1c)}
 .db-ligne-droite{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
-.db-montant-ligne{margin:0;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+.db-montant-ligne{margin:0;font-size:var(--fs-md);font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
 .db-table{background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:14px;overflow-x:auto}
 .db-table table{width:100%;margin:0 !important;border-collapse:collapse}
-.db-table th{padding:10px 14px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;text-align:left;color:var(--encre-douce);background:var(--fond,#f9fafb);border-bottom:1px solid var(--trait,#e5e7eb)}
+.db-table th{padding:10px 14px;font-size:var(--fs-xs);font-weight:600;letter-spacing:.06em;text-transform:uppercase;text-align:left;color:var(--encre-douce);background:var(--fond,#f9fafb);border-bottom:1px solid var(--trait,#e5e7eb)}
 .db-table td{padding:12px 14px;border-top:1px solid var(--trait,#e5e7eb)}
 .db-table tbody tr:first-child td{border-top:none}
 .db-alerte{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--trait,#e5e7eb)}
 .db-alerte:first-child{border-top:none;padding-top:0}
-.db-alerte-nom{margin:0;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.db-alerte-qte{margin:2px 0 0;font-size:12px;color:var(--encre-douce)}
+.db-alerte-nom{margin:0;font-size:var(--fs-md);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-alerte-qte{margin:2px 0 0;font-size:var(--fs-sm);color:var(--encre-douce)}
 .db-barres{display:flex;flex-direction:column;gap:14px}
 .db-barre-ligne{display:grid;grid-template-columns:150px minmax(0,1fr) auto;gap:12px;align-items:center}
-.db-barre-nom{margin:0;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-barre-nom{margin:0;font-size:var(--fs-md);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .db-barre-piste{height:10px;border-radius:999px;background:var(--fond,#f3f4f6);overflow:hidden}
 .db-barre-rempli{height:100%;border-radius:999px;background:var(--accent)}
-.db-barre-montant{margin:0;font-size:14px;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
-.db-barre-sous{display:block;font-size:11px;font-weight:400;color:var(--encre-douce)}
+.db-barre-montant{margin:0;font-size:var(--fs-md);font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+.db-barre-sous{display:block;font-size:var(--fs-xs);font-weight:400;color:var(--encre-douce)}
 .db-niveau--urgent{--n:var(--danger,#b91c1c)}
 .db-niveau--moyen{--n:#c2410c}
 .db-niveau--faible{--n:#a16207}
-.db-chip{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--n,var(--danger,#b91c1c));background:rgba(185,28,28,.1);background:color-mix(in srgb,var(--n,var(--danger,#b91c1c)) 12%,transparent)}
+.db-chip{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:var(--fs-sm);font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--n,var(--danger,#b91c1c));background:rgba(185,28,28,.1);background:color-mix(in srgb,var(--n,var(--danger,#b91c1c)) 12%,transparent)}
 .db-perime{margin-bottom:20px;border:1px solid var(--trait,#e5e7eb);border-left:4px solid var(--danger,#b91c1c);border-radius:16px;background:var(--surface,#fff);overflow:hidden}
 .db-perime-tete{display:flex;align-items:center;flex-wrap:wrap;gap:14px;padding:16px 18px;background:var(--danger-clair,#fef2f2)}
 .db-perime-icone{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:38px;height:38px;border-radius:11px;background:var(--danger,#b91c1c);color:#fff}
 .db-perime-titre{flex:1;min-width:220px}
-.db-perime-titre h2{margin:0;font-size:15px;color:var(--danger,#b91c1c)}
-.db-perime-titre p{margin:3px 0 0;font-size:12px;color:var(--encre-douce)}
-.db-perime-total{margin:0;text-align:right;font-size:20px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--danger,#b91c1c)}
-.db-perime-total small{display:block;margin-top:3px;font-size:11px;font-weight:500;color:var(--encre-douce)}
+.db-perime-titre h2{margin:0;font-size:var(--fs-md);color:var(--danger,#b91c1c)}
+.db-perime-titre p{margin:3px 0 0;font-size:var(--fs-sm);color:var(--encre-douce)}
+.db-perime-total{margin:0;text-align:right;font-size:var(--fs-xl);font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--danger,#b91c1c)}
+.db-perime-total small{display:block;margin-top:3px;font-size:var(--fs-xs);font-weight:500;color:var(--encre-douce)}
 .db-perime-liste{list-style:none;margin:0;padding:2px 18px}
 .db-perime-ligne{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px 14px;align-items:center;padding:12px 0;border-top:1px solid var(--trait,#e5e7eb)}
 .db-perime-ligne:first-child{border-top:none}
-.db-perime-nom{margin:0;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.db-perime-meta{margin:2px 0 0;font-size:12px;color:var(--encre-douce)}
+.db-perime-nom{margin:0;font-size:var(--fs-md);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-perime-meta{margin:2px 0 0;font-size:var(--fs-sm);color:var(--encre-douce)}
 .db-hz-tete{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:12px}
-.db-hz-tete h2{margin:0;font-size:16px}
-.db-hz-tete span{font-size:13px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.db-hz-tete h2{margin:0;font-size:var(--fs-lg)}
+.db-hz-tete span{font-size:var(--fs-sm);color:var(--encre-douce);font-variant-numeric:tabular-nums}
 .db-seg{display:flex;gap:3px;height:10px;margin-bottom:14px}
 .db-seg span{display:block;min-width:8px;border-radius:999px;background:var(--n)}
 .db-hz-grille{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
@@ -242,14 +243,14 @@ button.db-hz:not(:disabled){cursor:pointer}
 button.db-hz:not(:disabled):hover{box-shadow:0 6px 18px rgba(17,24,39,.08)}
 .db-hz:focus-visible{outline:2px solid var(--n);outline-offset:2px}
 .db-hz:disabled{opacity:.55}
-.db-hz-delai{margin:0;font-size:13px;font-weight:600;color:var(--n)}
-.db-hz-nombre{margin:2px 0 0;font-size:26px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
-.db-hz-nombre small{font-size:13px;font-weight:500;color:var(--encre-douce)}
-.db-hz-valeur{margin:0;font-size:12px;color:var(--encre-douce)}
-.db-hz-voir{display:inline-flex;align-items:center;gap:4px;margin-top:8px;font-size:13px;font-weight:600;color:var(--n)}
-.db-ok{display:flex;align-items:center;gap:12px;padding:14px 16px;border:1px solid var(--trait,#e5e7eb);border-radius:14px;background:var(--surface,#fff);font-size:14px;color:var(--encre-douce)}
+.db-hz-delai{margin:0;font-size:var(--fs-sm);font-weight:600;color:var(--n)}
+.db-hz-nombre{margin:2px 0 0;font-size:var(--fs-2xl);font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums}
+.db-hz-nombre small{font-size:var(--fs-sm);font-weight:500;color:var(--encre-douce)}
+.db-hz-valeur{margin:0;font-size:var(--fs-sm);color:var(--encre-douce)}
+.db-hz-voir{display:inline-flex;align-items:center;gap:4px;margin-top:8px;font-size:var(--fs-sm);font-weight:600;color:var(--n)}
+.db-ok{display:flex;align-items:center;gap:12px;padding:14px 16px;border:1px solid var(--trait,#e5e7eb);border-radius:14px;background:var(--surface,#fff);font-size:var(--fs-md);color:var(--encre-douce)}
 .db-ok-icone{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:34px;height:34px;border-radius:10px;background:#dcfce7;color:#15803d}
-.db-modal-sous{margin:-4px 0 14px;font-size:13px;color:var(--encre-douce)}
+.db-modal-sous{margin:-4px 0 14px;font-size:var(--fs-sm);color:var(--encre-douce)}
 .db-modal-table{overflow-x:auto;margin-bottom:16px}
 .db-modal-table table{margin-bottom:0 !important}
 @media (prefers-reduced-motion:reduce){.db-hz{transition:none}}
@@ -271,30 +272,30 @@ button.db-hz:not(:disabled):hover{box-shadow:0 6px 18px rgba(17,24,39,.08)}
 // couleurs reprises du thème du client (--accent, --trait, --surface…).
 // ---------------------------------------------------------------------------
 const CSS_COMPTABLE = `
-.cb-periode{margin:-6px 0 16px;font-size:13px;color:var(--encre-douce)}
+.cb-periode{margin:-6px 0 16px;font-size:var(--fs-sm);color:var(--encre-douce)}
 .cb-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:0 0 16px;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:10px;overflow:hidden}
 .cb-kpi{display:flex;flex-direction:column;gap:3px;min-width:0;padding:14px 16px;border-left:1px solid var(--trait,#e5e7eb)}
 .cb-kpi:first-child{border-left:none}
-.cb-kpi-label{margin:0;font-size:12.5px;font-weight:600;color:var(--encre-douce)}
-.cb-kpi-val{margin:0;font-size:21px;font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cb-kpi-val small{font-size:12px;font-weight:500;color:var(--encre-douce)}
+.cb-kpi-label{margin:0;font-size:var(--fs-sm);font-weight:600;color:var(--encre-douce)}
+.cb-kpi-val{margin:0;font-size:var(--fs-xl);font-weight:700;line-height:1.2;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cb-kpi-val small{font-size:var(--fs-sm);font-weight:500;color:var(--encre-douce)}
 .cb-neg{color:var(--danger,#b91c1c)}
-.cb-var{font-size:12px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.cb-var{font-size:var(--fs-sm);color:var(--encre-douce);font-variant-numeric:tabular-nums}
 .cb-var--haut{color:var(--vif,#157347)}
 .cb-var--bas{color:var(--danger,#b42318)}
-.cb-detail{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:12px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.cb-detail{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:var(--fs-sm);color:var(--encre-douce);font-variant-numeric:tabular-nums}
 .cb-detail span{white-space:nowrap}
 .cb-grille{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:16px;margin-bottom:24px}
 .cb-carte{background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:10px;padding:14px 16px;min-width:0}
 .cb-carte-tete{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--trait,#e5e7eb)}
-.cb-carte-tete h2{margin:0;font-size:14.5px}
-.cb-carte-tete span{font-size:12.5px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
-.cb-legende{display:flex;gap:14px;margin:0 0 8px;font-size:12px;color:var(--encre-douce)}
+.cb-carte-tete h2{margin:0;font-size:var(--fs-md)}
+.cb-carte-tete span{font-size:var(--fs-sm);color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.cb-legende{display:flex;gap:14px;margin:0 0 8px;font-size:var(--fs-sm);color:var(--encre-douce)}
 .cb-legende i{display:inline-block;width:10px;height:10px;margin-right:5px;border-radius:2px;vertical-align:-1px}
 .cb-chart{position:relative;height:190px;margin-top:4px}
 .cb-plot{position:absolute;left:44px;right:0;top:6px;height:150px}
 .cb-grid{position:absolute;left:0;right:0;height:0;border-top:1px solid var(--trait,#e5e7eb)}
-.cb-grid span{position:absolute;left:-44px;width:38px;transform:translateY(-50%);text-align:right;font-size:10.5px;color:var(--encre-douce);font-variant-numeric:tabular-nums}
+.cb-grid span{position:absolute;left:-44px;width:38px;transform:translateY(-50%);text-align:right;font-size:var(--fs-xs);color:var(--encre-douce);font-variant-numeric:tabular-nums}
 .cb-cols{position:absolute;left:44px;right:0;top:6px;height:174px;display:flex;gap:6px}
 .cb-col{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:flex-end;outline:none;cursor:default}
 .cb-paire{height:150px;display:flex;align-items:flex-end;justify-content:center;gap:2px}
@@ -304,21 +305,21 @@ const CSS_COMPTABLE = `
 .cb-col:hover .cb-paire,.cb-col:focus-visible .cb-paire{filter:brightness(.92)}
 .cb-col:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:4px}
 .cb-col--courant .cb-etiq{color:var(--accent);font-weight:700}
-.cb-etiq{height:24px;line-height:24px;text-align:center;font-size:11px;color:var(--encre-douce);white-space:nowrap}
-.cb-tip{position:absolute;z-index:5;top:0;transform:translateX(-50%);min-width:150px;padding:8px 10px;border-radius:8px;background:var(--encre,#0f2747);color:#fff;font-size:12px;line-height:1.4;box-shadow:0 6px 18px rgba(0,0,0,.25);pointer-events:none}
+.cb-etiq{height:24px;line-height:24px;text-align:center;font-size:var(--fs-xs);color:var(--encre-douce);white-space:nowrap}
+.cb-tip{position:absolute;z-index:5;top:0;transform:translateX(-50%);min-width:150px;padding:8px 10px;border-radius:8px;background:var(--encre,#0f2747);color:#fff;font-size:var(--fs-sm);line-height:1.4;box-shadow:0 6px 18px rgba(0,0,0,.25);pointer-events:none}
 .cb-tip strong{display:block;text-transform:capitalize}
 .cb-tip div{display:flex;justify-content:space-between;gap:14px;font-variant-numeric:tabular-nums}
-.cb-vide{position:absolute;left:44px;right:0;top:0;height:150px;display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--encre-douce);pointer-events:none}
+.cb-vide{position:absolute;left:44px;right:0;top:0;height:150px;display:flex;align-items:center;justify-content:center;font-size:var(--fs-sm);color:var(--encre-douce);pointer-events:none}
 .cb-rep{display:flex;flex-direction:column;gap:10px}
 .cb-rep-ligne{min-width:0}
-.cb-rep-haut{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:13px}
+.cb-rep-haut{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:var(--fs-sm)}
 .cb-rep-nom{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cb-rep-val{white-space:nowrap;font-weight:600;font-variant-numeric:tabular-nums}
 .cb-rep-val span{margin-left:6px;font-weight:400;color:var(--encre-douce)}
 .cb-rep-piste{height:6px;margin-top:4px;border-radius:3px;background:var(--fond,#f3f4f6);overflow:hidden}
 .cb-rep-rempli{height:100%;border-radius:3px;background:var(--accent)}
 .cb-sk{height:21px;margin:3px 0;border-radius:4px;background:var(--fond,#f3f4f6)}
-.cb-note{margin:0;font-size:13px;color:var(--encre-douce)}
+.cb-note{margin:0;font-size:var(--fs-sm);color:var(--encre-douce)}
 @media (max-width:900px){.cb-grille{grid-template-columns:1fr}}
 @media (max-width:760px){
   .cb-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -535,27 +536,27 @@ export function DashboardPage() {
 // ---------------------------------------------------------------------------
 const CSS_RESULTAT = `
 .rs-periodes{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:16px}
-.rs-chip{padding:6px 12px;border-radius:999px;border:1.5px solid var(--trait,#e5e7eb);background:var(--surface,#fff);color:inherit;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.rs-chip{padding:6px 12px;border-radius:999px;border:1.5px solid var(--trait,#e5e7eb);background:var(--surface,#fff);color:inherit;font:inherit;font-size:var(--fs-sm);font-weight:600;cursor:pointer}
 .rs-chip:hover{border-color:var(--accent)}
 .rs-chip.actif{background:var(--accent);border-color:var(--accent);color:#fff}
-.rs-dates{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-4px 0 16px;font-size:13px;color:var(--encre-douce)}
+.rs-dates{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:-4px 0 16px;font-size:var(--fs-sm);color:var(--encre-douce)}
 .rs-dates input{padding:6px 8px;border:1.5px solid var(--trait,#e5e7eb);border-radius:8px;font:inherit;background:var(--surface,#fff);color:inherit}
-.rs-legende{display:flex;gap:14px;font-size:12px;color:var(--encre-douce);margin-bottom:10px}
+.rs-legende{display:flex;gap:14px;font-size:var(--fs-sm);color:var(--encre-douce);margin-bottom:10px}
 .rs-legende i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
 .rs-duo{display:flex;flex-direction:column;gap:4px;flex:1}
 .rs-duo .db-barre-piste{margin:0}
 .rs-duo .rs-benef{opacity:.55}
 .rs-table-wrap{overflow-x:auto}
-.rs-table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+.rs-table{width:100%;border-collapse:collapse;font-size:var(--fs-sm);font-variant-numeric:tabular-nums}
 .rs-table th,.rs-table td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--trait,#e5e7eb);white-space:nowrap}
 .rs-table th:first-child,.rs-table td:first-child{text-align:left}
-.rs-table th{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--encre-douce)}
+.rs-table th{font-size:var(--fs-xs);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--encre-douce)}
 .rs-table tfoot td{font-weight:700;border-bottom:none}
 .rs-neg{color:var(--danger,#b91c1c)}
 .rs-sous{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--trait,#e5e7eb)}
-.rs-sous button{padding:8px 14px;border:none;border-bottom:2.5px solid transparent;background:none;color:var(--encre-douce);font:inherit;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:-1px}
+.rs-sous button{padding:8px 14px;border:none;border-bottom:2.5px solid transparent;background:none;color:var(--encre-douce);font:inherit;font-size:var(--fs-md);font-weight:600;cursor:pointer;margin-bottom:-1px}
 .rs-sous button.actif{color:var(--accent);border-bottom-color:var(--accent)}
-.rs-pct{font-size:12px;color:var(--encre-douce);margin-left:6px}
+.rs-pct{font-size:var(--fs-sm);color:var(--encre-douce);margin-left:6px}
 `;
 
 function jourLocal(d) {
@@ -747,7 +748,7 @@ function ResultatOnglet({ warehouseId, boutiqueNom }) {
                   </tfoot>
                 </table>
               </div>
-              <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '10px 0 0' }}>
+              <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--encre-douce)', margin: '10px 0 0' }}>
                 Montants en FCFA, charges hors taxe. Comptés : sorties de caisse (avec ou sans nature) et salaires payés. Non comptés : factures à payer plus tard, transferts, remboursements de retours, paiements à l'État.
               </p>
             </div>
@@ -771,7 +772,7 @@ function ResultatOnglet({ warehouseId, boutiqueNom }) {
           </div>
 
           {donnees.itemsSansCout > 0 && (
-            <p style={{ fontSize: 13, color: 'var(--texte-doux, #6b7280)', marginTop: -8, marginBottom: 20 }}>
+            <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--texte-doux, #6b7280)', marginTop: -8, marginBottom: 20 }}>
               {donnees.itemsSansCout} ligne(s) de vente n'ont pas de prix d'achat : le bénéfice est surestimé tant que les prix d'achat ne sont pas renseignés sur les produits.
             </p>
           )}
@@ -840,7 +841,7 @@ function ResultatOnglet({ warehouseId, boutiqueNom }) {
                     </tfoot>
                   </table>
                 </div>
-                <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '10px 0 0' }}>
+                <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--encre-douce)', margin: '10px 0 0' }}>
                   Montants en FCFA. Annulé : montant et (nombre) de commandes annulées, classées selon leur date de création.
                 </p>
               </div>
@@ -1155,20 +1156,21 @@ function DashboardCommerce() {
       <div className="entete-page">
         <h1>Pilotage</h1>
         {estManager && warehouses.length > 0 && (
-          <div className="selecteur-boutique">
-            <span className="selecteur-boutique-icone">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <ChampListe
+            value={warehouseId}
+            onChange={setWarehouseId}
+            icone={(
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M3 9l1.5-5h15L21 9" />
                 <path d="M3 9h18v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" />
                 <path d="M9 20v-6h6v6" />
               </svg>
-            </span>
-            <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
-              {warehouses.filter((w) => w.is_active).map((w) => (
-                <option key={w.id} value={w.id}>{w.name}</option>
-              ))}
-            </select>
-          </div>
+            )}
+          >
+            {warehouses.filter((w) => w.is_active).map((w) => (
+              <option key={w.id} value={w.id}>{w.name}</option>
+            ))}
+          </ChampListe>
         )}
       </div>
 
@@ -1222,7 +1224,7 @@ function DashboardCommerce() {
               </div>
             </div>
 
-            <h2 style={{ fontSize: 16, marginBottom: 12 }}>Ventes à encaisser</h2>
+            <h2 style={{ fontSize: 'var(--fs-lg)', marginBottom: 12 }}>Ventes à encaisser</h2>
             {commandesEnAttente.length === 0 ? (
               <p className="etat-vide" style={{ marginBottom: 24 }}>Aucune vente en attente d'encaissement pour le moment.</p>
             ) : (
@@ -1233,10 +1235,10 @@ function DashboardCommerce() {
                       <p className="carte-a-encaisser-numero">{o.order_number}</p>
                       <p className="carte-a-encaisser-client">{o.client_name || 'Client de passage'}</p>
                       {o.credit_request_status === 'en_attente' && (
-                        <p style={{ color: 'var(--accent)', fontSize: 12, marginTop: 2 }}>Demande de crédit en attente de validation…</p>
+                        <p style={{ color: 'var(--accent)', fontSize: 'var(--fs-sm)', marginTop: 2 }}>Demande de crédit en attente de validation…</p>
                       )}
                       {o.credit_request_status === 'rejetee' && (
-                        <p style={{ color: 'var(--danger)', fontSize: 12, marginTop: 2 }}>
+                        <p style={{ color: 'var(--danger)', fontSize: 'var(--fs-sm)', marginTop: 2 }}>
                           Demande de crédit refusée{o.credit_request_reason ? ` : ${o.credit_request_reason}` : ''}
                         </p>
                       )}
@@ -1259,7 +1261,7 @@ function DashboardCommerce() {
               <>
             {commandesRenvoyees.length > 0 && (
               <>
-                <h2 style={{ fontSize: 16, marginBottom: 12 }}>Factures renvoyées par la caisse</h2>
+                <h2 style={{ fontSize: 'var(--fs-lg)', marginBottom: 12 }}>Factures renvoyées par la caisse</h2>
                 <div className="liste-a-encaisser" style={{ marginBottom: 24 }}>
                   {commandesRenvoyees.map((o) => (
                     <div key={o.id} className="carte-a-encaisser">
@@ -1308,7 +1310,7 @@ function DashboardCommerce() {
 
             {commandesRenvoyees.length > 0 && (
               <>
-                <h2 style={{ fontSize: 16, marginBottom: 12 }}>Factures renvoyées par la caisse</h2>
+                <h2 style={{ fontSize: 'var(--fs-lg)', marginBottom: 12 }}>Factures renvoyées par la caisse</h2>
                 <div className="liste-a-encaisser" style={{ marginBottom: 24 }}>
                   {commandesRenvoyees.map((o) => (
                     <div key={o.id} className="carte-a-encaisser">
@@ -1501,7 +1503,7 @@ function DashboardCommerce() {
 
             {demandesCredit.length > 0 && (
               <div style={{ marginBottom: 24 }}>
-                <h2 style={{ fontSize: 16, marginBottom: 12 }}>Demandes de vente à crédit</h2>
+                <h2 style={{ fontSize: 'var(--fs-lg)', marginBottom: 12 }}>Demandes de vente à crédit</h2>
                 <div className="liste-a-encaisser">
                   {demandesCredit.map((d) => (
                     <div key={d.id} className="carte-a-encaisser">
@@ -1523,7 +1525,7 @@ function DashboardCommerce() {
 
             {demandesRetour.length > 0 && (
               <div style={{ marginBottom: 24 }}>
-                <h2 style={{ fontSize: 16, marginBottom: 12 }}>Demandes de retour</h2>
+                <h2 style={{ fontSize: 'var(--fs-lg)', marginBottom: 12 }}>Demandes de retour</h2>
                 <div className="liste-a-encaisser">
                   {demandesRetour.map((d) => (
                     <div key={d.id} className="carte-a-encaisser">
@@ -1666,7 +1668,7 @@ function DashboardCommerce() {
                     </div>
                     <div className="db-ligne-droite">
                       <p className="db-montant-ligne">{fcfa(o.total_amount)} FCFA</p>
-                      <button className="btn btn-principal" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => marquerCommandeLivree(o)}>
+                      <button className="btn btn-principal" style={{ padding: '5px 10px', fontSize: 'var(--fs-sm)' }} onClick={() => marquerCommandeLivree(o)}>
                         Marquer livrée
                       </button>
                     </div>
@@ -1729,7 +1731,7 @@ function DashboardCommerce() {
           {estPharmacie && (
             <div style={{ marginBottom: 24 }}>
               <div className="db-carte-tete">
-                <h2 style={{ margin: 0, fontSize: 16 }}>Registre des destructions</h2>
+                <h2 style={{ margin: 0, fontSize: 'var(--fs-lg)' }}>Registre des destructions</h2>
                 {registreDestructions && registreDestructions.destructions.length > 0 && (
                   <span>
                     {Math.round(registreDestructions.totalQuantity)} unité(s) · {fcfa(registreDestructions.totalValue)} FCFA détruits
@@ -1824,7 +1826,7 @@ function DashboardCommerce() {
             <>
               {vueEquipe && Object.keys(resumeParVendeur).length > 0 && (
                 <div style={{ marginBottom: 24 }}>
-                  <h2 style={{ fontSize: 16, marginBottom: 12 }}>Ventes par membre de l'équipe, sur cette période</h2>
+                  <h2 style={{ fontSize: 'var(--fs-lg)', marginBottom: 12 }}>Ventes par membre de l'équipe, sur cette période</h2>
                   <div className="grille-resume-equipe">
                     {Object.entries(resumeParVendeur)
                       .sort((a, b) => b[1].total - a[1].total)
@@ -1913,7 +1915,7 @@ function DashboardCommerce() {
             ) : (
               <>
                 <h2>{commandeDetail.order_number}</h2>
-                <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
+                <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--encre-douce)', marginBottom: 16 }}>
                   {commandeDetail.client_name || 'Client de passage'} · <StatusBadge status={commandeDetail.status} />
                 </p>
                 <table className="registre" style={{ marginBottom: 16 }}>

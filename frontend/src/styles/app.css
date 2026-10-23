@@ -1704,34 +1704,16 @@ body { font-size: 1rem; }
 .barre-haut-theme:hover { color: var(--encre); border-color: var(--accent, currentColor); }
 
 /* ============================================================
-   Thème SAGFA360 (23/10) — appliqué à tout le logiciel
-   Palette crème / marine, police Plus Jakarta Sans, étiquettes
-   en petites capitales espacées. Les sélecteurs sont préfixés
-   « html:root » pour primer sur tokens.css quel que soit l'ordre
-   de chargement. Les couleurs personnalisées d'un client
-   (charte posée par l'owner) restent prioritaires.
+   Police et tailles SAGFA360 (23/10) — seulement la typographie.
+   Les couleurs, la charte et la personnalisation par client ne sont
+   PAS touchées : elles restent celles de tokens.css / de la charte
+   du commerçant. Sélecteurs préfixés « html:root » pour primer sur
+   toute autre feuille de style.
    ============================================================ */
 html:root {
   --font-ui: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-chiffres: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
   --font-marque: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
-
-  --fond: #f6f3ec;
-  --carte: #ffffff;
-  --encre: #12343b;
-  --encre-douce: #6f7b83;
-  --trait: #e7e1d3;
-  --marine: #12343b;
-  --marine-2: #1b4a52;
-  --feuille: #2f6b5c;
-  --or: #c7a45f;
-  --accent: #12343b;
-  --accent-fonce: #0c2529;
-  --accent-clair: rgba(18, 52, 59, 0.08);
-  --accent-transparent: rgba(18, 52, 59, 0.12);
-  --champ-fond: #fdfbf6;
-  --sidebar-fond: #12343b;
-  --rayon: 14px;
 
   --fs-xs: clamp(10px, 0.2vw + 9.3px, 10.8px);
   --fs-sm: clamp(11.8px, 0.3vw + 10.8px, 12.8px);
@@ -1742,56 +1724,19 @@ html:root {
   --fs-2xl: clamp(22px, 1.6vw + 17px, 28px);
 }
 
-html:root[data-theme="dark"] {
-  --fond: #0e1b1f;
-  --carte: #152a30;
-  --encre: #eef2f2;
-  --encre-douce: #93a3a8;
-  --trait: rgba(238, 242, 242, 0.12);
-  --marine: #0a171a;
-  --marine-2: #14343b;
-  --accent: #4aa595;
-  --accent-fonce: #3a8a7b;
-  --accent-clair: rgba(74, 165, 149, 0.16);
-  --accent-transparent: rgba(74, 165, 149, 0.2);
-  --champ-fond: #10222a;
-  --sidebar-fond: #0a171a;
-}
-
-html:root body {
-  font-family: var(--font-ui);
-  background-color: var(--fond);
-  color: var(--encre);
-  letter-spacing: -0.005em;
-}
-html:root h1, html:root h2, html:root h3 { font-family: var(--font-ui); letter-spacing: -0.02em; }
+/* Même police partout, y compris les pages qui en déclaraient une autre (tableau de bord, composants à style intégré). */
+html:root body { font-family: var(--font-ui); letter-spacing: -0.005em; }
+html:root body *:not(code):not(pre):not(kbd):not(samp) { font-family: inherit; }
+html:root h1, html:root h2, html:root h3 { letter-spacing: -0.02em; }
 html:root .entete-page h1 { font-weight: 800; letter-spacing: -0.03em; }
 
-/* Barre latérale */
-html:root .barre-laterale { background-color: var(--sidebar-fond); color: rgba(255, 255, 255, 0.86); }
-html:root .nav-lien { color: rgba(255, 255, 255, 0.78); border-radius: 10px; font-weight: 500; }
-html:root .nav-lien .nav-icone { background: transparent; color: inherit; }
-html:root .nav-lien:hover { background: rgba(255, 255, 255, 0.07); color: #fff; }
-html:root .nav-lien.actif {
-  background: rgba(255, 255, 255, 0.11); color: #fff; box-shadow: none; font-weight: 700;
-}
-html:root .nav-lien.actif .nav-icone { background: transparent; color: var(--or); }
-html:root .nav-lien.actif svg { color: var(--or); }
-html:root .barre-laterale:not(.reduite) .nav-lien:not(.actif):hover { background: rgba(255, 255, 255, 0.07); }
-
-/* Cartes, champs, boutons, onglets */
-html:root .carte-activite, html:root .carte-entite, html:root .carte-produit, html:root .carte-resume-membre,
-html:root .carte-a-encaisser, html:root .stat {
-  background: var(--carte); border: 1px solid var(--trait); border-radius: var(--rayon); box-shadow: none;
-}
-html:root .barre-haut { background: var(--carte); border-bottom: 1px solid var(--trait); }
-
-html:root input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+/* Forme (pas de couleur) des champs et boutons : arrondis, hauteur homogène. Les couleurs viennent de la charte. */
+html:root input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
 html:root select,
 html:root textarea {
-  font-family: var(--font-ui); font-size: var(--fs-sm); color: var(--encre);
-  background-color: var(--champ-fond); border: 1px solid var(--trait); border-radius: 10px;
-  min-height: 38px; padding: 0 12px; outline: none; transition: border-color .15s, box-shadow .15s;
+  font-family: var(--font-ui); font-size: var(--fs-sm);
+  border: 1px solid var(--trait); border-radius: 10px; min-height: 38px; padding: 0 12px; outline: none;
+  transition: border-color .15s, box-shadow .15s;
 }
 html:root textarea { padding: 10px 12px; }
 html:root select {
@@ -1800,28 +1745,37 @@ html:root select {
   background-repeat: no-repeat; background-position: right 12px center;
 }
 html:root input:focus, html:root select:focus, html:root textarea:focus {
-  border-color: var(--marine-2); box-shadow: 0 0 0 3px var(--accent-transparent);
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-transparent, rgba(0, 0, 0, 0.08));
 }
-
 html:root .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-height: 38px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--trait);
-  background: var(--carte); color: var(--encre); font-family: var(--font-ui); font-weight: 600;
-  font-size: var(--fs-sm); cursor: pointer; box-shadow: none; transition: background .15s, border-color .15s;
+  min-height: 38px; padding: 0 16px; border-radius: 10px; font-weight: 600; font-size: var(--fs-sm); cursor: pointer;
 }
-html:root .btn:hover:not(:disabled) { background: var(--champ-fond); border-color: var(--marine-2); }
 html:root .btn:disabled { opacity: .55; cursor: default; }
-html:root .btn.btn-principal { background: var(--marine); border-color: var(--marine); color: #fff; }
-html:root .btn.btn-principal:hover:not(:disabled) { background: var(--marine-2); border-color: var(--marine-2); }
-html:root[data-theme="dark"] .btn.btn-principal { background: var(--accent); border-color: var(--accent); color: #0a171a; }
 
-html:root .onglets { gap: 6px; flex-wrap: wrap; border-bottom: 0; }
-html:root .onglet {
-  border: 1px solid var(--trait); background: var(--carte); color: var(--encre-douce);
-  border-radius: 999px; font-weight: 600; box-shadow: none;
+/* Sélecteur de boutique (tableau de bord) : même forme que les autres champs. */
+html:root .selecteur-boutique { border-radius: 10px; min-height: 38px; padding: 0 12px 0 10px; box-shadow: none; gap: 8px; }
+html:root .selecteur-boutique select {
+  min-height: 0; border: 0; border-radius: 0; box-shadow: none; background-color: transparent;
+  padding: 0 22px 0 0; max-width: 180px; font-weight: 600; font-size: var(--fs-sm);
+  background-position: right 0 center;
 }
-html:root .onglet:hover { color: var(--encre); border-color: var(--marine-2); }
-html:root .onglet.actif { background: var(--marine); border-color: var(--marine); color: #fff; }
+
+/* Mode sombre : variables (la palette claire reste celle de la charte). */
+html:root[data-theme="dark"] {
+  --fond: #0e1b1f;
+  --carte: #152a30;
+  --encre: #eef2f2;
+  --encre-douce: #93a3a8;
+  --trait: rgba(238, 242, 242, 0.12);
+  --marine: #0a171a;
+  --accent: #4aa595;
+  --accent-fonce: #3a8a7b;
+  --accent-clair: rgba(74, 165, 149, 0.16);
+  --accent-transparent: rgba(74, 165, 149, 0.2);
+  --champ-fond: #10222a;
+  --sidebar-fond: #0a171a;
+}
 
 /* ---------- Composants SAGFA (components/SagfaUi.jsx) ---------- */
 .sg-fil { display: flex; align-items: center; gap: 10px; font-size: var(--fs-xs); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--encre-douce); }
@@ -1842,7 +1796,7 @@ html:root .sg-champ > input, html:root .sg-champ > select { padding-left: 36px; 
 }
 .sg-bandeau::after {
   content: ''; position: absolute; top: 0; right: 0; width: 190px; height: 100%; pointer-events: none;
-  background: linear-gradient(135deg, transparent 38%, rgba(143, 171, 150, .55) 38%, rgba(143, 171, 150, .55) 62%, rgba(214, 196, 160, .6) 62%);
+  background: linear-gradient(135deg, transparent 38%, color-mix(in srgb, var(--accent) 55%, transparent) 38%, color-mix(in srgb, var(--accent) 55%, transparent) 62%, color-mix(in srgb, var(--soleil) 60%, transparent) 62%);
   opacity: .5; clip-path: polygon(30% 0, 100% 0, 100% 100%, 0 100%);
 }
 .sg-surtitre { margin: 0; font-size: var(--fs-xs); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: rgba(255, 255, 255, .7); }
@@ -1861,7 +1815,7 @@ html:root .sg-champ > input, html:root .sg-champ > select { padding-left: 36px; 
 .sg-etape.actif { background: rgba(255, 255, 255, .12); color: #fff; font-weight: 700; }
 .sg-etape.actif .sg-pastille { background: #fff; color: var(--marine); border-color: #fff; }
 .sg-etape.fait { color: #fff; }
-.sg-etape.fait .sg-pastille { background: var(--or); border-color: var(--or); color: var(--marine); }
+.sg-etape.fait .sg-pastille { background: var(--soleil); border-color: var(--soleil); color: var(--marine); }
 .sg-trait { flex: 1 1 24px; min-width: 24px; max-width: 150px; height: 1px; background: rgba(255, 255, 255, .25); }
 .sg-bandeau-action { position: relative; z-index: 1; margin-left: auto; }
 .sg-bandeau-bas { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -1887,7 +1841,7 @@ html:root .btn.sg-btn-blanc:hover:not(:disabled) { background: #f3efe5; border-c
 .sg-montant { text-align: right; font-weight: 800; font-size: var(--fs-md); letter-spacing: -.02em; }
 .sg-montant small { font-weight: 600; color: var(--encre-douce); margin-left: 3px; }
 .sg-pastille-statut { display: inline-block; margin-top: 4px; font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 6px; background: rgba(199, 164, 95, .22); color: #8a6a22; }
-.sg-pastille-statut.ok { background: rgba(47, 107, 92, .15); color: var(--feuille); }
+.sg-pastille-statut.ok { background: rgba(47, 107, 92, .15); color: var(--accent); }
 .sg-pastille-statut.retard { background: rgba(179, 38, 30, .12); color: #b3261e; }
 .sg-pastille-statut.neutre { background: rgba(111, 123, 131, .16); color: var(--encre-douce); }
 
@@ -1922,14 +1876,14 @@ html:root .btn.sg-btn-blanc:hover:not(:disabled) { background: #f3efe5; border-c
 .sg-jour-chip { display: block; margin-top: 4px; padding: 2px 6px; border-radius: 5px; font-size: 10.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sg-jour-chip.retard { background: rgba(179, 38, 30, .13); color: #b3261e; }
 .sg-jour-chip.avenir { background: rgba(199, 164, 95, .25); color: #8a6a22; }
-.sg-jour-chip.ok { background: rgba(47, 107, 92, .16); color: var(--feuille); }
+.sg-jour-chip.ok { background: rgba(47, 107, 92, .16); color: var(--accent); }
 .sg-groupe { background: var(--fond); padding: 9px 18px; font-size: var(--fs-xs); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--encre-douce); border-top: 1px solid var(--trait); border-bottom: 1px solid var(--trait); }
 .sg-decl { display: flex; align-items: center; gap: 12px; width: 100%; background: none; border: 0; border-bottom: 1px solid var(--trait); padding: 13px 18px; text-align: left; cursor: pointer; font-family: var(--font-ui); color: inherit; }
 .sg-decl:last-child { border-bottom: 0; }
-.sg-decl:hover { background: var(--champ-fond); }
+.sg-decl:hover { background: var(--fond); }
 .sg-decl-barre { width: 3px; align-self: stretch; border-radius: 2px; background: var(--trait); flex: none; }
 .sg-decl-barre.retard { background: #b3261e; }
-.sg-decl-barre.ok { background: var(--feuille); }
+.sg-decl-barre.ok { background: var(--accent); }
 .sg-decl-barre.avenir { background: #6f7b83; }
 .sg-decl-titre { font-weight: 600; font-size: var(--fs-md); }
 .sg-decl small { display: block; color: var(--encre-douce); font-size: var(--fs-sm); margin-top: 2px; }
@@ -1964,12 +1918,11 @@ html:root[data-theme="dark"] #root {
 }
 
 /* Barre latérale : toujours sombre (marine en clair, presque noir en sombre), jamais dépendante de --encre. */
-html:root .barre-laterale { background-color: #12343b !important; color: rgba(255, 255, 255, 0.86); }
-html:root[data-theme="dark"] .barre-laterale { background-color: #0a171a !important; border-right: 1px solid var(--trait); }
-html:root .barre-laterale .nav-lien, html:root .barre-laterale .nav-lien svg { color: rgba(255, 255, 255, 0.78); }
-html:root .barre-laterale .nav-lien.actif, html:root .barre-laterale .nav-lien.actif svg { color: #fff; }
-html:root .barre-laterale .nav-groupe-bouton { color: rgba(255, 255, 255, 0.55); }
-html:root .barre-laterale .marque { color: #fff; }
+html:root[data-theme="dark"] .barre-laterale { background-color: #0a171a !important; color: rgba(255, 255, 255, 0.86); border-right: 1px solid var(--trait); }
+html:root[data-theme="dark"] .barre-laterale .nav-lien, html:root[data-theme="dark"] .barre-laterale .nav-lien svg { color: rgba(255, 255, 255, 0.78); }
+html:root[data-theme="dark"] .barre-laterale .nav-lien.actif, html:root[data-theme="dark"] .barre-laterale .nav-lien.actif svg { color: #fff; }
+html:root[data-theme="dark"] .barre-laterale .nav-groupe-bouton { color: rgba(255, 255, 255, 0.55); }
+html:root[data-theme="dark"] .barre-laterale .marque { color: #fff; }
 
 /* Pastilles d'icônes : fond teinté translucide + icône claire, au lieu d'un aplat clair. */
 html:root[data-theme="dark"] .stat-icone,

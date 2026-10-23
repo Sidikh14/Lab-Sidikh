@@ -587,6 +587,13 @@ export const api = {
   getAccountingDashboard: () => request('/accounting/dashboard'),
   getAccountingBalanceSheet: (params) => request(`/accounting/balance-sheet${qs(params)}`),
   syncAccounting: () => request('/accounting/sync', { method: 'POST' }),
+  getDirectTaxes: (year) => request(`/accounting/direct-taxes?year=${year}`),
+  createDirectTax: (data) => request('/accounting/direct-taxes', { method: 'POST', body: JSON.stringify(data) }),
+  payDirectTax: (id, data) => request(`/accounting/direct-taxes/${id}/pay`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteDirectTax: (id) => request(`/accounting/direct-taxes/${id}`, { method: 'DELETE' }),
+  getCgu: (year) => request(`/accounting/cgu?year=${year}`),
+  saveCguBareme: (bareme) => request('/accounting/cgu/bareme', { method: 'PUT', body: JSON.stringify({ bareme }) }),
+  saveCguDeclaration: (data) => request('/accounting/cgu/declarations', { method: 'POST', body: JSON.stringify(data) }),
   getAccountingCashFlow: (params) => request(`/accounting/cash-flow${qs(params)}`),
   getAccountingControls: () => request('/accounting/controls'),
   getOpeningBalances: () => request('/accounting/opening-balances'),
@@ -762,6 +769,8 @@ export const api = {
   getPayslipVersions: (userId, month) => request(`/payroll/${userId}/${month}/versions`),
   previewPayslipVersionPdf: (userId, month, version) => previewFile(`/payroll/${userId}/${month}/pdf?version=${version}`),
   previewPayrollMonth: (month) => request(`/payroll/preview-month?month=${month}`),
+  simulatePayslip: (userId, month, netSouhaite) =>
+    request(`/payroll/${userId}/simulate`, { method: 'POST', body: JSON.stringify({ month, netSouhaite }) }),
   generateAllPayslips: (month, regenerate = false) =>
     request('/payroll/generate-all', { method: 'POST', body: JSON.stringify({ month, regenerate }) }),
   sendPayslips: (month, employeeIds) =>
