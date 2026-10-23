@@ -1980,3 +1980,23 @@ html:root[data-theme="dark"] .sg-pastille-statut.ok { color: #7fd0c0; }
 html:root[data-theme="dark"] .sg-pastille-statut.retard { color: #ffb4ab; }
 html:root[data-theme="dark"] .sg-pastille-statut.neutre { color: var(--encre-douce); }
 html:root[data-theme="dark"] .sg-jour.we { background: rgba(255, 255, 255, 0.03); }
+
+/* Champ de recherche avec icône : l'icône flotte à gauche et le texte démarre après elle.
+   !important sur le padding car la règle .champ (chargée plus tard ou plus spécifique) l'écrasait. */
+.champ-avec-icone {
+  position: relative;
+}
+.champ-avec-icone .champ-icone {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  color: var(--encre-douce, #6b7390);
+  pointer-events: none; /* le clic traverse l'icône et atteint le champ */
+  z-index: 1;
+}
+.champ-avec-icone input.champ--avec-icone {
+  padding-left: 42px !important;
+}

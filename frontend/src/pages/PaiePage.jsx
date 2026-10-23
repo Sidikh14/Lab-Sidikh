@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
-import { EntetePage, BandeauMarine, RangeeChiffres, ChampMois, ChampListe, Etiquette, Icones } from '../components/SagfaUi';
+import { EntetePage, BandeauMarine, RangeeChiffres, ChampListe, Etiquette, Icones } from '../components/SagfaUi';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useModulesAccess } from '../hooks/useModulesAccess';
@@ -33,6 +33,35 @@ const NOMS_MOIS = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juill
 function formatMois(moisStr) {
   const [annee, mois] = moisStr.split('-');
   return `${NOMS_MOIS[Number(mois) - 1]} ${annee}`;
+}
+
+// Sélecteur de mois : flèches précédent / suivant et libellé « Octobre 2026 » (écrit avec formatMois,
+// donc toujours en français et avec majuscule, quel que soit le navigateur). `max` (AAAA-MM) bloque
+// les mois futurs ; une valeur vide ou invalide retombe sur le mois courant au lieu de planter.
+function moisCourant() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function decalerMois(moisStr, delta) {
+  const [a, m] = moisStr.split('-').map(Number);
+  const d = new Date(a, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function SelecteurMois({ value, onChange, max }) {
+  const valide = /^\d{4}-(0[1-9]|1[0-2])$/.test(value || '') ? value : moisCourant();
+  const suivantBloque = Boolean(max) && valide >= max;
+  const styleFleche = (desactive) => ({
+    width: 34, height: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    border: '1px solid var(--trait, #e3e6ee)', borderRadius: 10, background: '#fff', fontSize: 18, lineHeight: 1,
+    cursor: desactive ? 'not-allowed' : 'pointer', opacity: desactive ? 0.4 : 1, color: 'var(--encre, #1b2540)',
+  });
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      <button type="button" aria-label="Mois précédent" style={styleFleche(false)} onClick={() => onChange(decalerMois(valide, -1))}>‹</button>
+      <span style={{ minWidth: 140, textAlign: 'center', fontWeight: 600, fontSize: 14 }}>{formatMois(valide)}</span>
+      <button type="button" aria-label="Mois suivant" style={styleFleche(suivantBloque)} disabled={suivantBloque} onClick={() => onChange(decalerMois(valide, 1))}>›</button>
+    </div>
+  );
 }
 
 function initialesMembre(nom) {
@@ -986,9 +1015,8 @@ function CycleDuMoisTab({ onAller }) {
 
   const barreActions = (
     <div className="sg-actions" style={{ justifyContent: 'flex-end', marginBottom: 'var(--space-md)' }}>
-      <ChampMois value={mois} onChange={setMois} />
+      <SelecteurMois value={mois} onChange={setMois} />
       <button type="button" className="btn" onClick={() => onAller('simulation')}>{Icones.calculette}Simulation</button>
-      <button type="button" className="btn" onClick={() => window.print()}>{Icones.imprimante}Imprimer tout</button>
       <button type="button" className="btn" onClick={() => onAller('reglages-paie')}>{Icones.reglages}Réglages</button>
     </div>
   );
@@ -1082,13 +1110,39 @@ function fmt(n) {
 }
 
 // « Simulation de bulletin » : net souhaité → sursalaire, sans toucher au mois réel (aucune écriture,
-// aucun bulletin créé). S'appuie sur le nouvel endpoint POST /payroll/:userId/simulate.
+// aucun bulletin créé). S'appuie sur l'endpoint POST /payroll/:userId/simulate.
+function LigneSimulation({ label, valeur, signe = '', fort = false, discret = false }) {
+  return (
+    <div
+      style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, padding: '9px 0',
+        borderBottom: '1px dashed var(--trait, #e3e6ee)', fontSize: 13.5,
+        fontWeight: fort ? 700 : 400, color: discret ? 'var(--encre-douce)' : 'inherit',
+      }}
+    >
+      <span>{label}</span>
+      <span style={{ fontFamily: 'var(--font-chiffres)', whiteSpace: 'nowrap' }}>{signe}{fmt(valeur)}</span>
+    </div>
+  );
+}
+
+function PuceChiffre({ label, valeur, accent = false }) {
+  return (
+    <div
+      style={{
+        flex: '1 1 150px', padding: '14px 16px', borderRadius: 14,
+        background: accent ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.07)',
+      }}
+    >
+      <p style={{ margin: 0, fontSize: 11, letterSpacing: '0.06em', opacity: 0.75, textTransform: 'uppercase' }}>{label}</p>
+      <p style={{ margin: '4px 0 0', fontWeight: 700, fontSize: 18, fontFamily: 'var(--font-chiffres)' }}>{fmt(valeur)}</p>
+    </div>
+  );
+}
+
 function SimulationBulletinTab() {
   const [employes, setEmployes] = useState([]);
-  const [mois, setMois] = useState(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-  });
+  const [mois, setMois] = useState(moisCourant);
   const [searchParams] = useSearchParams();
   const [employeId, setEmployeId] = useState(() => searchParams.get('employe') || '');
   const [netSouhaite, setNetSouhaite] = useState('');
@@ -1099,6 +1153,9 @@ function SimulationBulletinTab() {
   useEffect(() => {
     api.getEmployees('actif').then(setEmployes).catch(() => {});
   }, []);
+
+  // Un changement de paramètre rend l'ancien résultat trompeur : on l'efface.
+  useEffect(() => { setResultat(null); }, [employeId, mois, netSouhaite]);
 
   async function calculer(e) {
     e.preventDefault();
@@ -1117,16 +1174,27 @@ function SimulationBulletinTab() {
   }
 
   const r = resultat?.resultat;
+  const salarie = employes.find((e) => e.id === employeId);
+  const retenues = r ? r.irpp + r.ipres_salarial + r.css_salarial + r.trimf : 0;
+  const charges = r ? r.ipres_patronal + r.css_patronal + r.cfce : 0;
+  const dejaAtteint = r && resultat.sursalaire === 0 && r.net_a_payer > Number(netSouhaite);
+  const carte = {
+    background: '#fff', border: '1px solid var(--trait, #e3e6ee)', borderRadius: 18, padding: 22,
+    boxShadow: '0 1px 2px rgba(20,30,60,0.04), 0 8px 24px rgba(20,30,60,0.05)',
+  };
 
   return (
-    <div>
-      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0, maxWidth: 640 }}>
-        Simule le sursalaire (prime) à ajouter pour atteindre un net à payer précis, à partir du salaire de
-        base et des primes déjà configurées du salarié ce mois-ci. Rien n'est enregistré tant que le
-        bulletin n'est pas généré depuis l'onglet Salariés.
-      </p>
-      <form onSubmit={calculer} className="sg-form-ligne">
-        <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 1000 }}>
+      <div>
+        <p style={{ margin: 0, fontSize: 12, letterSpacing: '0.08em', color: 'var(--encre-douce)', textTransform: 'uppercase' }}>Simulation de bulletin</p>
+        <p style={{ margin: '6px 0 0', color: 'var(--encre-douce)', fontSize: 14, maxWidth: 640, lineHeight: 1.5 }}>
+          Trouve la prime à ajouter pour qu'un salarié touche exactement le net voulu. Rien n'est enregistré :
+          le bulletin n'existe qu'une fois généré depuis l'onglet Salariés.
+        </p>
+      </div>
+
+      <form onSubmit={calculer} style={{ ...carte, display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'flex-end' }}>
+        <div style={{ flex: '1 1 220px' }}>
           <Etiquette>Salarié *</Etiquette>
           <ChampListe value={employeId} onChange={setEmployeId} required>
             <option value="">Choisir un salarié</option>
@@ -1135,69 +1203,83 @@ function SimulationBulletinTab() {
         </div>
         <div>
           <Etiquette>Mois</Etiquette>
-          <ChampMois value={mois} onChange={setMois} />
+          <SelecteurMois value={mois} onChange={setMois} />
         </div>
-        <div>
+        <div style={{ flex: '1 1 200px' }}>
           <Etiquette>Net à payer souhaité (FCFA) *</Etiquette>
-          <input type="number" min="0" value={netSouhaite} onChange={(e) => setNetSouhaite(e.target.value)} required style={{ minWidth: 200 }} />
+          <input
+            type="number" min="0" inputMode="numeric" placeholder="ex. 250000"
+            value={netSouhaite} onChange={(e) => setNetSouhaite(e.target.value)} required style={{ width: '100%' }}
+          />
         </div>
-        <button type="submit" className="btn btn-principal" disabled={enCours}>
-          {Icones.calculette}{enCours ? 'Calcul…' : 'Calculer le sursalaire'}
+        <button type="submit" className="btn btn-principal" disabled={enCours} style={{ height: 42 }}>
+          {Icones.calculette}{enCours ? 'Calcul…' : 'Calculer'}
         </button>
-        {r && (
-          <button type="button" className="btn" onClick={() => window.print()}>{Icones.imprimante}Imprimer la simulation</button>
-        )}
       </form>
+
       {erreur && <div className="erreur">{erreur}</div>}
-      {r && resultat.sursalaire === 0 && r.net_a_payer > Number(netSouhaite) && (
-        <p style={{ color: '#a15c00', fontSize: 13 }}>
+
+      {dejaAtteint && (
+        <div style={{ background: '#fff7e6', border: '1px solid #f3d9a4', color: '#8a5300', borderRadius: 12, padding: '12px 16px', fontSize: 13.5 }}>
           Le net actuel ({fmt(r.net_a_payer)} FCFA) dépasse déjà le net souhaité : aucun sursalaire n'est nécessaire.
-        </p>
+        </div>
       )}
 
       {r && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 1fr) 280px', gap: 20 }}>
-          <div className="carte-activite">
-            <p className="carte-activite-titre">Gains</p>
-            <table style={{ width: '100%', fontSize: 13.5, borderCollapse: 'collapse' }}>
-              <tbody>
-                <tr><td style={{ padding: '6px 0' }}>Salaire de base</td><td style={{ textAlign: 'right' }}>{fmt(r.base_salary)}</td></tr>
-                {r.bonuses_detail.map((b, i) => (
-                  <tr key={i}><td style={{ padding: '6px 0' }}>{b.label}</td><td style={{ textAlign: 'right' }}>{fmt(b.amount)}</td></tr>
-                ))}
-                <tr style={{ borderTop: '1px solid var(--trait)', fontWeight: 700 }}>
-                  <td style={{ padding: '8px 0' }}>Total salaire brut</td><td style={{ textAlign: 'right' }}>{fmt(r.gross_salary)} FCFA</td>
-                </tr>
-              </tbody>
-            </table>
-            <p className="carte-activite-titre" style={{ marginTop: 18 }}>Retenues salariales</p>
-            <table style={{ width: '100%', fontSize: 13.5, borderCollapse: 'collapse' }}>
-              <tbody>
-                <tr><td style={{ padding: '6px 0' }}>Impôt sur le revenu (IR)</td><td style={{ textAlign: 'right' }}>−{fmt(r.irpp)}</td></tr>
-                <tr><td style={{ padding: '6px 0' }}>IPRES — Régime général</td><td style={{ textAlign: 'right' }}>−{fmt(r.ipres_salarial)}</td></tr>
-                <tr><td style={{ padding: '6px 0' }}>CSS</td><td style={{ textAlign: 'right' }}>−{fmt(r.css_salarial)}</td></tr>
-                <tr><td style={{ padding: '6px 0' }}>TRIMF</td><td style={{ textAlign: 'right' }}>−{fmt(r.trimf)}</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div style={{ background: 'var(--marine, var(--encre))', color: '#fff', borderRadius: 'var(--rayon, 14px)', padding: 20, height: 'fit-content' }}>
-            <p style={{ margin: 0, fontSize: 11, letterSpacing: '0.06em', opacity: 0.75 }}>NET À PAYER SIMULÉ</p>
-            <p style={{ margin: '4px 0 2px', fontWeight: 700, fontSize: 'var(--fs-2xl)', fontFamily: 'var(--font-chiffres)' }}>{fmt(r.net_a_payer)}</p>
-            <p style={{ margin: '0 0 16px', fontSize: 12, opacity: 0.75 }}>FCFA · {formatMois(mois)}</p>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0', borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-              <span>Brut</span><span>{fmt(r.gross_salary)}</span>
+        <>
+          <div
+            style={{
+              background: 'var(--marine, var(--encre, #1b2540))', color: '#fff', borderRadius: 22, padding: 26,
+              boxShadow: '0 12px 32px rgba(20,30,60,0.22)',
+            }}
+          >
+            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 20, alignItems: 'flex-end' }}>
+              <div>
+                <p style={{ margin: 0, fontSize: 11, letterSpacing: '0.08em', opacity: 0.75 }}>
+                  NET À PAYER SIMULÉ{salarie ? ` · ${salarie.full_name.toUpperCase()}` : ''}
+                </p>
+                <p style={{ margin: '6px 0 0', fontWeight: 700, fontSize: 'var(--fs-2xl, 38px)', fontFamily: 'var(--font-chiffres)', lineHeight: 1.1 }}>
+                  {fmt(r.net_a_payer)} <span style={{ fontSize: 15, opacity: 0.75, fontWeight: 500 }}>FCFA · {formatMois(mois)}</span>
+                </p>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <p style={{ margin: 0, fontSize: 11, letterSpacing: '0.08em', opacity: 0.75 }}>SURSALAIRE À AJOUTER</p>
+                <p style={{ margin: '6px 0 0', fontWeight: 700, fontSize: 26, fontFamily: 'var(--font-chiffres)', color: '#ffd166' }}>
+                  +{fmt(resultat.sursalaire || 0)}
+                </p>
+              </div>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0' }}>
-              <span>Retenues salariales</span><span>−{fmt(r.irpp + r.ipres_salarial + r.css_salarial + r.trimf)}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0' }}>
-              <span>Charges patronales</span><span>{fmt(r.ipres_patronal + r.css_patronal + r.cfce)}</span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, padding: '6px 0', fontWeight: 700 }}>
-              <span>Coût employeur</span><span>{fmt(r.cout_total_employeur)}</span>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 22 }}>
+              <PuceChiffre label="Brut" valeur={r.gross_salary} />
+              <PuceChiffre label="Retenues salariales" valeur={retenues} />
+              <PuceChiffre label="Charges patronales" valeur={charges} />
+              <PuceChiffre label="Coût employeur" valeur={r.cout_total_employeur} accent />
             </div>
           </div>
-        </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
+            <div style={carte}>
+              <p style={{ margin: '0 0 6px', fontWeight: 700, fontSize: 14 }}>Gains</p>
+              <LigneSimulation label="Salaire de base" valeur={r.base_salary} />
+              {r.bonuses_detail.map((b, i) => (
+                <LigneSimulation key={i} label={b.label} valeur={b.amount} discret />
+              ))}
+              <LigneSimulation label="Total salaire brut" valeur={r.gross_salary} fort />
+            </div>
+            <div style={carte}>
+              <p style={{ margin: '0 0 6px', fontWeight: 700, fontSize: 14 }}>Retenues salariales</p>
+              <LigneSimulation label="Impôt sur le revenu (IR)" valeur={r.irpp} signe="−" />
+              <LigneSimulation label="IPRES — Régime général" valeur={r.ipres_salarial} signe="−" />
+              <LigneSimulation label="CSS" valeur={r.css_salarial} signe="−" />
+              <LigneSimulation label="TRIMF" valeur={r.trimf} signe="−" />
+              <LigneSimulation label="Total des retenues" valeur={retenues} signe="−" fort />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="button" className="btn" onClick={() => window.print()}>{Icones.imprimante}Imprimer la simulation</button>
+          </div>
+        </>
       )}
     </div>
   );
