@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, requireAction } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 
 const router = express.Router();
@@ -28,7 +28,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /warehouses — créer une boutique (manager uniquement)
-router.post('/', requireRole('manager'), async (req, res) => {
+router.post('/', requireRole('manager'), requireAction('boutiques', 'creer'), async (req, res) => {
   const { name, address } = req.body;
   // Le dépôt est facultatif : sans type, on crée une boutique comme avant.
   const type = req.body.type === undefined ? 'boutique' : req.body.type;
@@ -81,7 +81,7 @@ router.post('/', requireRole('manager'), async (req, res) => {
 
 // PATCH /warehouses/:id — modifier nom/adresse (manager uniquement). Le type
 // (boutique/dépôt) n'est pas modifiable après la création.
-router.patch('/:id', requireRole('manager'), async (req, res) => {
+router.patch('/:id', requireRole('manager'), requireAction('boutiques', 'modifier'), async (req, res) => {
   const { name, address } = req.body;
 
   try {
@@ -114,7 +114,7 @@ router.patch('/:id', requireRole('manager'), async (req, res) => {
 // PATCH /warehouses/:id/status — activer/désactiver (pas de suppression,
 // comme les fournisseurs : une boutique désactivée disparaît des
 // sélecteurs mais son historique reste intact). Manager uniquement.
-router.patch('/:id/status', requireRole('manager'), async (req, res) => {
+router.patch('/:id/status', requireRole('manager'), requireAction('boutiques', 'modifier'), async (req, res) => {
   const { isActive } = req.body;
   if (typeof isActive !== 'boolean') {
     return res.status(400).json({ error: 'isActive doit être un booléen.' });

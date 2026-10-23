@@ -2,7 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, requireAction } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const {
   COULEURS: CH,
@@ -330,7 +330,7 @@ router.get('/:id/pdf', async (req, res) => {
 // POST /stock-transfers — crée le bon ET décrémente immédiatement la
 // boutique source (le stock "part" dès l'envoi, comme une commande
 // fournisseur envoyée). Un gérant ne peut envoyer que depuis SA boutique.
-router.post('/', async (req, res) => {
+router.post('/', requireAction('stock', 'transferer'), async (req, res) => {
   const { fromWarehouseId, toWarehouseId, items, notes } = req.body;
 
   if (!fromWarehouseId || !toWarehouseId || fromWarehouseId === toWarehouseId) {
@@ -425,7 +425,7 @@ router.post('/', async (req, res) => {
 
 // PATCH /stock-transfers/:id/receive — incrémente la boutique destination.
 // Un gérant ne peut réceptionner que dans SA boutique.
-router.patch('/:id/receive', async (req, res) => {
+router.patch('/:id/receive', requireAction('stock', 'transferer'), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -512,7 +512,7 @@ router.patch('/:id/receive', async (req, res) => {
 // encore été reçu, restitue le stock à la boutique source. S'il a déjà été
 // reçu, retire le stock de la destination et le restitue à la source
 // (mêmes deux cas que l'annulation d'un bon de commande fournisseur).
-router.patch('/:id/cancel', async (req, res) => {
+router.patch('/:id/cancel', requireAction('stock', 'transferer'), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

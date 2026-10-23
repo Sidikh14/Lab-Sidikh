@@ -2,7 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole, aRole } = require('../middleware/roles');
+const { requireRole, aRole, requireAction, peutAgir } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { enregistrerHonorairesCommande } = require('../services/honoraires.clinique.service'); // clinique : honoraires à reverser
 const { broadcast } = require('../utils/eventsBus');
@@ -53,7 +53,8 @@ const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
 // Vente en rupture de stock (reliquat) : le manager, et le gérant dans les secteurs qui gèrent les reliquats.
 // Le prix personnalisé (customPrice) reste réservé au manager.
 function peutVendreEnRupture(user) {
-  return user.role === 'manager' || (user.role === 'gerant' && SECTEURS_RELIQUAT.includes(user.sector));
+  if (user.role === 'manager') return true;
+  return user.role === 'gerant' && SECTEURS_RELIQUAT.includes(user.sector) && peutAgir(user, 'stock', 'rupture');
 }
 
 const router = express.Router();
@@ -339,7 +340,7 @@ function requireRoleVente(req, res, next) {
   return requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')(req, res, next);
 }
 
-router.post('/', requireRoleVente, async (req, res) => {
+router.post('/', requireRoleVente, requireAction('ventes', 'creer'), async (req, res) => {
   const { clientId, items, notes, tvaApplicable, clientOrderId, warehouseId: warehouseIdInput, prescriptionId, tvaRegime, precompte } = req.body;
   // items attendu : [{ productId, quantity, unitId, customPrice, authorizeOutOfStock }, ...]
   // quantity = nombre de conditionnements vendus (ex: 2 cartons) ; unitId
@@ -754,6 +755,10 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
   const estACredit = paymentMethod === 'a_credit';
   const estTiersPayant = paymentMethod === 'tiers_payant';
 
+  if (estACredit && !peutAgir(req.user, 'clients', 'credit')) {
+    return res.status(403).json({ error: "Vous n'avez pas les droits nécessaires pour cette action." });
+  }
+
   if (estACredit && req.user.sector === 'pharmacie') {
     return res.status(400).json({ error: "La vente à crédit n'est pas disponible en pharmacie : utilisez le tiers payant." });
   }
@@ -1162,6 +1167,9 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
   if (!validStatuses.includes(status)) {
     return res.status(400).json({ error: 'Statut invalide.' });
   }
+  if (status === 'annulee' && !peutAgir(req.user, 'ventes', 'annuler')) {
+    return res.status(403).json({ error: "Vous n'avez pas les droits nécessaires pour cette action." });
+  }
 
   const client = await pool.connect();
   try {
@@ -1279,7 +1287,7 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
 // règles que la création), on recalcule les totaux, et la commande repart
 // au statut 'en_attente' — assigned_cashier_id n'est pas touché, donc elle
 // reste rattachée au même caissier que precedemment.
-router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), async (req, res) => {
+router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), requireAction('ventes', 'creer'), async (req, res) => {
   const { clientId, items, notes, tvaApplicable, prescriptionId, tvaRegime, precompte } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {

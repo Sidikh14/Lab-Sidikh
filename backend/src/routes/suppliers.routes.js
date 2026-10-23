@@ -2,7 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
+const { requireRole, requireAction } = require('../middleware/roles');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau } = require('../utils/pdfHelpers');
 const { LABEL_METHODE, getSoldeActuel } = require('../utils/cashBalance');
 
@@ -214,7 +214,7 @@ async function boutiqueDuReglement(req, providedId) {
 // Un règlement en espèces, Wave, Orange Money ou chèque sort de la caisse de la boutique choisie
 // (il est rattaché à cette boutique et ne peut pas la rendre négative). Un virement ne passe
 // pas par la caisse.
-router.post('/:id/payments', PAIEMENT, async (req, res) => {
+router.post('/:id/payments', PAIEMENT, requireAction('fournisseurs', 'reglement'), async (req, res) => {
   const { amount, notes, paymentMethod, warehouseId: warehouseIdInput } = req.body;
   if (!Number(amount) || Number(amount) <= 0) {
     return res.status(400).json({ error: 'Montant de règlement invalide.' });
@@ -257,7 +257,7 @@ router.post('/:id/payments', PAIEMENT, async (req, res) => {
 });
 
 // POST /suppliers
-router.post('/', GESTION, async (req, res) => {
+router.post('/', GESTION, requireAction('fournisseurs', 'creer'), async (req, res) => {
   const { name, phone, email, address } = req.body;
   if (!name) {
     return res.status(400).json({ error: 'Le nom du fournisseur est requis.' });
@@ -276,7 +276,7 @@ router.post('/', GESTION, async (req, res) => {
 });
 
 // DELETE /suppliers/:id — désactivation (pas de suppression physique)
-router.delete('/:id', GESTION, async (req, res) => {
+router.delete('/:id', GESTION, requireAction('fournisseurs', 'supprimer'), async (req, res) => {
   try {
     const result = await pool.query(
       `UPDATE suppliers SET is_active = FALSE WHERE id = $1 AND merchant_id = $2 RETURNING id`,
