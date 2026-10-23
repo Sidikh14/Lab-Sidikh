@@ -392,6 +392,7 @@ export const api = {
     request('/clients', { method: 'POST', body: JSON.stringify(data) }),
   updateClient: (id, data) =>
     request(`/clients/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteClient: (id) => request(`/clients/${id}`, { method: 'DELETE' }),
   recordCreditPayment: (id, data) =>
     request(`/clients/${id}/credit-payments`, { method: 'POST', body: JSON.stringify(data) }),
   getClientWhatsappStatement: (id) =>
@@ -461,8 +462,8 @@ export const api = {
   setUserRole: (id, roles) =>
     request(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify(Array.isArray(roles) ? { roles } : { role: roles }) }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
-  setUserPermissions: (id, modules) =>
-    request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules }) }),
+  setUserPermissions: (id, modules, actions = {}) =>
+    request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules, actions }) }),
   // Le serveur génère le mot de passe provisoire : il est renvoyé une seule fois dans la réponse.
   resetUserPassword: (id) =>
     request(`/users/${id}/password`, { method: 'PATCH' }),
@@ -586,13 +587,6 @@ export const api = {
   getAccountingDashboard: () => request('/accounting/dashboard'),
   getAccountingBalanceSheet: (params) => request(`/accounting/balance-sheet${qs(params)}`),
   syncAccounting: () => request('/accounting/sync', { method: 'POST' }),
-  getDirectTaxes: (year) => request(`/accounting/direct-taxes?year=${year}`),
-  createDirectTax: (data) => request('/accounting/direct-taxes', { method: 'POST', body: JSON.stringify(data) }),
-  payDirectTax: (id, data) => request(`/accounting/direct-taxes/${id}/pay`, { method: 'POST', body: JSON.stringify(data) }),
-  deleteDirectTax: (id) => request(`/accounting/direct-taxes/${id}`, { method: 'DELETE' }),
-  getCgu: (year) => request(`/accounting/cgu?year=${year}`),
-  saveCguBareme: (bareme) => request('/accounting/cgu/bareme', { method: 'PUT', body: JSON.stringify({ bareme }) }),
-  saveCguDeclaration: (data) => request('/accounting/cgu/declarations', { method: 'POST', body: JSON.stringify(data) }),
   getAccountingCashFlow: (params) => request(`/accounting/cash-flow${qs(params)}`),
   getAccountingControls: () => request('/accounting/controls'),
   getOpeningBalances: () => request('/accounting/opening-balances'),
@@ -768,8 +762,6 @@ export const api = {
   getPayslipVersions: (userId, month) => request(`/payroll/${userId}/${month}/versions`),
   previewPayslipVersionPdf: (userId, month, version) => previewFile(`/payroll/${userId}/${month}/pdf?version=${version}`),
   previewPayrollMonth: (month) => request(`/payroll/preview-month?month=${month}`),
-  simulatePayslip: (userId, month, netSouhaite) =>
-    request(`/payroll/${userId}/simulate`, { method: 'POST', body: JSON.stringify({ month, netSouhaite }) }),
   generateAllPayslips: (month, regenerate = false) =>
     request('/payroll/generate-all', { method: 'POST', body: JSON.stringify({ month, regenerate }) }),
   sendPayslips: (month, employeeIds) =>

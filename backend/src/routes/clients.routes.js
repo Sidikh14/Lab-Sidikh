@@ -527,4 +527,33 @@ router.patch('/:id', requireAction('clients', 'modifier'), async (req, res) => {
   }
 });
 
+// DELETE /clients/:id — suppression définitive, uniquement pour un client sans aucun historique
+// (ventes, règlements). Dès qu'une facture ou un règlement s'y rattache, la base refuse
+// (clé étrangère) et on renvoie un message clair plutôt que de casser la comptabilité.
+router.delete('/:id', requireRole('manager', 'gerant'), requireAction('clients', 'supprimer'), async (req, res) => {
+  try {
+    const existant = await pool.query(
+      `SELECT full_name FROM clients WHERE id = $1 AND merchant_id = $2`,
+      [req.params.id, req.user.merchantId]
+    );
+    if (existant.rows.length === 0) return res.status(404).json({ error: 'Client introuvable.' });
+
+    await pool.query(`DELETE FROM clients WHERE id = $1 AND merchant_id = $2`, [req.params.id, req.user.merchantId]);
+
+    await logActivity({
+      merchantId: req.user.merchantId,
+      userId: req.user.id,
+      action: 'client_deleted',
+      description: `a supprimé le client ${existant.rows[0].full_name}`,
+    });
+    res.status(204).send();
+  } catch (err) {
+    if (err.code === '23503') {
+      return res.status(409).json({ error: 'Ce client a un historique (ventes ou règlements) : il ne peut pas être supprimé.' });
+    }
+    console.error(err);
+    res.status(500).json({ error: 'Erreur lors de la suppression du client.' });
+  }
+});
+
 module.exports = router;

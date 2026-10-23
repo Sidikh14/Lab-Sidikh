@@ -6,6 +6,7 @@ import { useAccountingAccess } from '../hooks/useAccountingAccess';
 import { useAuth } from '../context/AuthContext';
 import { BarreSections, GrilleKpi, BarresComparaison } from '../components/SectionsUi';
 import { PiecesModal } from '../components/PiecesModal';
+import { EntetePage, BandeauMarine } from '../components/SagfaUi';
 
 // Module comptabilité (SYSCOHADA). Affiché uniquement si l'owner a donné
 // l'accès au commerçant : sinon la page redirige vers l'accueil et le lien
@@ -2713,39 +2714,14 @@ const ONGLETS = [
   { id: 'ouverture', label: "Soldes d'ouverture", composant: OuvertureTab },
 ];
 
-// Bandeau « Clôture mensuelle » façon SAGFA360 : 4 étapes cliquables qui mènent aux onglets réels
+// Bandeau « Clôture mensuelle » : 4 étapes cliquables qui mènent aux onglets réels
 // (Saisie → Journal, Contrôle → Contrôles, Clôture → Clôture, États financiers → Bilan).
-const ETAPES_CLOTURE = [
-  { id: 'journal', label: 'Saisie' },
-  { id: 'controles', label: 'Contrôle' },
-  { id: 'cloture', label: 'Clôture' },
-  { id: 'bilan', label: 'États financiers' },
-];
-function BandeauClotureCompta({ onChoisir }) {
-  return (
-    <div
-      style={{
-        background: 'var(--marine, var(--encre))', color: '#fff', borderRadius: 'var(--rayon, 14px)',
-        padding: 'var(--space-md, 18px) var(--space-lg, 24px)', marginBottom: 'var(--space-md, 18px)',
-      }}
-    >
-      <p style={{ margin: 0, fontSize: 11, letterSpacing: '0.06em', opacity: 0.75 }}>CLÔTURE MENSUELLE</p>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 10 }}>
-        {ETAPES_CLOTURE.map((e, i) => (
-          <button
-            key={e.id}
-            type="button"
-            onClick={() => onChoisir(e.id)}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', color: '#fff', cursor: 'pointer', padding: 0, fontSize: 'var(--fs-sm)' }}
-          >
-            <span style={{ width: 18, height: 18, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10.5, background: 'rgba(255,255,255,0.2)' }}>{i + 1}</span>
-            {e.label}
-            {i < ETAPES_CLOTURE.length - 1 && <span style={{ opacity: 0.35, margin: '0 2px' }}>—</span>}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
+function BandeauClotureCompta({ onChoisir, actif }) {
+  const etapes = [
+    { id: 'journal', label: 'Saisie' }, { id: 'controles', label: 'Contrôle' },
+    { id: 'cloture', label: 'Clôture' }, { id: 'bilan', label: 'États financiers' },
+  ].map((e) => ({ ...e, statut: e.id === actif ? 'actif' : 'a_faire' }));
+  return <BandeauMarine surtitre="CLÔTURE MENSUELLE" titre="Cycle de clôture" etapes={etapes} onEtape={onChoisir} />;
 }
 
 export function ComptabilitePage() {
@@ -2791,29 +2767,15 @@ export function ComptabilitePage() {
   return (
     <div>
       <ApercuPdf />
-      <div className="entete-page">
-        <div>
-          <h1>Comptabilité</h1>
-          <p style={{ color: 'var(--encre-douce)', fontSize: 13, margin: '4px 0 0' }}>
-            Plan comptable SYSCOHADA · montants en FCFA · écritures générées automatiquement
-          </p>
-        </div>
+      <EntetePage numero="06. COMPTABILITÉ" titre="Comptabilité">
         <button type="button" className="btn" disabled={enSynchro} onClick={actualiser}>
           {enSynchro ? 'Mise à jour…' : 'Actualiser'}
         </button>
-      </div>
-      <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '0 0 14px' }}>
-        Reprises automatiquement : ventes, retours, règlements clients et assureurs, achats, règlements fournisseurs, salaires, sorties de caisse (dont les charges saisies dans la page Caisse), factures à payer, immobilisations et amortissements, capital et emprunts, et valeur du stock.
-      </p>
-      {synchro?.warnings?.length > 0 && (
-        <ul style={{ margin: '0 0 14px', paddingLeft: 18, fontSize: 12.5, color: 'var(--encre-douce)' }}>
-          {synchro.warnings.map((w) => <li key={w}>{w}</li>)}
-        </ul>
-      )}
+      </EntetePage>
       {synchro?.errors?.length > 0 && (
         <div className="erreur">Certaines données n'ont pas pu être reprises : {synchro.errors.join(', ')}.</div>
       )}
-      <BandeauClotureCompta onChoisir={choisirOnglet} />
+      <BandeauClotureCompta onChoisir={choisirOnglet} actif={onglet} />
       <BarreSections sections={ONGLETS} actif={onglet} onChoisir={choisirOnglet} />
       <Actif key={`${onglet}-${cle}`} />
     </div>

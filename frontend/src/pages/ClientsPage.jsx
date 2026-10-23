@@ -268,6 +268,18 @@ function ClientsTab() {
     }
   }
 
+  async function handleSupprimerClient() {
+    if (!window.confirm(`Supprimer définitivement ${clientSelectionne.full_name} ? Impossible s'il a déjà un historique de ventes ou de règlements.`)) return;
+    setDetailErreur('');
+    try {
+      await api.deleteClient(clientSelectionne.id);
+      setClientSelectionne(null);
+      charger();
+    } catch (err) {
+      setDetailErreur(err.message);
+    }
+  }
+
   const facturesImpayees = (clientSelectionne?.creditInvoices || []).filter((f) => f.reste > 0);
   const factureChoisie = facturesImpayees.find((f) => f.id === factureReglement) || null;
 
@@ -516,6 +528,11 @@ function ClientsTab() {
               <button className="btn" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => ouvrirEdition(clientSelectionne)}>
                 Modifier
               </button>
+              {(user?.role === 'manager' || user?.role === 'gerant') && (
+                <button className="btn" style={{ padding: '4px 10px', fontSize: 12, color: 'var(--erreur, #c0392b)' }} onClick={handleSupprimerClient}>
+                  Supprimer
+                </button>
+              )}
             </div>
 
             {detailErreur && <div className="erreur">{detailErreur}</div>}

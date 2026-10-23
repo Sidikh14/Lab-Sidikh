@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
+import { EntetePage, BandeauMarine, RangeeChiffres, ChampMois, ChampListe, Etiquette, Icones } from '../components/SagfaUi';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useModulesAccess } from '../hooks/useModulesAccess';
@@ -946,11 +947,11 @@ const ETAPES_CYCLE = [
   { id: 'ecritures', label: 'Écritures' },
 ];
 
-// Bandeau « Cycle du mois » : reprend le design SAGFA360 (fond marine, étapes numérotées, cartes de
-// chiffres). Les statuts des 2 premières et de « Virement » sont calculés depuis /payroll/preview-month
-// (bulletins générés, salaires payés) ; « Contrôle », « Déclarations » et « Écritures » sont déduits de
-// l'avancement des étapes précédentes en attendant un lien direct avec la Fiscalité/Comptabilité.
-function CycleDuMoisTab({ onAllerSalaries }) {
+// « Cycle du mois » façon SAGFA360 : bandeau marine à 6 étapes, chiffres du mois, cartes des salariés.
+// Statuts calculés depuis /payroll/preview-month : bulletins générés, salaires payés. « Contrôle »,
+// « Déclarations » et « Écritures » suivent l'avancement des étapes précédentes (pas encore reliés à
+// la Fiscalité / Comptabilité).
+function CycleDuMoisTab({ onAller }) {
   const [mois, setMois] = useState(() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -964,7 +965,7 @@ function CycleDuMoisTab({ onAllerSalaries }) {
   function charger() {
     setChargement(true);
     api.previewPayrollMonth(mois)
-      .then(setDonnees)
+      .then((d) => { setDonnees(d); setErreur(''); })
       .catch((err) => setErreur(err.message))
       .finally(() => setChargement(false));
   }
@@ -983,145 +984,90 @@ function CycleDuMoisTab({ onAllerSalaries }) {
     }
   }
 
+  const barreActions = (
+    <div className="sg-actions" style={{ justifyContent: 'flex-end', marginBottom: 'var(--space-md)' }}>
+      <ChampMois value={mois} onChange={setMois} />
+      <button type="button" className="btn" onClick={() => onAller('simulation')}>{Icones.calculette}Simulation</button>
+      <button type="button" className="btn" onClick={() => window.print()}>{Icones.imprimante}Imprimer tout</button>
+      <button type="button" className="btn" onClick={() => onAller('reglages-paie')}>{Icones.reglages}Réglages</button>
+    </div>
+  );
+
   if (chargement && !donnees) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
-  if (erreur) return <div className="erreur">{erreur}</div>;
-  if (!donnees) return null;
+  if (!donnees) return <div className="erreur">{erreur || 'Données indisponibles.'}</div>;
 
   const { employees, totals, count } = donnees;
   const genFraction = count > 0 ? totals.generated / count : 0;
   const paidFraction = count > 0 ? totals.paid / count : 0;
-  const statutEtape = (id) => {
-    if (id === 'saisie') return 'fait';
-    if (id === 'bulletins') return genFraction >= 1 ? 'fait' : genFraction > 0 ? 'en_cours' : 'a_faire';
-    if (id === 'controle') return genFraction >= 1 ? 'fait' : 'a_faire';
-    if (id === 'virement') return paidFraction >= 1 ? 'fait' : paidFraction > 0 ? 'en_cours' : 'a_faire';
-    // Déclarations et Écritures : pas encore reliées à la Fiscalité/Comptabilité — proxy sur le virement.
-    return paidFraction >= 1 ? 'fait' : 'a_faire';
+  const fait = {
+    saisie: true,
+    bulletins: genFraction >= 1,
+    controle: genFraction >= 1,
+    declarations: paidFraction >= 1,
+    virement: paidFraction >= 1,
+    ecritures: paidFraction >= 1,
   };
-  const CIBLE_ONGLET = { saisie: 'salaires', bulletins: 'salaires', controle: 'salaires', declarations: null, virement: 'salaires', ecritures: null };
+  const ordre = ['saisie', 'bulletins', 'controle', 'declarations', 'virement', 'ecritures'];
+  const premierAFaire = ordre.find((id) => !fait[id]);
+  const etapes = [
+    { id: 'saisie', label: 'Saisie' }, { id: 'bulletins', label: 'Bulletins' }, { id: 'controle', label: 'Contrôle' },
+    { id: 'declarations', label: 'Déclarations' }, { id: 'virement', label: 'Virement' }, { id: 'ecritures', label: 'Écritures' },
+  ].map((e) => ({ ...e, statut: e.id === premierAFaire ? 'actif' : fait[e.id] ? 'fait' : 'a_faire' }));
+  const destination = { saisie: 'salaires', bulletins: 'salaires', controle: 'salaires', virement: 'salaires', declarations: 'cotisations' };
 
-  const employesFiltres = employees.filter((e) => !filtre || e.name.toLowerCase().includes(filtre.toLowerCase()));
   const aValider = count - totals.generated;
-
-  const cartes = [
-    { label: 'Masse salariale brute', valeur: totals.gross },
-    { label: 'Net à payer', valeur: totals.net },
-    { label: 'Charges patronales', valeur: totals.employerCost - totals.gross },
-    { label: 'Coût employeur', valeur: totals.employerCost },
-    { label: 'À reverser', valeur: totals.irpp + totals.trimf + totals.cfce + totals.ipresTotal + totals.cssTotal },
-    { label: 'Bulletins', valeur: `${totals.generated} / ${count}`, brut: true },
-  ];
-  const cartesCotisations = [
-    { label: 'IR', valeur: totals.irpp },
-    { label: 'TRIMF', valeur: totals.trimf },
-    { label: 'IPRES', valeur: totals.ipresTotal },
-    { label: 'CSS', valeur: totals.cssTotal },
-    { label: 'CFCE', valeur: totals.cfce },
-  ];
+  const employesFiltres = employees.filter((e) => !filtre || e.name.toLowerCase().includes(filtre.toLowerCase()));
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
-        <input type="month" value={mois} onChange={(e) => setMois(e.target.value)} />
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" className="btn" onClick={onAllerSalaries}>Salariés</button>
-          <button type="button" className="btn" onClick={() => window.print()}>Imprimer tout</button>
-          <button type="button" className="btn btn-principal" disabled={enCours || aValider === 0} onClick={validerToutLaPaie}>
-            {enCours ? 'Génération…' : aValider > 0 ? `Valider toute la paie (${aValider})` : 'Tout est validé'}
+      {barreActions}
+      {erreur && <div className="erreur">{erreur}</div>}
+      <BandeauMarine
+        surtitre={`CYCLE DU MOIS · ${formatMois(mois).toUpperCase()}`}
+        titre={aValider > 0 ? `${aValider} bulletin${aValider > 1 ? 's' : ''} à valider` : 'Tous les bulletins sont validés'}
+        etapes={etapes}
+        onEtape={(id) => destination[id] && onAller(destination[id])}
+        action={(
+          <button type="button" className="btn sg-btn-blanc" disabled={enCours || aValider === 0} onClick={validerToutLaPaie}>
+            {Icones.coche}{enCours ? 'Génération…' : 'Valider toute la paie'}
           </button>
-        </div>
-      </div>
-
-      <div
-        style={{
-          background: 'var(--marine, var(--encre))', color: '#fff', borderRadius: 'var(--rayon, 14px)',
-          padding: 'var(--space-md, 18px) var(--space-lg, 24px)', marginBottom: 'var(--space-lg, 24px)',
-        }}
-      >
-        <p style={{ margin: 0, fontSize: 11, letterSpacing: '0.06em', opacity: 0.75 }}>
-          CYCLE DU MOIS · {formatMois(mois)}
-        </p>
-        <p style={{ margin: '2px 0 14px', fontWeight: 700, fontSize: 'var(--fs-lg, 18px)' }}>
-          {aValider > 0 ? `${aValider} bulletin(s) à valider` : 'Tous les bulletins sont validés'}
-        </p>
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-          {ETAPES_CYCLE.map((etape, i) => {
-            const statut = statutEtape(etape.id);
-            const cible = CIBLE_ONGLET[etape.id];
-            return (
-              <button
-                key={etape.id}
-                type="button"
-                disabled={!cible}
-                onClick={() => cible && onAllerSalaries()}
-                style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none',
-                  color: statut === 'fait' ? '#fff' : 'rgba(255,255,255,0.55)', cursor: cible ? 'pointer' : 'default',
-                  fontSize: 'var(--fs-sm)', fontWeight: statut === 'fait' ? 700 : 500, padding: 0,
-                }}
-              >
-                <span
-                  style={{
-                    width: 18, height: 18, borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 10.5, background: statut === 'fait' ? 'var(--soleil, #e8b400)' : statut === 'en_cours' ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)',
-                    color: statut === 'fait' ? 'var(--marine, #0f2747)' : '#fff',
-                  }}
-                >
-                  {i + 1}
-                </span>
-                {etape.label}
-                {i < ETAPES_CYCLE.length - 1 && <span style={{ opacity: 0.35, margin: '0 2px' }}>—</span>}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="ligne-stats">
-        {cartes.map((c) => (
-          <div key={c.label} className="stat">
-            <p style={{ margin: '0 0 4px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--encre-douce)' }}>{c.label}</p>
-            <p style={{ margin: 0, fontWeight: 700, fontSize: 'var(--fs-md)', fontFamily: 'var(--font-chiffres)' }}>
-              {c.brut ? c.valeur : `${fmt(c.valeur)} F`}
-            </p>
-          </div>
-        ))}
-      </div>
-      <div className="ligne-stats">
-        {cartesCotisations.map((c) => (
-          <div key={c.label} className="stat">
-            <p style={{ margin: '0 0 4px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--encre-douce)' }}>{c.label}</p>
-            <p style={{ margin: 0, fontWeight: 700, fontSize: 'var(--fs-md)', fontFamily: 'var(--font-chiffres)' }}>{fmt(c.valeur)} F</p>
-          </div>
-        ))}
-      </div>
-
-      <input
-        placeholder="Filtrer les salariés…" value={filtre} onChange={(e) => setFiltre(e.target.value)}
-        style={{ width: '100%', marginBottom: 14 }}
+        )}
       />
-      <div className="grille-resume-equipe">
+
+      <RangeeChiffres cartes={[
+        { label: 'Masse salariale brute', valeur: fmt(totals.gross), unite: 'F', ton: 'feuille' },
+        { label: 'Net à payer', valeur: fmt(totals.net), unite: 'F', ton: 'feuille' },
+        { label: 'Charges patronales', valeur: fmt(totals.employerCost - totals.gross), unite: 'F', ton: 'or' },
+        { label: 'Coût employeur', valeur: fmt(totals.employerCost), unite: 'F', ton: 'or' },
+        { label: 'À reverser', valeur: fmt(totals.irpp + totals.trimf + totals.cfce + totals.ipresTotal + totals.cssTotal), unite: 'F', ton: 'or' },
+        { label: 'Bulletins', valeur: totals.generated, unite: `/ ${count}`, ton: 'or' },
+      ]} />
+      <RangeeChiffres cartes={[
+        { label: 'IR', valeur: fmt(totals.irpp), unite: 'F', ton: 'or' },
+        { label: 'TRIMF', valeur: fmt(totals.trimf), unite: 'F', ton: 'or' },
+        { label: 'IPRES', valeur: fmt(totals.ipresTotal), unite: 'F', ton: 'feuille' },
+        { label: 'CSS', valeur: fmt(totals.cssTotal), unite: 'F', ton: 'marine' },
+        { label: 'CFCE', valeur: fmt(totals.cfce), unite: 'F', ton: 'or' },
+      ]} />
+
+      <div className="sg-barre-filtre">
+        <input placeholder="Filtrer les salariés…" value={filtre} onChange={(e) => setFiltre(e.target.value)} />
+        <span className="sg-discret">{count} salarié{count > 1 ? 's' : ''} · net {fmt(totals.net)} F</span>
+      </div>
+      <div className="sg-liste-cartes">
         {employesFiltres.map((e) => (
-          <div key={e.id} className="carte-resume-membre">
-            <span className="avatar">{initialesMembre(e.name)}</span>
+          <div key={e.id} className="sg-ligne-salarie">
             <div style={{ minWidth: 0 }}>
-              <p className="carte-resume-membre-nom">{e.name}</p>
-              <p className="carte-resume-membre-detail">
-                Brut {fmt(e.gross)} F
-                {e.error && <span style={{ color: '#b3261e' }}> · {e.error}</span>}
-              </p>
+              <b>{e.name}</b>
+              <p>brut {fmt(e.gross)}{e.error && <span style={{ color: '#b3261e' }}> · {e.error}</span>}</p>
             </div>
-            <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
-              <p className="carte-resume-membre-total">{fmt(e.net)} F</p>
-              <span
-                style={{
-                  fontSize: 10.5, fontWeight: 700, padding: '2px 8px', borderRadius: 999,
-                  background: e.paid ? 'rgba(19,122,75,0.12)' : e.hasPayslip ? 'rgba(161,92,0,0.12)' : 'rgba(128,128,128,0.15)',
-                  color: e.paid ? '#137a4b' : e.hasPayslip ? '#a15c00' : 'var(--encre-douce)',
-                }}
-              >
-                {e.paid ? 'Payé' : e.hasPayslip ? 'À valider' : 'À générer'}
-              </span>
+            <div className="sg-montant">
+              {fmt(e.net)}<small>F</small>
+              <div>
+                <span className={`sg-pastille-statut${e.paid ? ' ok' : e.hasPayslip ? '' : ' neutre'}`}>
+                  {e.paid ? 'Payé' : e.hasPayslip ? 'À valider' : 'À générer'}
+                </span>
+              </div>
             </div>
           </div>
         ))}
@@ -1179,27 +1125,27 @@ function SimulationBulletinTab() {
         base et des primes déjà configurées du salarié ce mois-ci. Rien n'est enregistré tant que le
         bulletin n'est pas généré depuis l'onglet Salariés.
       </p>
-      <form onSubmit={calculer} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 20 }}>
+      <form onSubmit={calculer} className="sg-form-ligne">
         <div>
-          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Salarié *</label>
-          <select value={employeId} onChange={(e) => setEmployeId(e.target.value)} required>
+          <Etiquette>Salarié *</Etiquette>
+          <ChampListe value={employeId} onChange={setEmployeId} required>
             <option value="">Choisir un salarié</option>
             {employes.map((e) => <option key={e.id} value={e.id}>{e.full_name}</option>)}
-          </select>
+          </ChampListe>
         </div>
         <div>
-          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Mois</label>
-          <input type="month" value={mois} onChange={(e) => setMois(e.target.value)} />
+          <Etiquette>Mois</Etiquette>
+          <ChampMois value={mois} onChange={setMois} />
         </div>
         <div>
-          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Net à payer souhaité (FCFA) *</label>
-          <input type="number" min="0" value={netSouhaite} onChange={(e) => setNetSouhaite(e.target.value)} required />
+          <Etiquette>Net à payer souhaité (FCFA) *</Etiquette>
+          <input type="number" min="0" value={netSouhaite} onChange={(e) => setNetSouhaite(e.target.value)} required style={{ minWidth: 200 }} />
         </div>
         <button type="submit" className="btn btn-principal" disabled={enCours}>
-          {enCours ? 'Calcul…' : 'Calculer le sursalaire'}
+          {Icones.calculette}{enCours ? 'Calcul…' : 'Calculer le sursalaire'}
         </button>
         {r && (
-          <button type="button" className="btn" onClick={() => window.print()}>Imprimer la simulation</button>
+          <button type="button" className="btn" onClick={() => window.print()}>{Icones.imprimante}Imprimer la simulation</button>
         )}
       </form>
       {erreur && <div className="erreur">{erreur}</div>}
@@ -1284,9 +1230,7 @@ export function PaiePage() {
   return (
     <>
       <StylesModernes />
-      <div className="entete-page">
-        <h1>Paie</h1>
-      </div>
+      <EntetePage numero="04. PAIE" titre="Paie" />
 
       <div className="onglets" style={{ marginBottom: 20 }}>
         <button className={onglet === 'cycle' ? 'onglet actif' : 'onglet'} onClick={() => choisirOnglet('cycle')}>
@@ -1314,7 +1258,7 @@ export function PaiePage() {
       </div>
 
       <AlertesPaie />
-      {onglet === 'cycle' && <CycleDuMoisTab onAllerSalaries={() => choisirOnglet('salaires')} />}
+      {onglet === 'cycle' && <CycleDuMoisTab onAller={choisirOnglet} />}
       {onglet === 'salaires' && <SalairesTab />}
       {onglet === 'simulation' && <SimulationBulletinTab />}
       {onglet === 'employes' && <EmployesTab />}

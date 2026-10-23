@@ -328,8 +328,8 @@ export function Topbar({ onOuvrirMenu }) {
             title={statutPush === 'actif' ? 'Désactiver les notifications' : 'Activer les notifications'}
             aria-label={statutPush === 'actif' ? 'Désactiver les notifications' : 'Activer les notifications'}
             style={{
-              display: 'flex', alignItems: 'center', gap: 4, border: '1px solid rgba(0,0,0,0.12)',
-              borderRadius: 999, background: statutPush === 'actif' ? 'var(--accent-clair, #eef2ff)' : '#fff',
+              display: 'flex', alignItems: 'center', gap: 4, border: '1px solid var(--trait)',
+              borderRadius: 999, background: statutPush === 'actif' ? 'var(--accent-clair, #eef2ff)' : 'var(--carte)',
               color: statutPush === 'actif' ? 'var(--accent, #6d28d9)' : '#6b7280',
               fontSize: 11, padding: '3px 8px', cursor: pushEnCours ? 'default' : 'pointer', opacity: pushEnCours ? 0.6 : 1,
             }}
@@ -355,22 +355,22 @@ export function Topbar({ onOuvrirMenu }) {
             <div
               style={{
                 ...stylePanneau,
-                overflowY: 'auto', background: '#fff', border: '1px solid rgba(0,0,0,0.12)', borderRadius: 12,
+                overflowY: 'auto', background: 'var(--carte)', color: 'var(--encre)', border: '1px solid var(--trait)', borderRadius: 12,
                 boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 60, textAlign: 'left',
               }}
             >
-              <div style={{ padding: '10px 14px', fontWeight: 700, borderBottom: '1px solid rgba(0,0,0,0.08)' }}>Notifications</div>
+              <div style={{ padding: '10px 14px', fontWeight: 700, borderBottom: '1px solid var(--trait)' }}>Notifications</div>
               {enRupture > 0 && (
                 <button
                   type="button"
                   onClick={() => { setPanneauOuvert(false); navigate('/'); }}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', border: 0, borderBottom: '1px solid rgba(0,0,0,0.06)', background: 'var(--accent-clair, #f3f4f6)', cursor: 'pointer' }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', border: 0, borderBottom: '1px solid var(--trait)', background: 'var(--accent-clair, #f3f4f6)', cursor: 'pointer' }}
                 >
                   {enRupture} produit(s) en rupture de stock
                 </button>
               )}
               {alertes.length === 0 && (
-                <p style={{ padding: '16px 14px', margin: 0, color: '#6b7280' }}>Aucune notification.</p>
+                <p style={{ padding: '16px 14px', margin: 0, color: 'var(--encre-douce)' }}>Aucune notification.</p>
               )}
               {alertes.map((a) => (
                 <button
@@ -379,13 +379,13 @@ export function Topbar({ onOuvrirMenu }) {
                   onClick={() => marquerLue(a)}
                   style={{
                     display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', border: 0,
-                    borderBottom: '1px solid rgba(0,0,0,0.06)', cursor: 'pointer',
-                    background: a.lu ? '#fff' : 'var(--accent-clair, #eef2ff)',
+                    borderBottom: '1px solid var(--trait)', cursor: 'pointer',
+                    background: a.lu ? 'var(--carte)' : 'var(--accent-clair, #eef2ff)',
                   }}
                 >
                   <span style={{ display: 'block', fontWeight: a.lu ? 500 : 700, fontSize: 13 }}>{a.titre}</span>
-                  <span style={{ display: 'block', fontSize: 12.5, color: '#374151', marginTop: 2 }}>{a.message}</span>
-                  <span style={{ display: 'block', fontSize: 11, color: '#6b7280', marginTop: 4 }}>{formaterDate(a.created_at)}</span>
+                  <span style={{ display: 'block', fontSize: 12.5, color: 'var(--encre)', marginTop: 2 }}>{a.message}</span>
+                  <span style={{ display: 'block', fontSize: 11, color: 'var(--encre-douce)', marginTop: 4 }}>{formaterDate(a.created_at)}</span>
                 </button>
               ))}
             </div>
@@ -411,13 +411,13 @@ export function Topbar({ onOuvrirMenu }) {
           role="status"
           onClick={() => { setBandeau(null); ouvrirPanneau(); }}
           style={{
-            position: 'fixed', top: 64, right: 16, width: 320, maxWidth: '92vw', background: '#fff', cursor: 'pointer',
-            border: '1px solid rgba(0,0,0,0.12)', borderLeft: '4px solid var(--accent, #6d28d9)', borderRadius: 10,
+            position: 'fixed', top: 64, right: 16, width: 320, maxWidth: '92vw', background: 'var(--carte)', color: 'var(--encre)', cursor: 'pointer',
+            border: '1px solid var(--trait)', borderLeft: '4px solid var(--accent, #6d28d9)', borderRadius: 10,
             boxShadow: '0 8px 24px rgba(0,0,0,0.18)', padding: '10px 14px', zIndex: 80, textAlign: 'left',
           }}
         >
           <span style={{ display: 'block', fontWeight: 700, fontSize: 13 }}>{bandeau.titre}</span>
-          <span style={{ display: 'block', fontSize: 12.5, color: '#374151', marginTop: 2 }}>{bandeau.message}</span>
+          <span style={{ display: 'block', fontSize: 12.5, color: 'var(--encre)', marginTop: 2 }}>{bandeau.message}</span>
         </div>
       )}
     </header>

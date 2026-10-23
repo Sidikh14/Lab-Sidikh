@@ -4,7 +4,8 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useModulesAccess } from '../hooks/useModulesAccess';
 import { PageModuleNonActive } from '../components/ModuleNonActive';
-import { BarreSections, GrilleKpi, BarresComparaison } from '../components/SectionsUi';
+import { BarreSections } from '../components/SectionsUi';
+import { EntetePage, BandeauMarine, Etiquette } from '../components/SagfaUi';
 import {
   ImpotsTab, ApercuPdf, exporterPdf, useDonnees,
   fmt, dateFr, aujourdhui, tableStyle, cellule, droite, enteteTable, boutonPetit,
@@ -646,9 +647,9 @@ function Etat1024Tab() {
         Salaires et rémunérations versés sur l'année, par salarié, calculés depuis les bulletins de paie
         validés — base du formulaire État 1024 de la DGID.
       </p>
-      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', marginBottom: 16, flexWrap: 'wrap' }}>
+      <div className="sg-form-ligne">
         <div>
-          <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Année</label>
+          <Etiquette>Année</Etiquette>
           <input type="number" value={annee} onChange={(e) => setAnnee(e.target.value)} style={{ width: 100 }} />
         </div>
         <button type="button" className="btn" onClick={() => exporter('pdf')}>Exporter en PDF</button>
@@ -748,10 +749,10 @@ function ImpotsDirectsTab() {
         Aucun montant n'est calculé automatiquement : saisissez le montant de l'avis ou de la déclaration.
       </p>
       <div style={{ marginBottom: 14 }}>
-        <label style={{ display: 'block', fontSize: 12, marginBottom: 4 }}>Année</label>
+        <Etiquette>Année</Etiquette>
         <input type="number" value={annee} onChange={(e) => setAnnee(e.target.value)} style={{ width: 100 }} />
       </div>
-      <form onSubmit={ajouter} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 18 }}>
+      <form onSubmit={ajouter} className="sg-form-ligne">
         <select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
           {NATURES_IMPOT.map((n) => <option key={n.value} value={n.value}>{n.label}</option>)}
         </select>
@@ -861,7 +862,7 @@ function CguTab() {
       </div>
 
       <h3 style={{ fontSize: 14 }}>Calcul pour l'année</h3>
-      <form onSubmit={calculer} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 20 }}>
+      <form onSubmit={calculer} className="sg-form-ligne">
         <input type="number" value={annee} onChange={(e) => setAnnee(e.target.value)} style={{ width: 100 }} />
         <input type="number" min="0" placeholder="Chiffre d'affaires (FCFA)" value={ca} onChange={(e) => setCa(e.target.value)} required />
         <input type="number" min="0" placeholder="Déjà payé (facultatif)" value={paye} onChange={(e) => setPaye(e.target.value)} />
@@ -887,57 +888,193 @@ function CguTab() {
   );
 }
 
-function prochaineEcheance() {
-  const auj = new Date();
-  const d = new Date(auj.getFullYear(), auj.getMonth(), 15);
-  if (auj.getDate() > 15) d.setMonth(d.getMonth() + 1);
-  const jours = Math.ceil((d - new Date(auj.getFullYear(), auj.getMonth(), auj.getDate())) / 86400000);
-  return { date: d.toLocaleDateString('fr-FR'), jours };
+// Obligations mensuelles suivies dans l'échéancier. Une déclaration est « déposée » dès qu'un dépôt existe pour
+// (type, période) ; l'échéance est le 15 du mois suivant la période. Fenêtre : les 4 derniers mois + le mois en cours.
+const OBLIGATIONS = [
+  { id: 'tva', label: 'TVA', desc: 'Taxe sur la valeur ajoutée', kinds: ['tva'], dettes: ['tva'] },
+  { id: 'vrs', label: 'VRS', desc: 'Versement des retenues sur salaires', kinds: ['vrs', 'ir'], dettes: ['retenues'] },
+  { id: 'brs', label: 'BRS', desc: 'Retenue à la source sur loyers et prestations', kinds: ['brs'], dettes: [] },
+];
+const MOIS_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+const JOURS_FR = ['LUN', 'MAR', 'MER', 'JEU', 'VEN', 'SAM', 'DIM'];
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const majuscule = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+const joursEntre = (a, b) => Math.round((new Date(`${b}T00:00:00`) - new Date(`${a}T00:00:00`)) / 86400000);
+
+function construireEcheances(depots, auj) {
+  const maintenant = new Date(`${auj}T00:00:00`);
+  const liste = [];
+  for (let k = -4; k <= 0; k += 1) {
+    const mois = new Date(maintenant.getFullYear(), maintenant.getMonth() + k, 1);
+    const periode = `${mois.getFullYear()}-${String(mois.getMonth() + 1).padStart(2, '0')}`;
+    const echeance = iso(new Date(mois.getFullYear(), mois.getMonth() + 1, 15));
+    OBLIGATIONS.forEach((o) => {
+      const depot = (depots || []).find((f) => o.kinds.includes(f.kind) && f.period === periode);
+      let etat = 'avenir';
+      if (depot) etat = 'ok';
+      else if (echeance < auj) etat = 'retard';
+      liste.push({
+        cle: `${o.id}-${periode}`, obligation: o, periode, echeance, depot, etat,
+        titre: `${o.label} — ${majuscule(MOIS_FR[mois.getMonth()])} ${mois.getFullYear()}`,
+      });
+    });
+  }
+  return liste.sort((a, b) => a.echeance.localeCompare(b.echeance));
 }
 
-// Vue d'ensemble : ce que l'on doit à l'État, la prochaine échéance, le BRS et les déclarations du mois.
-function VueEnsembleFiscalite() {
-  const mois = moisPrecedent();
+// Échéancier : bandeau marine (état des déclarations), une carte par obligation, calendrier fiscal et liste
+// des déclarations triées par échéance. Étapes : À préparer = échéance à plus de 7 jours ; En cours = dans les
+// 7 jours ; À valider = échéance dépassée non déposée ; Validées = déposée sans récépissé ; Déposées = avec récépissé.
+function VueEnsembleFiscalite({ onOuvrir }) {
+  const { merchant } = useAuth();
   const [d, erreur] = useDonnees(async () => {
-    const [dues, brs, depots] = await Promise.all([
+    const [dues, depots] = await Promise.all([
       api.getAccountingStateDues(),
-      api.getBrsEntries(mois).catch(() => []),
       api.getTaxFilings().catch(() => []),
     ]);
-    return { dues, brs, depots };
+    return { dues, depots };
   }, []);
+  const auj = aujourdhui();
+  const [vue, setVue] = useState(() => { const t = new Date(); return { a: t.getFullYear(), m: t.getMonth() }; });
 
   if (erreur) return <div className="erreur">{erreur}</div>;
   if (!d) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
 
-  // Les cotisations (CSS, IPRES) se suivent dans la page Paie : ici seulement les impôts.
-  const impots = (d.dues.dettes || []).filter((x) => !['css', 'ipres'].includes(x.type));
-  const aPayer = impots.filter((x) => Number(x.du) > 0);
-  const totalDu = aPayer.reduce((t, x) => t + Number(x.du), 0);
-  const brsTotal = (d.brs || []).reduce((t, x) => t + Number(x.gross_ht || 0), 0);
-  const echeance = prochaineEcheance();
-  const nbDepots = Array.isArray(d.depots) ? d.depots.length : 0;
+  const echeances = construireEcheances(d.depots, auj);
+  const ouvertes = echeances.filter((e) => e.etat !== 'ok');
+  const retards = ouvertes.filter((e) => e.etat === 'retard');
+  const imminentes = ouvertes.filter((e) => e.etat === 'avenir' && joursEntre(auj, e.echeance) <= 7);
+  const aPreparer = ouvertes.filter((e) => e.etat === 'avenir' && joursEntre(auj, e.echeance) > 7);
+  const validees = echeances.filter((e) => e.etat === 'ok' && !e.depot.receipt_number);
+  const deposees = echeances.filter((e) => e.etat === 'ok' && e.depot.receipt_number);
+  const prochaine = ouvertes.find((e) => e.echeance >= auj) || ouvertes[0];
+
+  const etapes = [
+    { id: 'preparer', label: 'À préparer', compte: aPreparer.length },
+    { id: 'encours', label: 'En cours', compte: imminentes.length },
+    { id: 'valider', label: 'À valider', compte: retards.length },
+    { id: 'validees', label: 'Validées', compte: validees.length },
+    { id: 'deposees', label: 'Déposées', compte: deposees.length },
+  ];
+  const actif = retards.length ? 'valider' : imminentes.length ? 'encours' : aPreparer.length ? 'preparer' : 'deposees';
+  etapes.forEach((e) => { e.statut = e.id === actif ? 'actif' : 'a_faire'; e.cliquable = false; });
+
+  const detteDe = (types) => (d.dues?.dettes || []).filter((x) => types.includes(x.type)).reduce((t, x) => t + Number(x.du || 0), 0);
+  const totalDu = (d.dues?.dettes || []).filter((x) => !['css', 'ipres'].includes(x.type)).reduce((t, x) => t + Number(x.du || 0), 0);
+
+  // Calendrier du mois affiché.
+  const premier = new Date(vue.a, vue.m, 1);
+  const decalage = (premier.getDay() + 6) % 7;
+  const nbJours = new Date(vue.a, vue.m + 1, 0).getDate();
+  const cases = [];
+  for (let i = 0; i < decalage; i += 1) cases.push({ vide: true, cle: `v${i}` });
+  for (let n = 1; n <= nbJours; n += 1) {
+    const date = iso(new Date(vue.a, vue.m, n));
+    const jourSemaine = (decalage + n - 1) % 7;
+    cases.push({ cle: date, n, date, we: jourSemaine >= 5, auj: date === auj, items: echeances.filter((e) => e.echeance === date) });
+  }
+  function changerMois(delta) {
+    const t = new Date(vue.a, vue.m + delta, 1);
+    setVue({ a: t.getFullYear(), m: t.getMonth() });
+  }
+
+  const nomCommerce = merchant?.businessName || '';
+  const ordreListe = [...ouvertes, ...echeances.filter((e) => e.etat === 'ok').reverse().slice(0, 4)];
 
   return (
     <div>
-      <GrilleKpi cartes={[
-        { label: "Dû à l'État (impôts)", valeur: fmt(totalDu), unite: 'FCFA', detail: aPayer.length > 0 ? `${aPayer.length} impôt(s) à payer` : 'Rien à payer', ton: totalDu > 0 ? 'alerte' : undefined },
-        { label: 'Prochaine échéance', valeur: echeance.date, detail: echeance.jours === 0 ? "C'est aujourd'hui" : `dans ${echeance.jours} jour(s)`, ton: echeance.jours <= 3 ? 'alerte' : undefined },
-        { label: `BRS — ${libelleMois(mois)}`, valeur: String((d.brs || []).length), unite: 'versement(s)', detail: `Base : ${fmt(brsTotal)} FCFA` },
-        { label: 'Déclarations déposées', valeur: String(nbDepots), detail: 'enregistrées avec leur récépissé' },
-      ]} />
+      <BandeauMarine
+        surtitre={`ÉCHÉANCES · TOUTES OBLIGATIONS · ${nomCommerce.toUpperCase()}`}
+        titre={retards.length > 0 ? `${retards.length} déclaration${retards.length > 1 ? 's' : ''} en retard` : 'Aucune déclaration en retard'}
+        detail={prochaine ? `prochaine échéance le ${dateFr(prochaine.echeance)}` : undefined}
+        etapes={etapes}
+      />
 
-      {aPayer.length > 0 ? (
-        <BarresComparaison
-          titre="Ce que vous devez, par impôt"
-          lignes={aPayer.map((x) => ({ label: x.label, valeur: Number(x.du), texte: `${fmt(x.du)} FCFA` }))}
-        />
-      ) : (
-        <p style={{ color: 'var(--encre-douce)', fontSize: 13.5 }}>Aucun impôt à payer pour le moment.</p>
-      )}
-      <p style={{ color: 'var(--encre-douce)', fontSize: 12.5 }}>
-        Les déclarations du mois précédent se préparent dans l'onglet « Déclarations » ; le paiement se fait dans « Impôts ».
-        La date limite indiquée est celle des déclarations mensuelles (le 15).
+      <div className="sg-grille-obligations">
+        {OBLIGATIONS.map((o) => {
+          const prochaineO = ouvertes.find((e) => e.obligation.id === o.id);
+          const montant = o.dettes.length ? detteDe(o.dettes) : null;
+          const retard = prochaineO?.etat === 'retard';
+          return (
+            <div key={o.id} className="sg-obligation">
+              <div className="sg-obligation-tete">
+                <b>{o.label}</b>
+                <span className={`sg-pastille-statut ${!prochaineO ? 'ok' : retard ? 'retard' : ''}`} style={{ marginTop: 0 }}>
+                  {!prochaineO ? 'À jour' : retard ? 'En retard' : 'À venir'}
+                </span>
+                <em>Mensuelle</em>
+              </div>
+              <p className="desc">{o.desc}</p>
+              <div className="sg-obligation-pied">
+                <div>
+                  <small>Prochaine échéance</small>
+                  <span className={`date${retard ? ' retard' : ''}`}>{prochaineO ? dateFr(prochaineO.echeance) : '—'}</span>
+                  {retard && <small>En retard de {joursEntre(prochaineO.echeance, auj)} j</small>}
+                </div>
+                <div>
+                  <small style={{ textAlign: 'right' }}>Montant estimé</small>
+                  <div className="montant">{montant === null || montant === 0 ? '—' : fmt(montant)}</div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="sg-deux-colonnes">
+        <div className="sg-panneau">
+          <div className="sg-panneau-tete">
+            <h3>Calendrier fiscal</h3>
+            <span className="sg-nav-mois">
+              <button type="button" onClick={() => changerMois(-1)} aria-label="Mois précédent">‹</button>
+              {majuscule(MOIS_FR[vue.m])} {vue.a}
+              <button type="button" onClick={() => changerMois(1)} aria-label="Mois suivant">›</button>
+            </span>
+            <span className="sg-legende">
+              <span><i style={{ background: '#c7a45f' }} />À venir</span>
+              <span><i style={{ background: '#b3261e' }} />En retard</span>
+              <span><i style={{ background: '#2f6b5c' }} />Déposé</span>
+            </span>
+          </div>
+          <div className="sg-calendrier">
+            {JOURS_FR.map((j) => <div key={j} className="sg-jour-nom">{j}</div>)}
+            {cases.map((c) => (c.vide ? <div key={c.cle} className="sg-jour vide" /> : (
+              <div key={c.cle} className={`sg-jour${c.we ? ' we' : ''}${c.auj ? ' auj' : ''}`}>
+                {c.n}
+                {c.items.map((e) => <span key={e.cle} className={`sg-jour-chip ${e.etat}`}>{e.obligation.label}</span>)}
+              </div>
+            )))}
+          </div>
+        </div>
+
+        <div className="sg-panneau">
+          <div className="sg-panneau-tete">
+            <h3>Déclarations</h3>
+            <span className="sg-discret">{nomCommerce} · triées par échéance</span>
+          </div>
+          <div className="sg-groupe">À traiter · {ouvertes.length} échéance{ouvertes.length > 1 ? 's' : ''}</div>
+          {ordreListe.map((e) => (
+            <button key={e.cle} type="button" className="sg-decl" onClick={() => onOuvrir('declarations')}>
+              <span className={`sg-decl-barre ${e.etat}`} />
+              <span>
+                <span className="sg-decl-titre">{e.titre}</span>
+                <small>{nomCommerce}</small>
+              </span>
+              <span className={`sg-decl-date ${e.etat === 'retard' ? 'retard' : ''}`}>
+                {dateFr(e.echeance)}
+                <div><span className={`sg-pastille-statut ${e.etat === 'retard' ? 'retard' : e.etat === 'ok' ? 'ok' : 'neutre'}`}>
+                  {e.etat === 'retard' ? 'En retard' : e.etat === 'ok' ? 'Déposée' : 'À préparer'}
+                </span></div>
+              </span>
+            </button>
+          ))}
+          {ordreListe.length === 0 && <p style={{ padding: 18, color: 'var(--encre-douce)' }}>Aucune échéance.</p>}
+        </div>
+      </div>
+
+      <p className="sg-pied-note">
+        Dû à l'État (impôts) : <b>{fmt(totalDu)} FCFA</b> · fenêtre : 4 derniers mois + mois en cours ·{' '}
+        <button type="button" onClick={() => onOuvrir('declarations')}>Ouvrir les déclarations</button>
       </p>
     </div>
   );
@@ -979,16 +1116,12 @@ export function FiscalitePage() {
   return (
     <div>
       <ApercuPdf />
-      <div className="entete-page">
-        <div>
-          <h1>Fiscalité</h1>
-          <p style={{ color: 'var(--encre-douce)', fontSize: 13, margin: '4px 0 0' }}>
-            Déclarations DGID · impôts · calculés depuis la comptabilité et la paie · montants en FCFA
-          </p>
-        </div>
-      </div>
+      <EntetePage numero="05. FISCALITÉ" titre="Fiscalité">
+        <button type="button" className="btn" onClick={() => choisirOnglet('profil')}>Paramètres fiscaux</button>
+        <button type="button" className="btn btn-principal" onClick={() => choisirOnglet('declarations')}>Préparer une déclaration</button>
+      </EntetePage>
       <BarreSections sections={onglets} actif={onglet} onChoisir={choisirOnglet} />
-      {onglet === 'vue' && <VueEnsembleFiscalite />}
+      {onglet === 'vue' && <VueEnsembleFiscalite onOuvrir={choisirOnglet} />}
       {onglet === 'declarations' && <DeclarationsTab />}
       {onglet === 'impots' && <ImpotsTab />}
       {onglet === 'etat1024' && <Etat1024Tab />}
