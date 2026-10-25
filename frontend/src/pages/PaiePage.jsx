@@ -305,7 +305,7 @@ function SalairesTab() {
   }
 
   // Estimation affichée dans la fiche avant le calcul exact par le serveur.
-  const fcfaFiche = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
+  const fcfaFiche = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0');
   const sommePrimes = primes.reduce((t, p) => t + (Number(p.amount) || 0), 0);
   const sommeAbsences = retenues.filter((d) => d.type === 'absence').reduce((t, d) => t + (Number(d.amount) || 0), 0);
   const sommeAutres = retenues.filter((d) => d.type !== 'absence').reduce((t, d) => t + (Number(d.amount) || 0), 0);
@@ -335,13 +335,13 @@ function SalairesTab() {
         <div className="md-kpi md-kpi--hero">
           <span className="md-kpi-icone"><IconEquipe /></span>
           <p className="md-kpi-label">Masse salariale</p>
-          <p className="md-kpi-valeur">{Math.round(montantPaye).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-valeur">{Math.round(montantPaye).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
           <p className="md-kpi-sous">total des montants payés · {employesPayes.length} / {employes.length} employé(s)</p>
         </div>
         <div className={'md-kpi' + (resteAPayer > 0 ? ' md-kpi--alerte' : '')}>
           <span className="md-kpi-icone"><IconCadenas /></span>
           <p className="md-kpi-label">Reste à payer</p>
-          <p className="md-kpi-valeur">{Math.round(montantRestant).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-valeur">{Math.round(montantRestant).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
           <p className="md-kpi-sous">{resteAPayer} employé(s) non payé(s){nbSansBulletin > 0 ? ` · ${nbSansBulletin} bulletin(s) à préparer` : ''}</p>
         </div>
       </div>
@@ -408,7 +408,7 @@ function SalairesTab() {
                     {emp.role} ·{' '}
                     <span style={{ textTransform: 'none' }}>
                       {emp.monthly_salary
-                        ? `${Math.round(emp.monthly_salary).toLocaleString('fr-FR')} FCFA (${libelleMethode(emp.payment_method)})`
+                        ? `${Math.round(emp.monthly_salary).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA (${libelleMethode(emp.payment_method)})`
                         : 'salaire non configuré'}
                     </span>
                   </p>
@@ -420,9 +420,9 @@ function SalairesTab() {
                   </span>
                   <p className="md-sous">
                     {paye
-                      ? `Le ${new Date(emp.paid_at).toLocaleDateString('fr-FR')} · ${Math.round(emp.paid_amount).toLocaleString('fr-FR')} FCFA via ${libelleMethode(emp.paid_method)}`
+                      ? `Le ${new Date(emp.paid_at).toLocaleDateString('fr-FR')} · ${Math.round(emp.paid_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA via ${libelleMethode(emp.paid_method)}`
                       : emp.payslip_net
-                        ? `Net à payer : ${Math.round(Number(emp.payslip_net)).toLocaleString('fr-FR')} FCFA`
+                        ? `Net à payer : ${Math.round(Number(emp.payslip_net)).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA`
                         : `Pour ${formatMois(mois)}`}
                   </p>
                 </div>
@@ -1073,7 +1073,7 @@ function CycleDuMoisTab({ onAller }) {
 }
 
 function fmt(n) {
-  return Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 });
+  return Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 0 }).replace(/\u202f/g, '\u00a0');
 }
 
 // « Simulation de bulletin » : net souhaité → sursalaire, sans toucher au mois réel (aucune écriture,

@@ -364,7 +364,7 @@ export function CaissePage() {
   const totalEntrees = entrees.reduce((somme, x) => somme + Number(x.amount || 0), 0);
   const totalReleveEntrees = mouvementsReleve.filter((m) => m.sens === 'entree').reduce((somme, m) => somme + Number(m.amount || 0), 0);
   const totalReleveSorties = mouvementsReleve.filter((m) => m.sens !== 'entree').reduce((somme, m) => somme + Number(m.amount || 0), 0);
-  const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
+  const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0');
 
   return (
     <>
@@ -454,10 +454,10 @@ export function CaissePage() {
                         {!estCaissier && (
                           <>
                             <p style={{ fontSize: 12, color: 'var(--encre-douce)' }}>
-                              Encaissements {Math.round(m.entrees).toLocaleString('fr-FR')} · Sorties {Math.round(m.sortiesTotal).toLocaleString('fr-FR')}
+                              Encaissements {Math.round(m.entrees).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} · Sorties {Math.round(m.sortiesTotal).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')}
                             </p>
                             <p style={{ fontSize: 13, marginTop: 4 }}>
-                              Solde théorique : <strong className="chiffre">{Math.round(m.theoretical).toLocaleString('fr-FR')} FCFA</strong>
+                              Solde théorique : <strong className="chiffre">{Math.round(m.theoretical).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</strong>
                             </p>
                           </>
                         )}
@@ -479,7 +479,7 @@ export function CaissePage() {
                               className={`tampon ${ecart === 0 ? 'tampon-sarcelle' : 'tampon-brique'}`}
                               title="Écart = réel - théorique"
                             >
-                              {ecart === 0 ? 'Aucun écart' : `${ecart > 0 ? '+' : ''}${Math.round(ecart).toLocaleString('fr-FR')} FCFA`}
+                              {ecart === 0 ? 'Aucun écart' : `${ecart > 0 ? '+' : ''}${Math.round(ecart).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA`}
                             </span>
                           )}
                         </div>
@@ -670,7 +670,7 @@ export function CaissePage() {
                     <td>{s.reason}</td>
                     <td>{MOYENS_PAIEMENT.find((m) => m.value === s.payment_method)?.label || s.payment_method}</td>
                     <td>{s.user_name}</td>
-                    <td className="chiffre">{Math.round(s.amount).toLocaleString('fr-FR')} FCFA</td>
+                    <td className="chiffre">{Math.round(s.amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</td>
                     {comptaActive && (
                       <td>
                         <button type="button" className="btn" style={{ padding: '4px 10px', fontSize: 12.5 }} onClick={() => setPiecesSortie(s)}>Justificatif</button>
@@ -682,7 +682,7 @@ export function CaissePage() {
             </table>
             </div>
             {piecesSortie && (
-              <PiecesModal sourceType="sortie_caisse" sourceId={piecesSortie.id} titre={`${piecesSortie.reason} — ${Math.round(piecesSortie.amount).toLocaleString('fr-FR')} FCFA`} onClose={() => setPiecesSortie(null)} />
+              <PiecesModal sourceType="sortie_caisse" sourceId={piecesSortie.id} titre={`${piecesSortie.reason} — ${Math.round(piecesSortie.amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA`} onClose={() => setPiecesSortie(null)} />
             )}
             </>
           )}
@@ -786,7 +786,7 @@ export function CaissePage() {
                     <td>{e.reason}</td>
                     <td>{MOYENS_PAIEMENT.find((m) => m.value === e.payment_method)?.label || e.payment_method}</td>
                     <td>{e.user_name}</td>
-                    <td className="chiffre">{Math.round(e.amount).toLocaleString('fr-FR')} FCFA</td>
+                    <td className="chiffre">{Math.round(e.amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</td>
                   </tr>
                 ))}
               </tbody>
@@ -894,7 +894,7 @@ export function CaissePage() {
                       )}
                       <td>{m.user_name || '—'}</td>
                       <td className="chiffre" style={{ color: montantSigne < 0 ? 'var(--danger, #b3423a)' : undefined }}>
-                        {montantSigne >= 0 ? '+' : ''}{Math.round(montantSigne).toLocaleString('fr-FR')} FCFA
+                        {montantSigne >= 0 ? '+' : ''}{Math.round(montantSigne).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                       </td>
                     </tr>
                   );

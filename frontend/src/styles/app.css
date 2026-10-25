@@ -1,3 +1,18 @@
+/* Polices Plus Jakarta Sans chargées ici : elles sont ainsi toujours disponibles, quel que soit main.jsx. */
+@import '@fontsource/plus-jakarta-sans/400.css';
+@import '@fontsource/plus-jakarta-sans/500.css';
+@import '@fontsource/plus-jakarta-sans/600.css';
+@import '@fontsource/plus-jakarta-sans/700.css';
+@import '@fontsource/plus-jakarta-sans/800.css';
+
+/* Espaces des milliers : la police n'a pas le glyphe de l'espace fine insécable (U+202F) que le français utilise
+   dans les montants (« 4 230 869 ») ; il s'affichait donc collé. Cette police de secours ne couvre que ces espaces. */
+@font-face {
+  font-family: 'EspaceChiffres';
+  src: local('Arial'), local('Liberation Sans'), local('Helvetica'), local('Segoe UI'), local('Roboto');
+  unicode-range: U+00A0, U+2007, U+2009, U+202F;
+}
+
 .mise-en-page {
   display: flex;
   min-height: 100vh;
@@ -1690,7 +1705,7 @@ body { font-size: 1rem; }
 :root[data-theme="dark"] input,
 :root[data-theme="dark"] select,
 :root[data-theme="dark"] textarea {
-  background-color: var(--champ-fond, #222b3d);
+  background-color: #222b3d;
   color: var(--encre);
   border-color: var(--trait);
 }
@@ -1711,9 +1726,9 @@ body { font-size: 1rem; }
    toute autre feuille de style.
    ============================================================ */
 html:root {
-  --font-ui: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-chiffres: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
-  --font-marque: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+  --font-ui: 'EspaceChiffres', 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-chiffres: 'EspaceChiffres', 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
+  --font-marque: 'EspaceChiffres', 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
 
   --fs-xs: clamp(10px, 0.2vw + 9.3px, 10.8px);
   --fs-sm: clamp(11.8px, 0.3vw + 10.8px, 12.8px);
@@ -1761,12 +1776,20 @@ html:root .selecteur-boutique select {
   background-position: right 0 center;
 }
 
-/* Mode sombre : les couleurs viennent de la CHARTE du commerçant (--marine, --accent), jamais d'une palette
-   fixe. On ne redéfinit donc ni --marine ni --accent ici : on garde seulement une copie de l'accent de la charte,
-   dont les variables sombres (bloc « passe complète » plus bas) sont dérivées. */
+/* Mode sombre : variables (la palette claire reste celle de la charte). */
 html:root[data-theme="dark"] {
-  color-scheme: dark;
-  --accent-charte: var(--accent);
+  --fond: #0e1b1f;
+  --carte: #152a30;
+  --encre: #eef2f2;
+  --encre-douce: #93a3a8;
+  --trait: rgba(238, 242, 242, 0.12);
+  --marine: #0a171a;
+  --accent: #4aa595;
+  --accent-fonce: #3a8a7b;
+  --accent-clair: rgba(74, 165, 149, 0.16);
+  --accent-transparent: rgba(74, 165, 149, 0.2);
+  --champ-fond: #10222a;
+  --sidebar-fond: #0a171a;
 }
 
 /* ---------- Composants SAGFA (components/SagfaUi.jsx) ---------- */
@@ -1902,26 +1925,15 @@ html:root .btn.sg-btn-blanc:hover:not(:disabled) { background: #f3efe5; border-c
    dans l'arbre, le mode sombre l'emporte. */
 html:root[data-theme="dark"] body,
 html:root[data-theme="dark"] #root {
-  /* Fonds : la couleur Marine de la charte, assombrie (mélange avec du noir) — pas de palette fixe. */
-  --fond: color-mix(in srgb, var(--marine) 48%, #000);
-  --carte: color-mix(in srgb, var(--marine) 80%, #000);
-  --surface: var(--carte); /* utilisée (avec repli blanc) par tous les composants md-* et db-* : sans elle, cartes blanches */
-  --champ-fond: color-mix(in srgb, var(--marine) 66%, #000);
-  --sidebar-fond: color-mix(in srgb, var(--marine) 62%, #000);
-  --noir-charte: color-mix(in srgb, var(--marine) 45%, #000);
-  --marine-2: color-mix(in srgb, var(--marine) 82%, #fff);
-  --encre: #eef2f7; --encre-douce: #9aa8bc; --trait: rgba(238, 242, 247, 0.12);
-  /* Accent de la charte, éclairci pour rester lisible sur fond sombre. */
-  --accent: color-mix(in srgb, var(--accent-charte) 82%, #fff);
-  --accent-fonce: var(--accent-charte);
-  --accent-clair: color-mix(in srgb, var(--accent-charte) 24%, transparent);
-  --accent-transparent: color-mix(in srgb, var(--accent-charte) 30%, transparent);
-  --danger-clair: rgba(220, 70, 60, 0.16);
+  --fond: #0e1b1f; --carte: #152a30; --encre: #eef2f2; --encre-douce: #93a3a8;
+  --trait: rgba(238, 242, 242, 0.12); --marine: #0a171a; --marine-2: #14343b;
+  --accent: #4aa595; --accent-fonce: #3a8a7b; --accent-clair: rgba(74, 165, 149, 0.16);
+  --accent-transparent: rgba(74, 165, 149, 0.2); --champ-fond: #10222a; --sidebar-fond: #0a171a;
   color-scheme: dark;
 }
 
 /* Barre latérale : toujours sombre (marine en clair, presque noir en sombre), jamais dépendante de --encre. */
-html:root[data-theme="dark"] .barre-laterale { background-color: var(--sidebar-fond) !important; color: rgba(255, 255, 255, 0.86); border-right: 1px solid var(--trait); }
+html:root[data-theme="dark"] .barre-laterale { background-color: #0a171a !important; color: rgba(255, 255, 255, 0.86); border-right: 1px solid var(--trait); }
 html:root[data-theme="dark"] .barre-laterale .nav-lien, html:root[data-theme="dark"] .barre-laterale .nav-lien svg { color: rgba(255, 255, 255, 0.78); }
 html:root[data-theme="dark"] .barre-laterale .nav-lien.actif, html:root[data-theme="dark"] .barre-laterale .nav-lien.actif svg { color: #fff; }
 html:root[data-theme="dark"] .barre-laterale .nav-groupe-bouton { color: rgba(255, 255, 255, 0.55); }
@@ -1932,7 +1944,6 @@ html:root[data-theme="dark"] .stat-icone,
 html:root[data-theme="dark"] .carte-produit-icone,
 html:root[data-theme="dark"] .carte-entite-icone,
 html:root[data-theme="dark"] .selecteur-boutique-icone,
-html:root[data-theme="dark"] .md-kpi-icone,
 html:root[data-theme="dark"] .champ-icone {
   background: rgba(74, 165, 149, 0.16); color: #7fd0c0;
 }
@@ -1944,13 +1955,12 @@ html:root[data-theme="dark"] .md-kpi-icone svg { stroke: currentColor; }
 html:root[data-theme="dark"] .stat:hover .stat-icone,
 html:root[data-theme="dark"] .carte-entite:hover .carte-entite-icone,
 html:root[data-theme="dark"] .carte-produit:hover .carte-produit-icone,
-html:root[data-theme="dark"] .md-kpi:hover .md-kpi-icone { background: var(--accent); color: var(--noir-charte); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); }
 html:root[data-theme="dark"] .barre-haut-cloche,
 html:root[data-theme="dark"] .barre-haut-theme,
 html:root[data-theme="dark"] .barre-haut-recherche { background: var(--carte); color: var(--encre-douce); border-color: var(--trait); }
 html:root[data-theme="dark"] .barre-haut-menu { background: var(--carte); color: var(--encre); border: 1px solid var(--trait); }
 html:root[data-theme="dark"] .barre-haut-menu button { color: var(--encre); }
-html:root[data-theme="dark"] .avatar { background: var(--accent); color: var(--noir-charte); }
+html:root[data-theme="dark"] .avatar { background: var(--accent); color: #0a171a; }
 
 /* Fonds et textes clairs écrits en dur dans les styles en ligne des pages (tableaux, cartes, bandeaux…). */
 html:root[data-theme="dark"] [style*="background: rgb(255, 255, 255)"],
@@ -1985,49 +1995,44 @@ html:root[data-theme="dark"] .sg-pastille-statut.neutre { color: var(--encre-dou
 html:root[data-theme="dark"] .sg-jour.we { background: rgba(255, 255, 255, 0.03); }
 
 /* ============================================================
-   Style commun des chiffres du haut de page (24/10)
-   Même rendu que le « Cycle du mois » de la Paie : panneau marine avec
-   le dessin en diagonale derrière les écritures, petite icône, étiquette
-   en petites capitales, gros chiffre gras. S'applique d'un coup à toutes
-   les pages qui utilisent .md-kpis (stock, caisse, clients, fournisseurs,
-   équipe, comptage, commandes, ventes…) et au tableau de bord (.db-kpis).
-   Les couleurs viennent de la charte du client (--marine, --accent, --soleil).
+   Cartes de chiffres du haut de page (25/10)
+   Même style que les cartes du tableau de bord : carte marine avec le dessin en diagonale
+   (bandes bleue et dorée) derrière les écritures, icône dans une pastille, étiquette en
+   petites capitales, gros chiffre. S'applique à toutes les pages qui utilisent .md-kpis
+   (stock, caisse, clients, fournisseurs, équipe, comptage, commandes, ventes, comptabilité,
+   entreprise…). Les cartes du tableau de bord (.db-kpi) gardent leur propre définition.
    ============================================================ */
-html:root .md-kpis, html:root .db-kpis {
-  position: relative; overflow: hidden; display: grid; gap: 0;
-  grid-template-columns: repeat(auto-fit, minmax(clamp(140px, 18vw, 200px), 1fr));
-  background: var(--marine); color: #fff; border: 0; border-radius: var(--rayon, 14px);
-  margin: 0 0 var(--space-md);
+html:root .md-kpis {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(clamp(150px, 16vw, 190px), 1fr));
+  gap: 12px; margin: 0 0 var(--space-md); background: none; border: 0; box-shadow: none; padding: 0;
 }
-html:root .md-kpis::after, html:root .db-kpis::after {
-  content: ''; position: absolute; top: 0; right: 0; width: clamp(110px, 16vw, 190px); height: 100%; pointer-events: none;
-  background: linear-gradient(135deg, transparent 38%, color-mix(in srgb, var(--accent) 55%, transparent) 38%, color-mix(in srgb, var(--accent) 55%, transparent) 62%, color-mix(in srgb, var(--soleil) 60%, transparent) 62%);
-  opacity: .5; clip-path: polygon(30% 0, 100% 0, 100% 100%, 0 100%);
+html:root .md-kpi {
+  position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  color: #fff; border: 1px solid rgba(255, 255, 255, .08); border-radius: 14px; padding: 12px 14px;
+  background: linear-gradient(135deg, transparent 0 68%, rgba(31, 93, 175, .55) 68% 84%, rgba(214, 168, 67, .34) 84% 100%), var(--marine, #0d2747);
+  box-shadow: none; transform: none; transition: border-color .15s, box-shadow .15s;
 }
-html:root .md-kpi, html:root .db-kpi {
-  position: relative; z-index: 1; display: grid; grid-template-columns: auto 1fr; column-gap: 8px; row-gap: 5px; align-content: center; align-items: center;
-  background: transparent; border: 0; border-radius: 0; color: #fff; box-shadow: -1px 0 0 rgba(255, 255, 255, .14), 0 -1px 0 rgba(255, 255, 255, .14);
-  padding: var(--space-md) var(--space-lg); min-width: 0; transform: none;
+html:root .md-kpi--hero {
+  background: linear-gradient(135deg, transparent 0 60%, rgba(31, 93, 175, .7) 60% 80%, rgba(214, 168, 67, .5) 80% 100%), var(--marine, #0d2747);
+  border-color: rgba(214, 168, 67, .45);
 }
-html:root .md-kpi--hero, html:root .db-kpi--hero { background: rgba(255, 255, 255, .07); }
-html:root .md-kpi--clic, html:root .db-kpi--clic { cursor: pointer; }
-html:root .md-kpi--clic:hover, html:root .db-kpi--clic:hover { background: rgba(255, 255, 255, .1); border: 0; box-shadow: -1px 0 0 rgba(255, 255, 255, .14), 0 -1px 0 rgba(255, 255, 255, .14); }
-html:root .md-kpi-icone, html:root .db-kpi-icone {
-  width: var(--icon-sm); height: var(--icon-sm); margin: 0; padding: 0; background: transparent; border-radius: 0; box-shadow: none; color: var(--soleil);
-  display: inline-flex; align-items: center; justify-content: center;
+html:root .md-kpi--clic { cursor: pointer; }
+html:root .md-kpi--clic:hover { border-color: rgba(255, 255, 255, .35); box-shadow: 0 6px 18px rgba(13, 39, 71, .35); }
+html:root .md-kpi-icone {
+  display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; margin: 0 0 6px;
+  border-radius: 9px; background: rgba(255, 255, 255, .16); color: #fff; box-shadow: none; padding: 0;
 }
-html:root .md-kpi-icone svg, html:root .db-kpi-icone svg { width: 100%; height: 100%; }
-html:root .md-kpi-label, html:root .db-kpi-label {
-  grid-column: 2; margin: 0; font-size: var(--fs-xs); font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
-  color: rgba(255, 255, 255, .72); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+html:root .md-kpi-icone svg { width: 16px; height: 16px; }
+html:root .md-kpi--alerte .md-kpi-icone { background: rgba(248, 113, 113, .25); color: #fecaca; }
+html:root .md-kpi-label {
+  margin: 0; font-size: var(--fs-xs); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: rgba(255, 255, 255, .72);
 }
-html:root .md-kpi-valeur, html:root .db-kpi-valeur {
-  grid-column: 1 / -1; margin: 0; font-size: var(--fs-xl); font-weight: 800; letter-spacing: -.03em; line-height: 1.1; color: #fff;
+html:root .md-kpi-valeur {
+  margin: 0; font-size: var(--fs-xl); font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; color: #fff;
 }
-html:root .md-kpi-valeur small, html:root .db-kpi-valeur small { font-size: var(--fs-sm); font-weight: 600; color: rgba(255, 255, 255, .7); letter-spacing: 0; }
-html:root .md-kpi-sous, html:root .db-kpi-sous { grid-column: 1 / -1; margin: 0; font-size: var(--fs-xs); color: rgba(255, 255, 255, .65); }
-html:root .md-kpi--alerte .md-kpi-valeur, html:root .db-kpi--alerte .db-kpi-valeur { color: #ffd4cf; }
-html:root .md-kpi--alerte .md-kpi-icone, html:root .db-kpi--alerte .db-kpi-icone { color: #ff9b8f; background: transparent; }
+html:root .md-kpi-valeur small { font-size: var(--fs-sm); font-weight: 500; color: rgba(255, 255, 255, .72); }
+html:root .md-kpi--alerte .md-kpi-valeur { color: #fecaca; }
+html:root .md-kpi-sous { margin: 0; font-size: var(--fs-xs); color: rgba(255, 255, 255, .72); }
 
 /* Icônes dans les boutons : taille fixe (évite les icônes géantes) */
 html:root .btn svg { width: 16px; height: 16px; flex: none; }
@@ -2036,22 +2041,35 @@ html:root .sg-actions .btn svg, html:root .sg-bandeau .btn svg { width: 16px; he
 /* Bouton « Valider toute la paie » retiré du bandeau du Cycle du mois */
 html:root .sg-bandeau .sg-bandeau-action { display: none; }
 
-/* ============================================================
-   Icônes toujours AU-DESSUS du texte (25/10)
-   Cartes de chiffres (.md-kpi, .db-kpi) : icône en haut, puis l'étiquette, puis le chiffre — plus d'icône posée à
-   côté de l'étiquette. Même règle pour .stat. Les boutons gardent leur icône à gauche du libellé.
-   ============================================================ */
-html:root .md-kpi, html:root .db-kpi {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
-}
-html:root .md-kpi-icone, html:root .db-kpi-icone {
-  width: var(--icon-md); height: var(--icon-md); margin: 0 0 4px;
-}
-html:root .md-kpi-label, html:root .db-kpi-label { max-width: 100%; }
-html:root .md-kpi-valeur, html:root .db-kpi-valeur, html:root .md-kpi-sous, html:root .db-kpi-sous { max-width: 100%; }
-html:root .stat-icone { display: flex; }
 
-/* Champs avec icône : le texte démarre après l'icône, même si la règle générale .champ (chargée plus tard) remet un
-   padding court. Couvre les recherches de toutes les pages et la connexion. */
-html:root .champ-avec-icone input.champ--avec-icone { padding-left: 42px !important; }
-html:root .champ-avec-icone input.champ--avec-icone-droite { padding-right: 42px !important; }
+/* ============================================================
+   Dernières retouches (25/10)
+   ============================================================ */
+
+/* Police : partout, sans exception (styles en ligne et feuilles de style intégrées comprises). */
+html:root body, html:root body *:not(code):not(pre):not(kbd):not(samp),
+html:root body *::before, html:root body *::after { font-family: var(--font-ui) !important; }
+
+/* Barres de recherche : plus d'icône de loupe, le texte part du bord. */
+html:root .md-recherche .champ-icone,
+html:root .champ-avec-icone:has(input[placeholder^="Rechercher"]) .champ-icone,
+html:root .champ-avec-icone:has(input[placeholder^="Rechercher"]) > svg,
+html:root .md-recherche > svg { display: none !important; }
+html:root input[placeholder^="Rechercher"], html:root .md-recherche input { padding-left: 14px !important; background-image: none !important; }
+/* Les autres champs à icône gardent la place de leur icône (ma règle générale avait rogné ce retrait). */
+html:root input.champ--avec-icone:not([placeholder^="Rechercher"]) { padding-left: 38px; }
+
+/* Tous les boutons : même style que les cartes de chiffres (marine, icône dorée). */
+html:root .btn {
+  background: var(--marine); border: 1px solid var(--marine); color: #fff; box-shadow: none;
+}
+html:root .btn svg { color: var(--soleil); }
+html:root .btn:hover:not(:disabled) { background: color-mix(in srgb, var(--marine) 84%, #fff); border-color: color-mix(in srgb, var(--marine) 84%, #fff); color: #fff; }
+html:root .btn.btn-principal { background: var(--accent); border-color: var(--accent); color: #fff; }
+html:root .btn.btn-principal:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, #000); border-color: color-mix(in srgb, var(--accent) 86%, #000); }
+html:root .btn.btn-principal svg { color: #fff; }
+html:root .btn.btn-brique { background: var(--danger, #b3261e); border-color: var(--danger, #b3261e); color: #fff; }
+html:root .btn.btn-brique svg { color: #fff; }
+html:root[data-theme="dark"] .btn { background: #1c3a42; border-color: #1c3a42; color: #eef2f2; }
+html:root[data-theme="dark"] .btn.btn-principal { background: var(--accent); border-color: var(--accent); color: #0a171a; }
+html:root .btn.sg-btn-blanc { background: #fff; border-color: #fff; color: var(--marine); }

@@ -198,7 +198,7 @@ export function PurchaseOrdersPage() {
         <div className="md-kpi md-kpi--hero">
           <span className="md-kpi-icone"><IconBonAchat /></span>
           <p className="md-kpi-label">Montant engagé</p>
-          <p className="md-kpi-valeur">{Math.round(montantEngage).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-valeur">{Math.round(montantEngage).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
           <p className="md-kpi-sous">hors commandes annulées</p>
         </div>
         <div className="md-kpi">
@@ -258,7 +258,7 @@ export function PurchaseOrdersPage() {
                 </p>
               </div>
               <div className="md-bloc md-bloc--montant">
-                <p className="md-montant">{Math.round(Number(c.total_amount)).toLocaleString('fr-FR')} FCFA</p>
+                <p className="md-montant">{Math.round(Number(c.total_amount)).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
                 <span className="tampon" style={COULEUR_STATUT[c.status]}>{LABEL_STATUT[c.status]}</span>
               </div>
               <div className="md-actions">
@@ -347,7 +347,7 @@ export function PurchaseOrdersPage() {
               {totalEstime > 0 && (
                 <div className="md-carte" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', marginBottom: 16 }}>
                   <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>Total estimé</span>
-                  <strong style={{ fontSize: 18 }}>{Math.round(totalEstime).toLocaleString('fr-FR')} FCFA</strong>
+                  <strong style={{ fontSize: 18 }}>{Math.round(totalEstime).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</strong>
                 </div>
               )}
 

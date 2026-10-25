@@ -307,7 +307,7 @@ function FournisseursTab() {
         <div className={'md-kpi' + (detteTotale > 0 ? ' md-kpi--alerte' : '')}>
           <span className="md-kpi-icone"><IconReglement /></span>
           <p className="md-kpi-label">Dette totale</p>
-          <p className="md-kpi-valeur">{Math.round(detteTotale).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-valeur">{Math.round(detteTotale).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
           <p className="md-kpi-sous">{nbAvecDette} fournisseur(s) concerné(s)</p>
         </div>
       </div>
@@ -391,7 +391,7 @@ function FournisseursTab() {
 
                 <div className="md-bloc md-bloc--montant">
                   <p className="md-montant" style={aDette ? { color: 'var(--danger)' } : undefined}>
-                    {Math.round(Number(s.debt) || 0).toLocaleString('fr-FR')} FCFA
+                    {Math.round(Number(s.debt) || 0).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                   </p>
                   <span className={`tampon ${aDette ? 'tampon-brique' : 'tampon-sarcelle'}`}>
                     {aDette ? 'Dette en cours' : 'À jour'}
@@ -479,7 +479,7 @@ function FournisseursTab() {
             ) : (
               <>
                 <p style={{ fontSize: 15, marginBottom: 16 }}>
-                  Dette actuelle : <strong className="chiffre">{Math.round(detailFournisseur.debt).toLocaleString('fr-FR')} FCFA</strong>
+                  Dette actuelle : <strong className="chiffre">{Math.round(detailFournisseur.debt).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</strong>
                 </p>
                 <form onSubmit={handleEnregistrerReglement}>
                   <div className="champ-groupe">
@@ -539,7 +539,7 @@ function FournisseursTab() {
                       {detailFournisseur.payments.map((p) => (
                         <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, color: 'var(--encre-douce)' }}>
                           <span>{new Date(p.paid_at).toLocaleDateString('fr-FR')} · {p.user_name} · {LABEL_MOYEN[p.payment_method] || p.payment_method}</span>
-                          <span className="chiffre">{Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
+                          <span className="chiffre">{Math.round(p.amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</span>
                         </div>
                       ))}
                     </div>
@@ -732,7 +732,7 @@ function AchatsTab() {
         <div className="md-kpi md-kpi--hero">
           <span className="md-kpi-icone"><IconBonAchat /></span>
           <p className="md-kpi-label">Montant engagé</p>
-          <p className="md-kpi-valeur">{Math.round(montantEngage).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-valeur">{Math.round(montantEngage).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
           <p className="md-kpi-sous">hors commandes annulées</p>
         </div>
         <div className="md-kpi">
@@ -789,7 +789,7 @@ function AchatsTab() {
                 </p>
               </div>
               <div className="md-bloc md-bloc--montant">
-                <p className="md-montant">{Math.round(Number(c.total_amount)).toLocaleString('fr-FR')} FCFA</p>
+                <p className="md-montant">{Math.round(Number(c.total_amount)).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
                 <span className="tampon" style={COULEUR_STATUT_ACHAT[c.status]}>{LABEL_STATUT_ACHAT[c.status]}</span>
               </div>
               <div className="md-actions">
@@ -878,7 +878,7 @@ function AchatsTab() {
               {totalEstime > 0 && (
                 <div className="md-carte" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', marginBottom: 16 }}>
                   <span style={{ color: 'var(--encre-douce)', fontSize: 14 }}>Total estimé</span>
-                  <strong style={{ fontSize: 18 }}>{Math.round(totalEstime).toLocaleString('fr-FR')} FCFA</strong>
+                  <strong style={{ fontSize: 18 }}>{Math.round(totalEstime).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</strong>
                 </div>
               )}
 

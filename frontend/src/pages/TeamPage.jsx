@@ -876,7 +876,7 @@ function MesBulletinsTab() {
               <div style={{ minWidth: 0, flex: 1 }}>
                 <p className="carte-a-encaisser-numero">{formatMois(b.month)}</p>
                 <p className="carte-a-encaisser-client">
-                  Net à payer : {Math.round(b.net_a_payer).toLocaleString('fr-FR')} FCFA
+                  Net à payer : {Math.round(b.net_a_payer).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                 </p>
               </div>
               <button className="btn btn-principal" onClick={() => voirPdf(b.month)}>

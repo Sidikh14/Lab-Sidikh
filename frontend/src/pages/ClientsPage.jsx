@@ -304,7 +304,7 @@ function ClientsTab() {
       return;
     }
     if (montant > factureChoisie.reste) {
-      setDetailErreur(`Le montant dépasse le reste à payer de la facture ${factureChoisie.order_number} (${Math.round(factureChoisie.reste).toLocaleString('fr-FR')} FCFA).`);
+      setDetailErreur(`Le montant dépasse le reste à payer de la facture ${factureChoisie.order_number} (${Math.round(factureChoisie.reste).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA).`);
       return;
     }
     if (estManager && !boutiqueEncaissement) {
@@ -356,7 +356,7 @@ function ClientsTab() {
         <div className={'md-kpi' + (totalCreances > 0 ? ' md-kpi--alerte' : '')}>
           <span className="md-kpi-icone"><IconReglement /></span>
           <p className="md-kpi-label">Créances en cours</p>
-          <p className="md-kpi-valeur">{Math.round(totalCreances).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-valeur">{Math.round(totalCreances).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
           <p className="md-kpi-sous">{nbCreances} {mot}(s) concerné(s)</p>
         </div>
       </div>
@@ -416,7 +416,7 @@ function ClientsTab() {
 
                 <div className="md-bloc md-bloc--montant">
                   <p className="md-montant" style={aCreance ? { color: 'var(--danger)' } : undefined}>
-                    {aCreance ? `${Math.round(c.balance_due).toLocaleString('fr-FR')} FCFA` : 'À jour'}
+                    {aCreance ? `${Math.round(c.balance_due).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA` : 'À jour'}
                   </p>
                   <span className={`tampon ${aCreance ? 'tampon-brique' : 'tampon-sarcelle'}`}>
                     {aCreance ? 'Créance en cours' : 'Aucune créance'}
@@ -542,7 +542,7 @@ function ClientsTab() {
             ) : vueReglement ? (
               <>
                 <p style={{ fontSize: 14, marginBottom: 16 }}>
-                  Créance actuelle : <strong className="chiffre">{Math.round(clientSelectionne.balance_due).toLocaleString('fr-FR')} FCFA</strong>
+                  Créance actuelle : <strong className="chiffre">{Math.round(clientSelectionne.balance_due).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</strong>
                 </p>
                 {detailErreur && <div className="erreur">{detailErreur}</div>}
                 <form onSubmit={handleEnregistrerReglement}>
@@ -572,11 +572,11 @@ function ClientsTab() {
                               <span style={{ flex: 1, minWidth: 0, fontSize: 13 }}>
                                 <strong>{f.order_number}</strong> · {new Date(f.created_at).toLocaleDateString('fr-FR')}
                                 <span style={{ display: 'block', fontSize: 12, color: 'var(--encre-douce)' }}>
-                                  Montant {Math.round(f.montant).toLocaleString('fr-FR')} · déjà réglé {Math.round(f.avance).toLocaleString('fr-FR')} FCFA
+                                  Montant {Math.round(f.montant).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} · déjà réglé {Math.round(f.avance).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                                 </span>
                               </span>
                               <span className="chiffre" style={{ fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap' }}>
-                                reste {Math.round(f.reste).toLocaleString('fr-FR')}
+                                reste {Math.round(f.reste).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')}
                               </span>
                             </label>
                           );
@@ -613,7 +613,7 @@ function ClientsTab() {
                     />
                     {factureChoisie && (
                       <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '4px 0 0' }}>
-                        Maximum : {Math.round(factureChoisie.reste).toLocaleString('fr-FR')} FCFA (reste à payer sur {factureChoisie.order_number})
+                        Maximum : {Math.round(factureChoisie.reste).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA (reste à payer sur {factureChoisie.order_number})
                       </p>
                     )}
                   </div>
@@ -662,12 +662,12 @@ function ClientsTab() {
                   </div>
                   <div className="md-kpi">
                     <p className="md-kpi-label">Total des achats</p>
-                    <p className="md-kpi-valeur">{Math.round(totalAchats).toLocaleString('fr-FR')} <small>FCFA</small></p>
+                    <p className="md-kpi-valeur">{Math.round(totalAchats).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
                   </div>
                   <div className={'md-kpi' + (Number(clientSelectionne.balance_due) > 0 ? ' md-kpi--alerte' : '')}>
                     <p className="md-kpi-label">Créance</p>
                     <p className="md-kpi-valeur" style={Number(clientSelectionne.balance_due) > 0 ? { color: 'var(--danger)' } : undefined}>
-                      {Math.round(clientSelectionne.balance_due || 0).toLocaleString('fr-FR')} <small>FCFA</small>
+                      {Math.round(clientSelectionne.balance_due || 0).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small>
                     </p>
                   </div>
                 </div>
@@ -741,12 +741,12 @@ function ClientsTab() {
                         <tr key={o.id}>
                           <td>{o.order_number}</td>
                           <td>{new Date(o.created_at).toLocaleDateString('fr-FR')}</td>
-                          <td className="chiffre">{Number(o.total_amount).toLocaleString('fr-FR')} FCFA</td>
+                          <td className="chiffre">{Number(o.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</td>
                           <td><StatusBadge status={o.status} /></td>
                           <td>
                             {o.payment_status === 'payee' && <span className="tampon tampon-sarcelle">Payée</span>}
                             {o.payment_status === 'partielle' && (
-                              <span className="tampon tampon-laiton" title={`Reste ${Math.round(o.reste).toLocaleString('fr-FR')} FCFA`}>Partielle</span>
+                              <span className="tampon tampon-laiton" title={`Reste ${Math.round(o.reste).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA`}>Partielle</span>
                             )}
                             {o.payment_status === 'impayee' && <span className="tampon tampon-brique">Impayée</span>}
                             {!o.payment_status && '—'}
@@ -792,7 +792,7 @@ function ClientsTab() {
                           <tr key={r.id}>
                             <td>{new Date(r.created_at).toLocaleDateString('fr-FR')}</td>
                             <td>{r.order_number || '—'}</td>
-                            <td className="chiffre">{Number(r.amount).toLocaleString('fr-FR')} FCFA</td>
+                            <td className="chiffre">{Number(r.amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</td>
                             <td>{r.recorded_by_name || '—'}</td>
                           </tr>
                         ))}
@@ -1055,7 +1055,7 @@ function MutuellesTab() {
         <div className={'md-kpi' + (totalCreancesMutuelles > 0 ? ' md-kpi--alerte' : '')}>
           <span className="md-kpi-icone"><IconReglement /></span>
           <p className="md-kpi-label">À recevoir</p>
-          <p className="md-kpi-valeur">{Math.round(totalCreancesMutuelles).toLocaleString('fr-FR')} <small>FCFA</small></p>
+          <p className="md-kpi-valeur">{Math.round(totalCreancesMutuelles).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
           <p className="md-kpi-sous">{nbCreancesMutuelles} mutuelle(s) avec créance</p>
         </div>
       </div>
@@ -1115,7 +1115,7 @@ function MutuellesTab() {
 
                 <div className="md-bloc md-bloc--montant">
                   <p className="md-montant" style={aCreance ? { color: 'var(--danger)' } : undefined}>
-                    {Math.round(Number(m.debt) || 0).toLocaleString('fr-FR')} FCFA
+                    {Math.round(Number(m.debt) || 0).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                   </p>
                   <span className={`tampon ${aCreance ? 'tampon-brique' : 'tampon-sarcelle'}`}>
                     {aCreance ? 'Doit être réglée' : 'Aucune créance'}
@@ -1202,7 +1202,7 @@ function MutuellesTab() {
             ) : (
               <>
                 <p style={{ fontSize: 15, marginBottom: 16 }}>
-                  Créance actuelle : <strong className="chiffre">{Math.round(detailMutuelle.debt).toLocaleString('fr-FR')} FCFA</strong>
+                  Créance actuelle : <strong className="chiffre">{Math.round(detailMutuelle.debt).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</strong>
                 </p>
 
                 <form onSubmit={handleEnregistrerReglement}>
@@ -1286,7 +1286,7 @@ function MutuellesTab() {
                       {detailMutuelle.claims.map((c) => (
                         <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, color: 'var(--encre-douce)' }}>
                           <span>{new Date(c.created_at).toLocaleDateString('fr-FR')} — #{c.order_seq} · {c.client_name}</span>
-                          <span className="chiffre">{Math.round(c.amount).toLocaleString('fr-FR')} FCFA</span>
+                          <span className="chiffre">{Math.round(c.amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</span>
                         </div>
                       ))}
                     </div>
@@ -1300,7 +1300,7 @@ function MutuellesTab() {
                       {detailMutuelle.payments.map((p) => (
                         <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6, color: 'var(--encre-douce)' }}>
                           <span>{new Date(p.paid_at).toLocaleDateString('fr-FR')} — {p.user_name}{p.notes ? ` (${p.notes})` : ''}</span>
-                          <span className="chiffre">{Math.round(p.amount).toLocaleString('fr-FR')} FCFA</span>
+                          <span className="chiffre">{Math.round(p.amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</span>
                         </div>
                       ))}
                     </div>

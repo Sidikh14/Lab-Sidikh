@@ -896,7 +896,7 @@ export function StockPage() {
             <div className="md-kpi">
               <span className="md-kpi-icone"><IconBoite /></span>
               <p className="md-kpi-label">Valeur du stock</p>
-              <p className="md-kpi-valeur">{Math.round(valeurStockCatalogue).toLocaleString('fr-FR')} <small>FCFA</small></p>
+              <p className="md-kpi-valeur">{Math.round(valeurStockCatalogue).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
             </div>
             <div
               className={'md-kpi md-kpi--clic' + (nbRupture > 0 ? ' md-kpi--alerte' : '')}
@@ -1010,7 +1010,7 @@ export function StockPage() {
                       {p.requires_prescription && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6, fontSize: 11 }}>Ordonnance</span>}
                     </td>
                     <td className="chiffre">{codeInterne(p)}</td>
-                    <td className="chiffre">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA{p.is_weighted ? '/kg' : ''}</td>
+                    <td className="chiffre">{Math.round(p.unit_price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA{p.is_weighted ? '/kg' : ''}</td>
                     <td className="chiffre">{p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''}</td>
                     <td><StatusBadge status={p.status} /></td>
                     {peutGerer && (
@@ -1052,7 +1052,7 @@ export function StockPage() {
                     {p.requires_prescription && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6, fontSize: 11 }}>Ordonnance</span>}
                   </p>
                   <p className="carte-produit-sku">{codeInterne(p)}</p>
-                  <p className="carte-produit-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA{p.is_weighted ? '/kg' : ''}</p>
+                  <p className="carte-produit-prix">{Math.round(p.unit_price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA{p.is_weighted ? '/kg' : ''}</p>
                   <p className="carte-produit-stock">{p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''} en stock</p>
                   {peutGerer && (
                     <div className="carte-produit-actions">
@@ -1145,7 +1145,7 @@ export function StockPage() {
               return Array.from({ length: nb }, (_, i) => (
                 <div key={`${p.id}-${i}`} className="etiquette-produit">
                   <p className="etiquette-nom">{p.name}</p>
-                  <p className="etiquette-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')} FCFA</p>
+                  <p className="etiquette-prix">{Math.round(p.unit_price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
                   <CodeBarreEtiquette valeur={codeInterne(p)} />
                 </div>
               ));
@@ -1298,18 +1298,18 @@ export function StockPage() {
               <div className="md-kpi md-kpi--hero">
                 <span className="md-kpi-icone"><IconBoite /></span>
                 <p className="md-kpi-label">Chiffre d'affaires</p>
-                <p className="md-kpi-valeur">{Math.round(rapportCA).toLocaleString('fr-FR')} <small>FCFA</small></p>
+                <p className="md-kpi-valeur">{Math.round(rapportCA).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
               </div>
               <div className="md-kpi">
                 <span className="md-kpi-icone"><IconBoite /></span>
                 <p className="md-kpi-label">Marge</p>
-                <p className="md-kpi-valeur">{Math.round(rapportMarge).toLocaleString('fr-FR')} <small>FCFA</small></p>
+                <p className="md-kpi-valeur">{Math.round(rapportMarge).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
                 {rapportCA > 0 && <p className="md-kpi-sous">{Math.round((rapportMarge / rapportCA) * 100)} % du CA</p>}
               </div>
               <div className="md-kpi">
                 <span className="md-kpi-icone"><IconBoite /></span>
                 <p className="md-kpi-label">Quantité vendue</p>
-                <p className="md-kpi-valeur">{Math.round(rapportQteVendue).toLocaleString('fr-FR')}</p>
+                <p className="md-kpi-valeur">{Math.round(rapportQteVendue).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')}</p>
               </div>
             </div>
           )}
@@ -1340,8 +1340,8 @@ export function StockPage() {
                       <td className="chiffre">{Math.round(r.entrees)}</td>
                       <td className="chiffre">{Math.round(r.sorties)}</td>
                       <td className="chiffre">{Math.round(r.quantite_vendue)}</td>
-                      <td className="chiffre">{Math.round(r.chiffre_affaires).toLocaleString('fr-FR')} FCFA</td>
-                      <td className="chiffre">{Math.round(r.marge).toLocaleString('fr-FR')} FCFA</td>
+                      <td className="chiffre">{Math.round(r.chiffre_affaires).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</td>
+                      <td className="chiffre">{Math.round(r.marge).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1409,7 +1409,7 @@ export function StockPage() {
                 />
                 {Number(nouveauProduit.costPrice) > 0 && Number(nouveauProduit.unitPrice) > 0 && (
                   <p style={{ fontSize: 12, color: 'var(--encre-douce)', marginTop: 4 }}>
-                    Marge : {Math.round(Number(nouveauProduit.unitPrice) - Number(nouveauProduit.costPrice)).toLocaleString('fr-FR')} FCFA
+                    Marge : {Math.round(Number(nouveauProduit.unitPrice) - Number(nouveauProduit.costPrice)).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                     {' '}({Math.round(((Number(nouveauProduit.unitPrice) - Number(nouveauProduit.costPrice)) / Number(nouveauProduit.unitPrice)) * 100)}%)
                   </p>
                 )}
@@ -1802,7 +1802,7 @@ export function StockPage() {
                   if (!fournisseurChoisi || !(Number(fournisseurChoisi.debt) > 0)) return null;
                   return (
                     <p style={{ fontSize: 13, color: 'var(--brique, #b3423a)', marginTop: 6 }}>
-                      Dette actuelle envers {fournisseurChoisi.name} : {Math.round(fournisseurChoisi.debt).toLocaleString('fr-FR')} FCFA
+                      Dette actuelle envers {fournisseurChoisi.name} : {Math.round(fournisseurChoisi.debt).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                     </p>
                   );
                 })()}
@@ -1876,15 +1876,15 @@ export function StockPage() {
                 {erreurApercu && <p style={{ fontSize: 13, color: 'var(--brique, #b3423a)', margin: '4px 0' }}>{erreurApercu}</p>}
                 {apercuAchat ? (
                   <div style={{ fontSize: 14, lineHeight: 1.7 }}>
-                    <div>Sous-total HT : {Math.round(apercuAchat.subtotal).toLocaleString('fr-FR')} FCFA</div>
+                    <div>Sous-total HT : {Math.round(apercuAchat.subtotal).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</div>
                     {apercuAchat.discount > 0 && (
-                      <div>Réduction commerciale : − {Math.round(apercuAchat.discount).toLocaleString('fr-FR')} FCFA</div>
+                      <div>Réduction commerciale : − {Math.round(apercuAchat.discount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</div>
                     )}
                     {apercuAchat.import && apercuAchat.duties > 0 && (
-                      <div>Droits de douane : {Math.round(apercuAchat.duties).toLocaleString('fr-FR')} FCFA</div>
+                      <div>Droits de douane : {Math.round(apercuAchat.duties).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</div>
                     )}
-                    <div>{apercuAchat.import ? "TVA à l'importation" : `TVA (${apercuAchat.taxRate} %)`} : {Math.round(apercuAchat.tva).toLocaleString('fr-FR')} FCFA</div>
-                    <div style={{ fontWeight: 600 }}>Total à payer : {Math.round(apercuAchat.total).toLocaleString('fr-FR')} FCFA</div>
+                    <div>{apercuAchat.import ? "TVA à l'importation" : `TVA (${apercuAchat.taxRate} %)`} : {Math.round(apercuAchat.tva).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</div>
+                    <div style={{ fontWeight: 600 }}>Total à payer : {Math.round(apercuAchat.total).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</div>
                   </div>
                 ) : (
                   !erreurApercu && <p style={{ fontSize: 13, color: 'var(--encre-douce)', margin: 0 }}>Choisissez les articles et les quantités.</p>
@@ -1932,7 +1932,7 @@ export function StockPage() {
                     />
                     {(apercuAchat?.total || 0) > 0 && Number(entreeStock.advanceAmount) > 0 && (
                       <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
-                        Reste à devoir au fournisseur : {Math.max(0, apercuAchat.total - Number(entreeStock.advanceAmount)).toLocaleString('fr-FR')} FCFA
+                        Reste à devoir au fournisseur : {Math.max(0, apercuAchat.total - Number(entreeStock.advanceAmount)).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                       </p>
                     )}
                   </div>
@@ -2149,7 +2149,7 @@ export function StockPage() {
                 />
                 {Number(produitEnEdition.costPrice) > 0 && Number(produitEnEdition.unitPrice) > 0 && (
                   <p style={{ fontSize: 12, color: 'var(--encre-douce)', marginTop: 4 }}>
-                    Marge : {Math.round(Number(produitEnEdition.unitPrice) - Number(produitEnEdition.costPrice)).toLocaleString('fr-FR')} FCFA
+                    Marge : {Math.round(Number(produitEnEdition.unitPrice) - Number(produitEnEdition.costPrice)).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                     {' '}({Math.round(((Number(produitEnEdition.unitPrice) - Number(produitEnEdition.costPrice)) / Number(produitEnEdition.unitPrice)) * 100)}%)
                   </p>
                 )}
@@ -2372,7 +2372,7 @@ export function StockPage() {
                     {produitEnEdition.units.map((u) => (
                       <div key={u.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 10px', background: 'var(--fond-alterne, #f5f5f5)', borderRadius: 6 }}>
                         <span style={{ fontSize: 13 }}>
-                          {u.label} — {Math.round(u.price).toLocaleString('fr-FR')} FCFA
+                          {u.label} — {Math.round(u.price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                           {produitEnEdition.isWeighted ? ` (${u.quantity_per_unit} kg)` : ` (${u.quantity_per_unit} unités)`}
                         </span>
                         <button type="button" className="btn" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => handleSupprimerConditionnementEdition(u.id)}>×</button>

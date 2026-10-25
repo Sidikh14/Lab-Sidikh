@@ -18,7 +18,7 @@ function moisActuel() {
 function aujourdhui() {
   return new Date().toISOString().slice(0, 10);
 }
-const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
+const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0');
 
 const CONTRATS = [
   { value: 'cdi', label: 'CDI' },

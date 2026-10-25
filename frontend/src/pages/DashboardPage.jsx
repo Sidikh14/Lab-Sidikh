@@ -127,7 +127,7 @@ function formatMois(moisStr) {
   return `${NOMS_MOIS[Number(mois) - 1]} ${annee}`;
 }
 
-const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
+const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0');
 
 // Version courte pour les étiquettes de graphique : 1 250 000 -> 1,3 M, 125 000 -> 125 k.
 function abreger(n) {
@@ -218,19 +218,21 @@ const CSS_DASHBOARD = `
 .db-niveau--moyen{--n:#c2410c}
 .db-niveau--faible{--n:#a16207}
 .db-chip{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:var(--fs-sm);font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--n,var(--danger,#b91c1c));background:rgba(185,28,28,.1);background:color-mix(in srgb,var(--n,var(--danger,#b91c1c)) 12%,transparent)}
-.db-perime{margin:4px 0 16px;border:1px solid var(--trait,#e5e7eb);border-radius:12px;background:var(--surface,#fff);overflow:hidden}
-.db-perime-tete{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:10px 14px;background:var(--danger-clair,#fef2f2)}
-.db-perime-icone{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:28px;height:28px;border-radius:8px;background:var(--danger,#b91c1c);color:#fff}
-.db-perime-titre{min-width:0}
-.db-perime-titre h2{margin:0;font-size:var(--fs-sm);color:var(--danger,#b91c1c)}
-.db-perime-titre p{margin:2px 0 0;font-size:var(--fs-xs);color:var(--encre-douce)}
-.db-perime-total{margin:0;font-size:var(--fs-md);font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--danger,#b91c1c)}
-.db-perime-total small{display:block;margin-top:3px;font-size:var(--fs-xs);font-weight:500;color:var(--encre-douce)}
-.db-perime-liste{list-style:none;margin:0;padding:10px 14px 12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
-.db-perime-ligne{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:8px 10px;border:1px solid var(--trait,#e5e7eb);border-radius:10px;background:var(--surface,#fff)}
-.db-perime-ligne .btn{margin-top:2px}
-.db-perime-nom{margin:0;font-size:var(--fs-md);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.db-perime-meta{margin:2px 0 0;font-size:var(--fs-sm);color:var(--encre-douce)}
+.db-perime{margin:2px 0 10px;border:1px solid var(--trait,#e5e7eb);border-radius:10px;background:var(--surface,#fff);overflow:hidden}
+.db-perime-tete{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"icone total" "titre total";align-items:center;gap:2px 12px;padding:6px 10px;background:var(--danger-clair,#fef2f2)}
+.db-perime-icone{grid-area:icone;display:flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;background:var(--danger,#b91c1c);color:#fff}
+.db-perime-icone svg{width:12px;height:12px}
+.db-perime-titre{grid-area:titre;min-width:0}
+.db-perime-titre h2{margin:0;font-size:12px;line-height:1.25;color:var(--danger,#b91c1c)}
+.db-perime-titre p{margin:0;font-size:10.5px;line-height:1.25;color:var(--encre-douce);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.db-perime-total{grid-area:total;margin:0;text-align:right;font-size:13px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--danger,#b91c1c)}
+.db-perime-total small{display:block;margin-top:1px;font-size:9.5px;font-weight:500;color:var(--encre-douce)}
+.db-perime-liste{list-style:none;margin:0;padding:6px 10px 8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
+.db-perime-ligne{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:5px 8px;border:1px solid var(--trait,#e5e7eb);border-radius:8px;background:var(--surface,#fff)}
+.db-perime-nom{margin:0;font-size:12px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-perime-meta{margin:0;font-size:10.5px;line-height:1.25;color:var(--encre-douce)}
+.db-perime-ligne .db-chip{font-size:10px;padding:1px 7px}
+.db-perime-ligne .btn{margin-top:2px;padding:2px 9px;font-size:11px;min-height:0;height:auto;line-height:1.4}
 .db-hz-tete{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:12px}
 .db-hz-tete h2{margin:0;font-size:var(--fs-lg)}
 .db-hz-tete span{font-size:var(--fs-sm);color:var(--encre-douce);font-variant-numeric:tabular-nums}
@@ -747,9 +749,6 @@ function ResultatOnglet({ warehouseId, boutiqueNom }) {
                   </tfoot>
                 </table>
               </div>
-              <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--encre-douce)', margin: '10px 0 0' }}>
-                Montants en FCFA, charges hors taxe. Comptés : sorties de caisse (avec ou sans nature) et salaires payés. Non comptés : factures à payer plus tard, transferts, remboursements de retours, paiements à l'État.
-              </p>
             </div>
           )}
         </div>
@@ -840,9 +839,6 @@ function ResultatOnglet({ warehouseId, boutiqueNom }) {
                     </tfoot>
                   </table>
                 </div>
-                <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--encre-douce)', margin: '10px 0 0' }}>
-                  Montants en FCFA. Annulé : montant et (nombre) de commandes annulées, classées selon leur date de création.
-                </p>
               </div>
             </>
           )}
@@ -1242,7 +1238,7 @@ function DashboardCommerce() {
                         </p>
                       )}
                     </div>
-                    <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                    <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
                     <button
                       className="btn btn-principal"
                       disabled={chargementDetail || o.credit_request_status === 'en_attente'}
@@ -1271,7 +1267,7 @@ function DashboardCommerce() {
                           {o.returned_reason && <span style={{ color: 'var(--danger)' }}> · {o.returned_reason}</span>}
                         </p>
                       </div>
-                      <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                      <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
                       <button className="btn btn-principal" onClick={() => navigate(`/ventes?modifier=${o.id}`)}>Modifier</button>
                       <button className="btn btn-brique" onClick={() => annulerCommandeRenvoyee(o)}>Annuler</button>
                     </div>
@@ -1320,7 +1316,7 @@ function DashboardCommerce() {
                           {o.returned_reason && <span style={{ color: 'var(--danger)' }}> · {o.returned_reason}</span>}
                         </p>
                       </div>
-                      <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                      <p className="carte-a-encaisser-montant">{Math.round(o.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
                       <button className="btn btn-principal" onClick={() => navigate(`/ventes?modifier=${o.id}`)}>Modifier</button>
                       <button className="btn btn-brique" onClick={() => annulerCommandeRenvoyee(o)}>Annuler</button>
                     </div>
@@ -1382,7 +1378,6 @@ function DashboardCommerce() {
                   <span className="db-perime-icone"><IconAlerte /></span>
                   <div className="db-perime-titre">
                     <h2>{lotsPerimes.count} lot{lotsPerimes.count > 1 ? 's' : ''} périmé{lotsPerimes.count > 1 ? 's' : ''} encore en stock</h2>
-                    <p>Ces produits ne peuvent plus être vendus. Détruisez-les pour les sortir du stock.</p>
                   </div>
                   <p className="db-perime-total">
                     {fcfa(lotsPerimes.totalValue)} FCFA
@@ -1513,7 +1508,7 @@ function DashboardCommerce() {
                           {d.phone && ` · ${d.phone}`} · demandé par {d.requested_by_name || '—'}
                         </p>
                       </div>
-                      <p className="carte-a-encaisser-montant">{Math.round(d.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                      <p className="carte-a-encaisser-montant">{Math.round(d.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
                       <button className="btn btn-principal" onClick={() => approuverDemandeCredit(d)}>Approuver</button>
                       <button className="btn btn-brique" onClick={() => rejeterDemandeCredit(d)}>Rejeter</button>
                     </div>
@@ -1538,7 +1533,7 @@ function DashboardCommerce() {
                         </p>
                       </div>
                       <p className="carte-a-encaisser-montant">
-                        {Math.round(d.refund_amount).toLocaleString('fr-FR')} FCFA
+                        {Math.round(d.refund_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                       </p>
                       <button className="btn btn-principal" onClick={() => approuverDemandeRetour(d)}>Approuver</button>
                       <button className="btn btn-brique" onClick={() => refuserDemandeRetour(d)}>Rejeter</button>
@@ -1838,7 +1833,7 @@ function DashboardCommerce() {
                             <p className="carte-resume-membre-nom">{nom}</p>
                             <p className="carte-resume-membre-detail">{r.count} vente{r.count > 1 ? 's' : ''}</p>
                           </div>
-                          <p className="carte-resume-membre-total">{Math.round(r.total).toLocaleString('fr-FR')} FCFA</p>
+                          <p className="carte-resume-membre-total">{Math.round(r.total).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
                         </div>
                       ))}
                   </div>
@@ -1892,7 +1887,7 @@ function DashboardCommerce() {
                           <span className={'db-chip db-niveau--' + niveauDelai(j)}>{libelleDelai(j)}</span>
                         </td>
                         <td className="chiffre">{Math.round(Number(l.quantity))}</td>
-                        <td className="chiffre">{Math.round(Number(l.quantity) * Number(l.unit_price)).toLocaleString('fr-FR')} FCFA</td>
+                        <td className="chiffre">{Math.round(Number(l.quantity) * Number(l.unit_price)).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</td>
                       </tr>
                     );
                   })}
@@ -1930,13 +1925,13 @@ function DashboardCommerce() {
                       <tr key={it.id}>
                         <td>{it.product_name}</td>
                         <td className="chiffre">{formaterQuantite(it.quantity)}</td>
-                        <td className="chiffre">{Math.round(it.line_total).toLocaleString('fr-FR')} FCFA</td>
+                        <td className="chiffre">{Math.round(it.line_total).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 <p style={{ fontWeight: 700, textAlign: 'right' }}>
-                  Total : {Math.round(commandeDetail.total_amount).toLocaleString('fr-FR')} FCFA
+                  Total : {Math.round(commandeDetail.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                 </p>
                 <div className="actions-modale">
                   <button className="btn" onClick={() => setCommandeDetail(null)}>Fermer</button>

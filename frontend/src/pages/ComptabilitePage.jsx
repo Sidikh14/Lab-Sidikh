@@ -12,7 +12,7 @@ import { EntetePage, BandeauMarine, KpisMarine } from '../components/SagfaUi';
 // l'accès au commerçant : sinon la page redirige vers l'accueil et le lien
 // n'apparaît pas dans le menu.
 
-export const fmt = (n) => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+export const fmt = (n) => Number(n || 0).toLocaleString('fr-FR', { maximumFractionDigits: 2 }).replace(/\u202f/g, '\u00a0');
 export const dateFr = (iso) => (iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '');
 export const aujourdhui = () => new Date().toISOString().slice(0, 10);
 const debutAnnee = () => `${new Date().getFullYear()}-01-01`;

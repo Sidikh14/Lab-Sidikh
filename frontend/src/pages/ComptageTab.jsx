@@ -120,7 +120,7 @@ export function ComptageTab() {
     }
   }
 
-  const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR');
+  const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0');
   const nettoyer = (n) => Number(Number(n).toFixed(3));
 
   const selecteurBoutique = estManager && warehouses.length > 0 && (

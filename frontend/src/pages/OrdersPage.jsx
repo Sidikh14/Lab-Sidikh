@@ -1204,7 +1204,7 @@ export function OrdersPage() {
                       <span className="tampon tampon-brique">Rupture</span>
                     ) : (
                       <span className="chiffre" style={{ fontSize: 14, fontWeight: 600, minWidth: 70, textAlign: 'right' }}>
-                        {Math.round(p.unit_price).toLocaleString('fr-FR')}
+                        {Math.round(p.unit_price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')}
                       </span>
                     )}
                   </button>
@@ -1222,7 +1222,7 @@ export function OrdersPage() {
                 >
                   <span className="carte-produit-icone"><IconPanier /></span>
                   <span className="carte-caisse-nom">{p.name}</span>
-                  <span className="carte-caisse-prix">{Math.round(p.unit_price).toLocaleString('fr-FR')}</span>
+                  <span className="carte-caisse-prix">{Math.round(p.unit_price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')}</span>
                   {p.quantity_in_stock <= 0 ? (
                     <span className="tampon tampon-brique" style={{ marginTop: 4 }}>Rupture</span>
                   ) : (
@@ -1290,7 +1290,7 @@ export function OrdersPage() {
                         {l.authorizeOutOfStock && <span className="tampon tampon-brique" style={{ marginLeft: 6 }}>Reliquat</span>}
                       </p>
                       <p className="ticket-ligne-prix">
-                        {Math.round(l.option.price).toLocaleString('fr-FR')} FCFA{l.produit.is_weighted ? '/kg' : ''}
+                        {Math.round(l.option.price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA{l.produit.is_weighted ? '/kg' : ''}
                       </p>
                     </div>
                     {l.produit.is_weighted ? (
@@ -1336,17 +1336,17 @@ export function OrdersPage() {
             <div className="ticket-totaux">
               <div className="ticket-total-ligne">
                 <span>Sous-total</span>
-                <span className="chiffre">{Math.round(apercuCaisse.sousTotal).toLocaleString('fr-FR')}</span>
+                <span className="chiffre">{Math.round(apercuCaisse.sousTotal).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')}</span>
               </div>
               {apercuCaisse.tva > 0 && (
                 <div className="ticket-total-ligne">
                   <span>TVA (18 %)</span>
-                  <span className="chiffre">{Math.round(apercuCaisse.tva).toLocaleString('fr-FR')}</span>
+                  <span className="chiffre">{Math.round(apercuCaisse.tva).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')}</span>
                 </div>
               )}
               <div className="ticket-total-ligne ticket-total-ligne--principal">
                 <span>Total à payer</span>
-                <span className="chiffre">{Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA</span>
+                <span className="chiffre">{Math.round(apercuCaisse.total).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</span>
               </div>
             </div>
 
@@ -1371,15 +1371,15 @@ export function OrdersPage() {
               {venteEnCours
                 ? 'Enregistrement…'
                 : commandeEnEdition
-                ? `Enregistrer les modifications · ${Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA`
-                : `Payer · ${Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA`}
+                ? `Enregistrer les modifications · ${Math.round(apercuCaisse.total).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA`
+                : `Payer · ${Math.round(apercuCaisse.total).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA`}
             </button>
           </div>
 
           {lignesPanier.length > 0 && !ticketOuvertMobile && (
             <button type="button" className="ticket-barre-mobile" onClick={() => setTicketOuvertMobile(true)}>
               <span>Voir le ticket · {lignesPanier.length} article(s)</span>
-              <span className="chiffre">{Math.round(apercuCaisse.total).toLocaleString('fr-FR')} FCFA</span>
+              <span className="chiffre">{Math.round(apercuCaisse.total).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</span>
             </button>
           )}
         </div>
@@ -1466,12 +1466,12 @@ export function OrdersPage() {
                       <p className="hv-numero chiffre">{o.order_number}</p>
                       <p className="hv-sous">
                         {nomClient}
-                        {o.created_at ? ` · ${new Date(o.created_at).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}` : ''}
+                        {o.created_at ? ` · ${new Date(o.created_at).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).replace(/\u202f/g, '\u00a0')}` : ''}
                       </p>
                     </div>
 
                     <div className="hv-bloc hv-bloc--montant">
-                      <p className="hv-montant">{Math.round(o.total_amount).toLocaleString('fr-FR')} FCFA</p>
+                      <p className="hv-montant">{Math.round(o.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
                       <StatusBadge status={o.status} />
                       {o.has_return && <span className="hv-retour">FACTURE RETOURNÉE</span>}
                     </div>
@@ -1545,7 +1545,7 @@ export function OrdersPage() {
             <div className="hv-kpi hv-kpi--accent">
               <p className="hv-kpi-label">Montant remboursé</p>
               <p className="hv-kpi-valeur">
-                {Math.round(montantTotalRembourse).toLocaleString('fr-FR')} <small>FCFA</small>
+                {Math.round(montantTotalRembourse).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small>
               </p>
             </div>
             {estPharmacie && (
@@ -1582,7 +1582,7 @@ export function OrdersPage() {
                       </div>
 
                       <div className="hv-bloc hv-bloc--montant">
-                        <p className="hv-montant">{Math.round(d.refund_amount).toLocaleString('fr-FR')} FCFA</p>
+                        <p className="hv-montant">{Math.round(d.refund_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
                         <p className="hv-sous" style={{ marginBottom: 4 }}>{LABEL_MOYEN_PAIEMENT[d.refund_method] || d.refund_method}</p>
                         <span className={`tampon ${d.status === 'validee' ? 'tampon-sarcelle' : d.status === 'refusee' ? 'tampon-brique' : 'tampon-laiton'}`}>
                           {d.status === 'validee' ? 'Validée' : d.status === 'refusee' ? 'Refusée' : 'En attente'}
@@ -1642,7 +1642,7 @@ export function OrdersPage() {
 
                   <div className="hv-bloc hv-bloc--montant">
                     <p className="hv-montant">
-                      {r.refund_amount ? `${Math.round(r.refund_amount).toLocaleString('fr-FR')} FCFA` : '—'}
+                      {r.refund_amount ? `${Math.round(r.refund_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA` : '—'}
                     </p>
                     {r.refund_amount ? (
                       <p className="hv-sous">{LABEL_MOYEN_PAIEMENT[r.refund_method] || r.refund_method}</p>
@@ -1784,8 +1784,8 @@ export function OrdersPage() {
                   </span>
                   <span className="chiffre">
                     {option.unitId === null && choixConditionnement.is_weighted
-                      ? `${Math.round(option.price).toLocaleString('fr-FR')} FCFA/kg`
-                      : `${Math.round(option.price).toLocaleString('fr-FR')} FCFA`}
+                      ? `${Math.round(option.price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA/kg`
+                      : `${Math.round(option.price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA`}
                   </span>
                 </button>
               ))}
@@ -1802,7 +1802,7 @@ export function OrdersPage() {
           <div className="modale" onClick={(e) => e.stopPropagation()}>
             <h2>{saisiePoids.name}</h2>
             <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-              {Math.round(saisiePoids.unit_price).toLocaleString('fr-FR')} FCFA/kg · {Number(saisiePoids.quantity_in_stock).toFixed(1)} kg en stock
+              {Math.round(saisiePoids.unit_price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA/kg · {Number(saisiePoids.quantity_in_stock).toFixed(1)} kg en stock
             </p>
             <form onSubmit={handleValiderPoids}>
               <div className="champ-groupe">
@@ -1821,7 +1821,7 @@ export function OrdersPage() {
               </div>
               {Number(valeurPoids) > 0 && (
                 <p style={{ fontSize: 14, marginBottom: 12 }}>
-                  Total : <strong>{Math.round(Number(valeurPoids) * saisiePoids.unit_price).toLocaleString('fr-FR')} FCFA</strong>
+                  Total : <strong>{Math.round(Number(valeurPoids) * saisiePoids.unit_price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</strong>
                 </p>
               )}
               <div className="actions-modale">
@@ -2140,13 +2140,13 @@ export function OrdersPage() {
                     <div key={it.id} className="hv-detail-ligne">
                       <span>{it.product_name}</span>
                       <span className="chiffre" style={{ color: 'var(--encre-douce)' }}>× {it.quantity}</span>
-                      <span className="chiffre" style={{ fontWeight: 600 }}>{Math.round(it.line_total).toLocaleString('fr-FR')} FCFA</span>
+                      <span className="chiffre" style={{ fontWeight: 600 }}>{Math.round(it.line_total).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</span>
                     </div>
                   ))}
                 </div>
                 <div className="hv-detail-total">
                   <span>Total</span>
-                  <strong>{Math.round(detailCommande.total_amount).toLocaleString('fr-FR')} FCFA</strong>
+                  <strong>{Math.round(detailCommande.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</strong>
                 </div>
                 <div className="actions-modale">
                   <button className="btn" onClick={() => setDetailCommande(null)}>Fermer</button>
@@ -2210,7 +2210,7 @@ export function OrdersPage() {
                   <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '0 0 4px' }}>Numéro à donner au client</p>
                   <p className="chiffre" style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{confirmationVente.order_number}</p>
                   <p style={{ fontSize: 13, color: 'var(--encre-douce)', margin: '4px 0 0' }}>
-                    Total : {Math.round(confirmationVente.total_amount).toLocaleString('fr-FR')} FCFA
+                    Total : {Math.round(confirmationVente.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                   </p>
                 </>
               )}
@@ -2235,7 +2235,7 @@ export function OrdersPage() {
             <div style={{ background: 'var(--fond)', border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', padding: '14px', marginBottom: 16 }}>
               <p className="chiffre" style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>{confirmationModification.order_number}</p>
               <p style={{ fontSize: 13, color: 'var(--encre-douce)', margin: '4px 0 0' }}>
-                Nouveau total : {Math.round(confirmationModification.total_amount).toLocaleString('fr-FR')} FCFA
+                Nouveau total : {Math.round(confirmationModification.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
               </p>
             </div>
             <button className="btn btn-principal" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setConfirmationModification(null)}>

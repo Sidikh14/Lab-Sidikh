@@ -278,28 +278,28 @@ export function SettingsPage() {
                 <div className="md-kpi md-kpi--hero">
                   <span className="md-kpi-icone"><IconPiece /></span>
                   <p className="md-kpi-label">Valeur du stock</p>
-                  <p className="md-kpi-valeur">{Math.round(zakat.valeurStock).toLocaleString('fr-FR')} <small>FCFA</small></p>
+                  <p className="md-kpi-valeur">{Math.round(zakat.valeurStock).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
                 </div>
                 <div className="md-kpi">
                   <span className="md-kpi-icone"><IconPiece /></span>
                   <p className="md-kpi-label">Créances clients</p>
-                  <p className="md-kpi-valeur">{Math.round(zakat.creancesClients).toLocaleString('fr-FR')} <small>FCFA</small></p>
+                  <p className="md-kpi-valeur">{Math.round(zakat.creancesClients).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
                 </div>
                 <div className="md-kpi">
                   <span className="md-kpi-icone"><IconPiece /></span>
                   <p className="md-kpi-label">Dettes fournisseurs</p>
-                  <p className="md-kpi-valeur">− {Math.round(zakat.dettesFournisseurs).toLocaleString('fr-FR')} <small>FCFA</small></p>
+                  <p className="md-kpi-valeur">− {Math.round(zakat.dettesFournisseurs).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} <small>FCFA</small></p>
                 </div>
               </div>
 
               <div className="modale" style={{ maxWidth: 420, padding: 20 }}>
                 <p className="etiquette" style={{ marginBottom: 6 }}>Base zakatable</p>
                 <p style={{ fontSize: 18, fontWeight: 700, marginBottom: 16 }}>
-                  {Math.round(zakat.base).toLocaleString('fr-FR')} FCFA
+                  {Math.round(zakat.base).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                 </p>
                 <p className="etiquette" style={{ marginBottom: 6 }}>Zakat à verser (2,5 %)</p>
                 <p style={{ fontSize: 26, fontWeight: 800, color: 'var(--accent)' }}>
-                  {Math.round(zakat.montant).toLocaleString('fr-FR')} FCFA
+                  {Math.round(zakat.montant).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA
                 </p>
               </div>
 
@@ -324,8 +324,8 @@ export function SettingsPage() {
                         <tr key={i}>
                           <td>{new Date(h.cycle_start).toLocaleDateString('fr-FR')}</td>
                           <td>{new Date(h.closed_at).toLocaleDateString('fr-FR')}</td>
-                          <td className="chiffre">{Math.round(h.base).toLocaleString('fr-FR')} FCFA</td>
-                          <td className="chiffre">{Math.round(h.montant).toLocaleString('fr-FR')} FCFA</td>
+                          <td className="chiffre">{Math.round(h.base).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</td>
+                          <td className="chiffre">{Math.round(h.montant).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</td>
                         </tr>
                       ))}
                     </tbody>

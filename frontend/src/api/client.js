@@ -1,3 +1,27 @@
+// Espaces des milliers : le français formate « 4 230 869 » avec une espace fine insécable (U+202F) que la police
+// du logiciel ne possède pas (elle s'affichait collée). On la remplace par l'espace insécable classique (U+00A0),
+// pour tous les montants et nombres du logiciel, sans toucher aux pages une par une.
+(function corrigerEspacesDesNombres() {
+  if (typeof Intl === 'undefined' || Number.prototype.toLocaleString.__espacesCorriges) return;
+  const corriger = (t) => (typeof t === 'string' ? t.replace(/\u202f/g, '\u00a0') : t);
+
+  const originale = Number.prototype.toLocaleString;
+  const enveloppe = function toLocaleString(...args) { return corriger(originale.apply(this, args)); };
+  enveloppe.__espacesCorriges = true;
+  Number.prototype.toLocaleString = enveloppe;
+
+  const descripteur = Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, 'format');
+  if (descripteur && descripteur.get) {
+    Object.defineProperty(Intl.NumberFormat.prototype, 'format', {
+      configurable: true,
+      get() {
+        const f = descripteur.get.call(this);
+        return (valeur) => corriger(f(valeur));
+      },
+    });
+  }
+})();
+
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
 
 function getToken() {
@@ -392,7 +416,6 @@ export const api = {
     request('/clients', { method: 'POST', body: JSON.stringify(data) }),
   updateClient: (id, data) =>
     request(`/clients/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  deleteClient: (id) => request(`/clients/${id}`, { method: 'DELETE' }),
   recordCreditPayment: (id, data) =>
     request(`/clients/${id}/credit-payments`, { method: 'POST', body: JSON.stringify(data) }),
   getClientWhatsappStatement: (id) =>
@@ -462,8 +485,8 @@ export const api = {
   setUserRole: (id, roles) =>
     request(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify(Array.isArray(roles) ? { roles } : { role: roles }) }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
-  setUserPermissions: (id, modules, actions = {}) =>
-    request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules, actions }) }),
+  setUserPermissions: (id, modules) =>
+    request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules }) }),
   // Le serveur génère le mot de passe provisoire : il est renvoyé une seule fois dans la réponse.
   resetUserPassword: (id) =>
     request(`/users/${id}/password`, { method: 'PATCH' }),
