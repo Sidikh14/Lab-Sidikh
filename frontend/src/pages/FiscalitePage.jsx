@@ -119,9 +119,6 @@ function RegistreBrs({ mois, lignes, onChange }) {
   return (
     <div style={{ margin: '18px 0' }}>
       <h3 style={{ fontSize: 15, marginBottom: 6 }}>Registre des sommes versées à des tiers — {libelleMois(mois)}</h3>
-      <p style={{ color: 'var(--encre-douce)', fontSize: 13, margin: '0 0 10px' }}>
-        Ajoutez uniquement les loyers et prestations payés à des tiers qui sont soumis à la retenue à la source : la retenue est calculée à 5 % du montant brut.
-      </p>
       {erreur && <div className="erreur">{erreur}</div>}
       <form onSubmit={ajouter} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 12 }}>
         <input className="champ" style={{ flex: '2 1 160px' }} placeholder="Bénéficiaire" value={form.beneficiaryName} onChange={(e) => setForm({ ...form, beneficiaryName: e.target.value })} required />
@@ -257,10 +254,6 @@ function DeclarationsTab() {
 
   return (
     <div>
-      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0 }}>
-        Chaque déclaration reprend la présentation des documents de la DGID : renseignements du contribuable, puis annexe fiscale avec des lignes numérotées.
-        Ouvrez la fiche PDF, saisissez les montants sur le portail (Mon Espace Perso ou e-Tax), puis enregistrez ici le numéro de récépissé.
-      </p>
       {erreurAction && <div className="erreur">{erreurAction}</div>}
 
       <style>{STYLE_CARTES}</style>
@@ -565,9 +558,6 @@ function ProfilTab() {
 
   return (
     <form onSubmit={enregistrer} style={{ maxWidth: 520 }}>
-      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0 }}>
-        Ces informations figurent en en-tête des fiches de déclaration. Elles doivent correspondre à celles de votre dossier à la DGID.
-      </p>
       {erreur && <div className="erreur">{erreur}</div>}
       {succes && <p style={{ color: 'var(--succes, #1a7f37)', fontSize: 13 }}>{succes}</p>}
       <div className="champ-groupe">
@@ -643,10 +633,6 @@ function Etat1024Tab() {
 
   return (
     <div>
-      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0, maxWidth: 640 }}>
-        Salaires et rémunérations versés sur l'année, par salarié, calculés depuis les bulletins de paie
-        validés — base du formulaire État 1024 de la DGID.
-      </p>
       <div className="sg-form-ligne">
         <div>
           <Etiquette>Année</Etiquette>
@@ -744,10 +730,6 @@ function ImpotsDirectsTab() {
   const aujourdhuiIso = aujourdhui();
   return (
     <div>
-      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0, maxWidth: 680 }}>
-        Suivi des impôts directs de l'année : IS / minimum forfaitaire, acomptes, patente, contribution foncière.
-        Aucun montant n'est calculé automatiquement : saisissez le montant de l'avis ou de la déclaration.
-      </p>
       <div style={{ marginBottom: 14 }}>
         <Etiquette>Année</Etiquette>
         <input type="number" value={annee} onChange={(e) => setAnnee(e.target.value)} style={{ width: 100 }} />
@@ -839,10 +821,6 @@ function CguTab() {
 
   return (
     <div>
-      <p style={{ color: 'var(--encre-douce)', fontSize: 13.5, marginTop: 0, maxWidth: 680 }}>
-        Contribution globale unique : le montant se déduit du chiffre d'affaires de l'année selon le barème ci-dessous
-        (à faire valider par votre comptable).
-      </p>
       {(erreur || erreurChargement) && <div className="erreur">{erreur || erreurChargement}</div>}
       {message && <p style={{ color: '#137a4b' }}>{message}</p>}
 

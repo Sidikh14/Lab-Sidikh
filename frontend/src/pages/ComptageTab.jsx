@@ -351,7 +351,7 @@ export function ComptageTab() {
       </div>
 
       {estManager && !chargementBoutiques && warehouses.length === 0 && (
-        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de faire un inventaire.</p>
+        <p className="etat-vide">Aucune boutique.</p>
       )}
 
       {erreur && <div className="erreur">{erreur}</div>}

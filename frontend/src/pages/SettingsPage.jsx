@@ -14,6 +14,15 @@ function IconEntreprise() {
   );
 }
 
+function IconPiece() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v10M9.5 9.5h3.8a1.7 1.7 0 010 3.5h-2.6a1.7 1.7 0 000 3.5h3.8" />
+    </svg>
+  );
+}
+
 // Convertit un fichier image choisi par l'utilisateur en data URI base64
 // (PNG/JPEG), pour l'envoyer et le stocker tel quel côté backend — même
 // logique que la police déjà intégrée aux PDF, pas de stockage externe.
@@ -139,11 +148,6 @@ export function SettingsPage() {
 
       {onglet === 'informations' && (
         <>
-      <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 20, maxWidth: 640 }}>
-        Ces informations apparaissent automatiquement sur les factures (logo, NINEA, RCCM, adresse en
-        entête ; coordonnées bancaires, Mobile Money et conditions de règlement en pied de page) pour
-        des documents plus professionnels.
-      </p>
 
       {erreur && <div className="erreur">{erreur}</div>}
       {message && (
@@ -257,10 +261,6 @@ export function SettingsPage() {
 
       {onglet === 'zakat' && voitZakat && (
         <>
-          <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 20, maxWidth: 640 }}>
-            Zakat sur les biens de commerce (zakat al-tijara) : 2,5 % de la valeur du stock, augmentée des
-            créances clients non réglées et diminuée des dettes fournisseurs non réglées.
-          </p>
 
           {erreurZakat && <div className="erreur">{erreurZakat}</div>}
 
@@ -271,22 +271,24 @@ export function SettingsPage() {
               <div className="tampon tampon-sarcelle" style={{ display: 'block', marginBottom: 20 }}>
                 Cycle en cours depuis le {new Date(zakat.cycleStart).toLocaleDateString('fr-FR')} —{' '}
                 {zakat.joursRestants} jour{zakat.joursRestants > 1 ? 's' : ''} avant la fin du hawl (
-                {zakat.dureeHawlJours} jours). Le calcul se met à jour en continu et se réinitialisera
-                automatiquement à cette échéance.
+                {zakat.dureeHawlJours} jours).
               </div>
 
-              <div className="ligne-stats" style={{ marginBottom: 24 }}>
-                <div className="stat">
-                  <span className="etiquette">Valeur du stock</span>
-                  <span className="valeur">{Math.round(zakat.valeurStock).toLocaleString('fr-FR')} FCFA</span>
+              <div className="md-kpis">
+                <div className="md-kpi md-kpi--hero">
+                  <span className="md-kpi-icone"><IconPiece /></span>
+                  <p className="md-kpi-label">Valeur du stock</p>
+                  <p className="md-kpi-valeur">{Math.round(zakat.valeurStock).toLocaleString('fr-FR')} <small>FCFA</small></p>
                 </div>
-                <div className="stat">
-                  <span className="etiquette">Créances clients</span>
-                  <span className="valeur">{Math.round(zakat.creancesClients).toLocaleString('fr-FR')} FCFA</span>
+                <div className="md-kpi">
+                  <span className="md-kpi-icone"><IconPiece /></span>
+                  <p className="md-kpi-label">Créances clients</p>
+                  <p className="md-kpi-valeur">{Math.round(zakat.creancesClients).toLocaleString('fr-FR')} <small>FCFA</small></p>
                 </div>
-                <div className="stat">
-                  <span className="etiquette">Dettes fournisseurs</span>
-                  <span className="valeur">− {Math.round(zakat.dettesFournisseurs).toLocaleString('fr-FR')} FCFA</span>
+                <div className="md-kpi">
+                  <span className="md-kpi-icone"><IconPiece /></span>
+                  <p className="md-kpi-label">Dettes fournisseurs</p>
+                  <p className="md-kpi-valeur">− {Math.round(zakat.dettesFournisseurs).toLocaleString('fr-FR')} <small>FCFA</small></p>
                 </div>
               </div>
 

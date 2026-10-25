@@ -189,7 +189,7 @@ export function PurchaseOrdersPage() {
       </div>
 
       {estManager && !chargementBoutiques && warehouses.length === 0 && (
-        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de commander.</p>
+        <p className="etat-vide">Aucune boutique.</p>
       )}
 
       {erreur && <div className="erreur">{erreur}</div>}
@@ -235,7 +235,7 @@ export function PurchaseOrdersPage() {
       </div>
 
       {suppliers.length === 0 && !chargement && (
-        <p className="etat-vide">Ajoutez d'abord un fournisseur avant de créer une commande.</p>
+        <p className="etat-vide">Aucun fournisseur.</p>
       )}
 
       {chargement ? (

@@ -146,10 +146,11 @@ export function AlertesPaie() {
   useEffect(() => {
     api.getPayrollAlerts().then((d) => setItems(d.items || [])).catch(() => setItems([]));
   }, []);
-  if (items.length === 0) return null;
+  const visibles = items.filter((a) => a.severity !== 'info');
+  if (visibles.length === 0) return null;
   return (
     <div style={{ marginBottom: 16 }}>
-      {items.map((a, i) => (
+      {visibles.map((a, i) => (
         <div key={i} className={a.severity === 'info' ? 'md-info' : 'erreur'} style={{ marginBottom: 6 }}>{a.message}</div>
       ))}
     </div>
@@ -193,9 +194,6 @@ export function ActionsMois({ mois, onChange }) {
 
       {paiement && (
         <Fenetre sigle="€" titre="Payer tous les salaires" sous={formatMois(mois)} onClose={() => setPaiement(false)}>
-          <div className="md-info">
-            Chaque employé est payé selon le mode de sa fiche, au montant exact de son bulletin. Les sorties d'argent sont prises sur la caisse de la boutique choisie, dont le solde est vérifié avant tout paiement.
-          </div>
           <Section numero="1" titre="Boutique dont la caisse paie">
             <Champ id="pt-boutique" label="Boutique">
               <select id="pt-boutique" className="champ" value={boutique} onChange={(e) => setBoutique(e.target.value)}>
@@ -452,7 +450,6 @@ export function EmployesTab() {
               </Section>
 
               <Section numero="4" titre="Simulateur net → brut">
-                <p className="md-aide">Indiquez le net souhaité : le brut correspondant est estimé avec vos réglages de paie (parts fiscales et IPRES/CSS de la fiche, hors primes et retenues).</p>
                 <div className="md-fiche-grille">
                   <Champ id="sim-net" label="Net souhaité (FCFA)"><input id="sim-net" type="number" min="1" className="champ" value={simu.netVoulu} onChange={(e) => setSimu((s) => ({ ...s, netVoulu: e.target.value, resultat: null }))} /></Champ>
                 </div>
@@ -622,7 +619,6 @@ export function AbsencesHeuresTab() {
       <h2 style={{ fontSize: 16, margin: '22px 0 10px' }}>Heures supplémentaires</h2>
       {majorations.length === 0 && (
         <div className="md-info">
-          Aucune majoration n'est encore configurée. Vous pouvez charger les majorations courantes (+15 %, +40 %, nuit +60 %, dimanche et jours fériés +100 %), à vérifier avec votre convention collective, ou les créer vous-même dans Réglages paie.
           <div style={{ marginTop: 8 }}>
             <button type="button" className="btn btn-principal" onClick={chargerMajorationsCourantes}>Charger les majorations courantes</button>
           </div>
@@ -963,9 +959,6 @@ export function DocumentsRhTab() {
 
   return (
     <>
-      <div className="md-info">
-        Les textes des contrats sont fixes. Seules les informations de l'employé, du poste et de la rémunération changent, et vous pouvez les corriger avant l'impression. Aucun docRh n'est conservé : vous le générez quand vous en avez besoin. Faites valider les modèles de contrat par un professionnel du droit du travail avant tout usage officiel.
-      </div>
       {erreur && !docRh && <div className="erreur">{erreur}</div>}
       {message && <div className="md-info">{message}</div>}
 
@@ -1174,7 +1167,6 @@ export function ReglagesPeriodeSection() {
   return (
     <form onSubmit={enregistrer} style={{ marginTop: 28 }}>
       <h2 style={{ fontSize: 16, marginBottom: 10 }}>Absences et heures supplémentaires</h2>
-      <p className="md-aide" style={{ marginBottom: 10 }}>Aucune valeur légale n'est imposée : renseignez ce qui s'applique à votre entreprise, après validation par un professionnel.</p>
       <div style={{ display: 'flex', gap: 12, marginBottom: 18 }}>
         <div className="champ-groupe" style={{ flex: 1 }}>
           <label className="etiquette">Base de jours (retenue d'absence)</label>

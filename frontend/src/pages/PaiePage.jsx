@@ -459,11 +459,6 @@ function SalairesTab() {
               </div>
             </div>
 
-            {employeBulletin.paid_at && (
-              <div className="md-info">
-                Ce mois est déjà payé : le bulletin est verrouillé (consultation et PDF uniquement).
-              </div>
-            )}
 
             {chargementBulletin ? (
               <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
@@ -531,9 +526,6 @@ function SalairesTab() {
                       />
                       Affilié à la CSS (prestations familiales / accidents du travail)
                     </label>
-                    <p className="md-aide" style={{ marginTop: 6 }}>
-                      Cochez seulement ce qui s'applique à ce salarié : une part non cochée n'est pas calculée sur son bulletin.
-                    </p>
                   </div>
                 </section>
 
@@ -606,9 +598,6 @@ function SalairesTab() {
                       <button key={t.value} type="button" className="md-puce" onClick={() => ajouterRetenue(t.value)}>+ {t.court}</button>
                     ))}
                   </div>
-                  <p className="md-aide">
-                    Une absence réduit le brut : cotisations et impôt sont recalculés. Une avance, un prêt ou une autre retenue est déduite du net, après les impôts.
-                  </p>
                 </section>
 
                 {/* 4. Récapitulatif */}
@@ -629,11 +618,6 @@ function SalairesTab() {
                         <span>Net à payer</span>
                         <strong>{fcfaFiche(bulletinCalcule.net_a_payer)} FCFA</strong>
                       </div>
-                      {ficheModifiee && (
-                        <p className="md-aide" style={{ color: 'var(--danger)', marginTop: 8 }}>
-                          La fiche a été modifiée : clique sur « Recalculer et enregistrer » pour mettre à jour ces chiffres.
-                        </p>
-                      )}
                     </div>
                   ) : (
                     <div className="md-recap">
@@ -642,9 +626,6 @@ function SalairesTab() {
                       {recapLigne('Salaire brut', (Number(salaireSaisi) || 0) + sommePrimes, { fort: true, separe: true })}
                       {sommeAbsences > 0 && recapLigne('Absences non rémunérées', sommeAbsences, { signe: '−' })}
                       {sommeAutres > 0 && recapLigne('Avances, prêts et autres retenues', sommeAutres, { signe: '−' })}
-                      <p className="md-aide" style={{ marginTop: 8 }}>
-                        Estimation avant cotisations et impôt. Clique sur « Calculer » pour obtenir le net exact.
-                      </p>
                     </div>
                   )}
                 </section>
@@ -697,9 +678,6 @@ function SalairesTab() {
             <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
               {formatMois(mois)}
             </p>
-            <p style={{ fontSize: 12, color: 'var(--succes, #1a7f37)', marginBottom: 12 }}>
-              Montant verrouillé sur le net du bulletin de paie généré.
-            </p>
             <form onSubmit={confirmerPaiement}>
               <div className="champ-groupe">
                 <label className="etiquette" htmlFor="paiement-montant">Montant versé (FCFA)</label>
@@ -726,8 +704,7 @@ function SalairesTab() {
                 </select>
                 {methodePaiement === 'virement' ? (
                   <p style={{ fontSize: 12, color: 'var(--encre-douce)', marginTop: 4 }}>
-                    Le virement n'impacte pas la caisse, seulement le journal d'activité.
-                  </p>
+                    </p>
                 ) : (
                   <p style={{ fontSize: 12, color: 'var(--encre-douce)', marginTop: 4 }}>
                     Ce montant sera débité de la caisse {libelleMethode(methodePaiement)}.
@@ -848,11 +825,6 @@ function ReglagesPaieTab() {
 
   return (
     <>
-      <p style={{ fontSize: 13, color: 'var(--encre-douce)', maxWidth: 640, marginBottom: 20 }}>
-        Ces taux et barèmes déterminent le calcul brut → net des bulletins de paie. Les valeurs de
-        départ sont indicatives — fais-les valider par un comptable ou sur impotsetdomaines.gouv.sn
-        avant de t'en servir pour payer réellement tes employés.
-      </p>
 
       {erreur && <div className="erreur">{erreur}</div>}
       {succes && <p style={{ color: 'var(--succes, #1a7f37)', fontSize: 13, marginBottom: 12 }}>{succes}</p>}
@@ -1055,11 +1027,6 @@ function CycleDuMoisTab({ onAller }) {
         titre={aValider > 0 ? `${aValider} bulletin${aValider > 1 ? 's' : ''} à valider` : 'Tous les bulletins sont validés'}
         etapes={etapes}
         onEtape={(id) => destination[id] && onAller(destination[id])}
-        action={(
-          <button type="button" className="btn sg-btn-blanc" disabled={enCours || aValider === 0} onClick={validerToutLaPaie}>
-            {Icones.coche}{enCours ? 'Génération…' : 'Valider toute la paie'}
-          </button>
-        )}
       />
 
       <RangeeChiffres cartes={[
@@ -1187,10 +1154,6 @@ function SimulationBulletinTab() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 1000 }}>
       <div>
         <p style={{ margin: 0, fontSize: 12, letterSpacing: '0.08em', color: 'var(--encre-douce)', textTransform: 'uppercase' }}>Simulation de bulletin</p>
-        <p style={{ margin: '6px 0 0', color: 'var(--encre-douce)', fontSize: 14, maxWidth: 640, lineHeight: 1.5 }}>
-          Trouve la prime à ajouter pour qu'un salarié touche exactement le net voulu. Rien n'est enregistré :
-          le bulletin n'existe qu'une fois généré depuis l'onglet Salariés.
-        </p>
       </div>
 
       <form onSubmit={calculer} style={{ ...carte, display: 'flex', flexWrap: 'wrap', gap: 18, alignItems: 'flex-end' }}>

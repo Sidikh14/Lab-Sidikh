@@ -688,10 +688,6 @@ function EquipeTab() {
         <div className="modale-fond" onClick={() => setMembrePermissions(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
             <h2>Permissions de {membrePermissions.full_name}</h2>
-            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-              Cochez les pages que ce membre peut voir, puis, pour chacune, les actions précises qu'il peut y faire (décocher une action la lui retire).
-              {rolesDe(membrePermissions).includes('comptable') ? ' Pour un comptable, choisissez aussi parmi Comptabilité, Fiscalité et Paie.' : ''}
-            </p>
             <form onSubmit={handleSavePermissions}>
               {MODULES.filter((m) => !m.finance || rolesDe(membrePermissions).includes('comptable')).map((m) => (
                 <div key={m.value} style={{ marginBottom: 10 }}>
@@ -720,7 +716,7 @@ function EquipeTab() {
                 </div>
               ))}
 
-              <p style={{ fontSize: 13, color: 'var(--encre-douce)', margin: '14px 0 8px' }}>Autres actions (selon les pages déjà accessibles à ce membre) :</p>
+              <p style={{ fontSize: 13, fontWeight: 700, margin: '14px 0 8px' }}>Autres actions</p>
               {MODULES_HORS_BASCULE.map((m) => (
                 <div key={m.value} style={{ marginBottom: 10 }}>
                   <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{m.label}</p>
@@ -755,9 +751,6 @@ function EquipeTab() {
         <div className="modale-fond" onClick={() => setMembreMotDePasse(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
             <h2>Réinitialiser le mot de passe de {membreMotDePasse.full_name}</h2>
-            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 16 }}>
-              Un mot de passe provisoire sera généré. Le membre devra le changer à sa prochaine connexion.
-            </p>
             <div className="actions-modale">
               <button type="button" className="btn" onClick={() => setMembreMotDePasse(null)}>
                 Fermer

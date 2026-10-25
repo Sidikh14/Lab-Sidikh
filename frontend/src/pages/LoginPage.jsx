@@ -864,6 +864,24 @@ const STYLES = `
   .ecran-connexion-partage .champ-icone--bouton svg { transition: rotate 0.3s ease, scale 0.2s ease; }
   .ecran-connexion-partage .champ-icone--bouton:hover svg { scale: 1.12; }
   .ecran-connexion-partage .champ-icone--bouton:active svg { rotate: 12deg; }
+  /* Bouton œil du mot de passe : à DROITE du champ (il était posé à gauche, par-dessus le cadenas),
+     cliquable, et sans l'apparence d'un bouton natif. */
+  .ecran-connexion-partage .champ-avec-icone .champ-icone--bouton {
+    left: auto !important;
+    right: 10px !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    pointer-events: auto;
+    z-index: 2;
+  }
+  .ecran-connexion-partage .champ-avec-icone input.champ--avec-icone-droite { padding-right: 46px; }
 
   .ecran-connexion-partage .lp-note {
     display: flex;

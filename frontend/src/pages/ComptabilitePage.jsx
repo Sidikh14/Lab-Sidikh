@@ -582,7 +582,7 @@ function GrandLivreTab() {
       </div>
       {erreur && <div className="erreur">{erreur}</div>}
       {!code ? (
-        <p className="etat-vide">Choisissez un compte, ou le grand livre général pour tous les comptes.</p>
+        <p className="etat-vide">Aucun compte sélectionné.</p>
       ) : !pret ? (
         <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
       ) : general ? (
@@ -601,17 +601,10 @@ function GrandLivreTab() {
               </details>
             ))
           )}
-          <p style={{ fontSize: 12.5, color: 'var(--encre-douce)' }}>Solde positif = débiteur, négatif = créditeur. Cliquez sur un compte pour voir son détail.</p>
         </div>
       ) : (
         <div>
           <TableCompte c={comptesAffiches[0]} avecOuverture={Boolean(periode.from)} />
-          <p style={{ fontSize: 12.5, color: 'var(--encre-douce)' }}>Solde positif = débiteur, négatif = créditeur.</p>
-          {avecLettrage(comptesAffiches[0]) && (
-            <p style={{ fontSize: 12.5, color: 'var(--encre-douce)' }}>
-              Lettre : les lignes portant la même lettre se compensent (factures et règlements rapprochés du plus ancien au plus récent). Une ligne sans lettre est encore ouverte.
-            </p>
-          )}
         </div>
       )}
     </div>
@@ -779,9 +772,6 @@ function ResultatTab() {
               <Ligne libelle="RÉSULTAT NET" montant={r.resultatNet} fort />
             </tbody>
           </table>
-          <p style={{ fontSize: 12.5, color: 'var(--encre-douce)' }}>
-            Présentation simplifiée selon les classes 6, 7 et 8 du SYSCOHADA. Montants en FCFA.
-          </p>
         </div>
       )}
     </div>
@@ -864,10 +854,6 @@ function BilanTab() {
               Le bilan n'est pas équilibré (écart de {fmt(b.ecart)}). Vérifiez les écritures saisies.
             </div>
           )}
-          <p style={{ fontSize: 12.5, color: 'var(--encre-douce)' }}>
-            Bilan cumulé à la date choisie. Les comptes clients et fournisseurs sont regroupés (détail dans la balance auxiliaire).
-            La clôture d'exercice (report à nouveau) n'est pas encore gérée.
-          </p>
         </>
       )}
     </div>
@@ -987,16 +973,6 @@ function ImmobilisationModal({ categories, onClose, onSaved }) {
             <select className="champ" value={form.paymentMethod} onChange={maj('paymentMethod')}>
               {MODES_IMMO.map((m) => <option key={m[0]} value={m[0]}>{m[1]}</option>)}
             </select>
-            {enCaisse && (
-              <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '4px 0 0' }}>
-                Le montant sort de la caisse de la boutique active (choisie sur la page Caisse).
-              </p>
-            )}
-            {form.paymentMethod === 'existant' && (
-              <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '4px 0 0' }}>
-                Le bien est repris au bilan d'ouverture, net des amortissements déjà écoulés. Aucune sortie d'argent.
-              </p>
-            )}
           </div>
           <div className="champ-groupe">
             <label className="etiquette">Note (facultatif)</label>
@@ -1291,11 +1267,6 @@ function FinancementModal({ onClose, onSaved }) {
                 Concerne la caisse de la boutique active (choisie sur la page Caisse).
               </p>
             )}
-            {form.paymentMethod === 'existant' && (
-              <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '4px 0 0' }}>
-                Repris au bilan d'ouverture, sans mouvement de trésorerie (contrepartie : report à nouveau).
-              </p>
-            )}
           </div>
           {erreur && <div className="erreur">{erreur}</div>}
           <div className="actions-modale">
@@ -1340,9 +1311,6 @@ function FinancementTab() {
         <h2 style={{ margin: 0 }}>Capital et financement</h2>
         <button type="button" className="btn btn-principal" style={boutonPetit} onClick={() => setModale(true)}>Nouvelle opération</button>
       </div>
-      <p style={{ margin: '0 0 12px', color: 'var(--encre-douce)', fontSize: 13 }}>
-        Capital versé, apports et retraits de l'exploitant, emprunts et remboursements. Sans ces opérations, le bilan ne montre ni le capital ni les dettes bancaires.
-      </p>
       {erreurAction && <div className="erreur" style={{ marginBottom: 10 }}>{erreurAction}</div>}
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', margin: '0 0 14px', fontSize: 13.5 }}>
         <span>Capital : <strong>{fmt(summary.capital)}</strong></span>
@@ -1602,11 +1570,6 @@ function RapprochementTab() {
   return (
     <div className="md-carte">
       <h2 style={{ margin: '0 0 6px' }}>Rapprochement caisse, banque et mobile money</h2>
-      <p style={{ margin: '0 0 12px', color: 'var(--encre-douce)', fontSize: 13 }}>
-        Saisissez le solde réel à la date choisie : relevé de la banque, application Wave ou Orange Money, argent compté dans la caisse.
-        Un écart nul signifie que tout concorde ; sinon vous voyez de combien le réel s'éloigne de la comptabilité.
-        Rien n'est écrit en comptabilité : c'est une comparaison.
-      </p>
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
         <label className="etiquette">Solde réel au</label>
         <input type="date" className="champ" style={{ width: 'auto' }} value={date} max={aujourdhui()}
@@ -2322,11 +2285,6 @@ export function ApercuPdf() {
         {etat.chargement && <p style={{ color: 'var(--encre-douce)' }}>Génération du PDF…</p>}
         {etat.erreur && <div className="erreur">{etat.erreur}</div>}
         {url && <iframe ref={cadre} title="Aperçu du PDF" src={url} style={{ flex: 1, width: '100%', border: '1px solid rgba(128,128,128,0.3)', borderRadius: 6 }} />}
-        {url && (
-          <p style={{ color: 'var(--encre-douce)', fontSize: 12, margin: '8px 0 0' }}>
-            Si l'aperçu ne s'affiche pas sur votre téléphone, utilisez « Ouvrir » ou « Télécharger ».
-          </p>
-        )}
       </div>
     </div>
   );
@@ -2474,9 +2432,6 @@ function CreditTvaModal({ moisDefaut, onClose, onSaved }) {
       <div className="modale" style={{ maxWidth: 460, width: '96%', maxHeight: '92vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
         <h2>Crédit de TVA initial</h2>
         <form onSubmit={valider}>
-          <p style={{ color: 'var(--encre-douce)', fontSize: 13, marginTop: 0 }}>
-            Le crédit de TVA que le client avait avant d'utiliser le logiciel (dernière déclaration faite ailleurs). À saisir une seule fois.
-          </p>
           <div className="champ-groupe">
             <label className="etiquette" htmlFor="ctva-montant">Montant du crédit (FCFA)</label>
             <input id="ctva-montant" type="number" min="1" step="any" className="champ" value={montant} onChange={(e) => setMontant(e.target.value)} required autoFocus />
@@ -2535,9 +2490,6 @@ function CreditTvaInitial({ moisDefaut }) {
         </>
       ) : (
         <>
-          <p style={{ color: 'var(--encre-douce)', fontSize: 13, margin: '0 0 8px' }}>
-            Le client avait un crédit de TVA avant d'utiliser le logiciel ? Saisissez-le ici pour qu'il soit reporté dans la déclaration de TVA.
-          </p>
           <button type="button" className="btn" onClick={() => setModale(true)}>Crédit de TVA initial</button>
         </>
       )}
@@ -2598,10 +2550,6 @@ function OuvertureTab() {
 
   return (
     <form onSubmit={valider} style={{ maxWidth: 520 }}>
-      <p style={{ color: 'var(--encre-douce)', fontSize: 13, marginTop: 0 }}>
-        À faire une seule fois, au démarrage de la comptabilité. Le stock vient des quantités réelles et les immobilisations
-        de leur onglet : ne les saisissez pas ici. Ce qui manque pour équilibrer va automatiquement au report à nouveau.
-      </p>
       {erreur && <div className="erreur">{erreur}</div>}
       <div className="champ-groupe">
         <label className="etiquette" htmlFor="ouv-date">Date d'ouverture</label>
@@ -2622,10 +2570,6 @@ function OuvertureTab() {
           id="ouv-credit-tva" type="number" min="0" className="champ"
           value={montants.credit_tva ?? ''} onChange={(e) => setMontants({ ...montants, credit_tva: e.target.value })}
         />
-        <p style={{ color: 'var(--encre-douce)', fontSize: 12.5, margin: '4px 0 0' }}>
-          Crédit de TVA de votre dernière déclaration, avant le logiciel. Il sera repris à la ligne « Crédit de TVA du mois précédent »
-          de la première déclaration (mois de la date d'ouverture).
-        </p>
       </div>
       <button type="submit" className="btn btn-principal" disabled={envoi}>{envoi ? 'Enregistrement…' : "Valider les soldes d'ouverture"}</button>
     </form>

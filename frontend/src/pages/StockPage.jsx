@@ -1480,7 +1480,7 @@ export function StockPage() {
                         }));
                       }}
                     />
-                    Produit vital (première nécessité / urgence) — suggère un seuil d'alerte plus élevé
+                    Produit vital
                   </label>
                 </div>
               )}
@@ -1690,9 +1690,6 @@ export function StockPage() {
         <div className="modale-fond" onClick={() => setModaleEntreeOuverte(false)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
             <h2>Entrée de stock</h2>
-            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginTop: -8, marginBottom: 16 }}>
-              Plusieurs articles chez le même fournisseur, en un seul achat.
-            </p>
             <form onSubmit={handleEntreeStock}>
               <div className="champ-groupe">
                 <label className="etiquette">Articles</label>
@@ -1994,7 +1991,7 @@ export function StockPage() {
                       onChange={(e) => setEntreeStock({ ...entreeStock, importVat: e.target.value })}
                       placeholder="Laisser vide : 18 % de (valeur + droits)"
                     />
-                    <p className="aide" style={{ marginTop: 6 }}>Cette TVA est déductible et alimente l'annexe Importations de la déclaration de TVA.</p>
+                    
                   </div>
                 )}
               </div>
@@ -2065,9 +2062,6 @@ export function StockPage() {
         <div className="modale-fond" onClick={() => setLivraisonsAAnnoncer(null)}>
           <div className="modale" onClick={(e) => e.stopPropagation()}>
             <h2>Client(s) à contacter pour livraison</h2>
-            <p style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 12 }}>
-              Cette réception couvre une ou plusieurs commandes en attente. Pensez à prévenir le(s) client(s) :
-            </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {livraisonsAAnnoncer.map((groupe, i) => (
                 <div key={i} style={{ border: '1px solid var(--trait)', borderRadius: 'var(--rayon-petit)', padding: '10px 12px' }}>
@@ -2190,7 +2184,7 @@ export function StockPage() {
                         }));
                       }}
                     />
-                    Produit vital (première nécessité / urgence) — suggère un seuil d'alerte plus élevé
+                    Produit vital
                   </label>
                 </div>
               )}
@@ -2277,7 +2271,7 @@ export function StockPage() {
                   )}
                   {lotsProduitEdition && lotsProduitEdition.length === 0 && (
                     <p style={{ fontSize: 13, color: 'var(--encre-douce)' }}>
-                      Aucun lot enregistré pour cette boutique (stock non suivi par lot, ou pas encore de péremption renseignée).
+                      Aucun lot enregistré.
                     </p>
                   )}
                   {lotsProduitEdition && lotsProduitEdition.length > 0 && (

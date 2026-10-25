@@ -218,17 +218,17 @@ const CSS_DASHBOARD = `
 .db-niveau--moyen{--n:#c2410c}
 .db-niveau--faible{--n:#a16207}
 .db-chip{display:inline-flex;align-items:center;padding:3px 10px;border-radius:999px;font-size:var(--fs-sm);font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--n,var(--danger,#b91c1c));background:rgba(185,28,28,.1);background:color-mix(in srgb,var(--n,var(--danger,#b91c1c)) 12%,transparent)}
-.db-perime{margin-bottom:20px;border:1px solid var(--trait,#e5e7eb);border-left:4px solid var(--danger,#b91c1c);border-radius:16px;background:var(--surface,#fff);overflow:hidden}
-.db-perime-tete{display:flex;align-items:center;flex-wrap:wrap;gap:14px;padding:16px 18px;background:var(--danger-clair,#fef2f2)}
+.db-perime{margin:4px 0 20px;border:1px solid var(--trait,#e5e7eb);border-radius:16px;background:var(--surface,#fff);overflow:hidden}
+.db-perime-tete{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:18px;background:var(--danger-clair,#fef2f2)}
 .db-perime-icone{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:38px;height:38px;border-radius:11px;background:var(--danger,#b91c1c);color:#fff}
-.db-perime-titre{flex:1;min-width:220px}
+.db-perime-titre{min-width:0}
 .db-perime-titre h2{margin:0;font-size:var(--fs-md);color:var(--danger,#b91c1c)}
 .db-perime-titre p{margin:3px 0 0;font-size:var(--fs-sm);color:var(--encre-douce)}
-.db-perime-total{margin:0;text-align:right;font-size:var(--fs-xl);font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--danger,#b91c1c)}
+.db-perime-total{margin:0;font-size:var(--fs-xl);font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--danger,#b91c1c)}
 .db-perime-total small{display:block;margin-top:3px;font-size:var(--fs-xs);font-weight:500;color:var(--encre-douce)}
-.db-perime-liste{list-style:none;margin:0;padding:2px 18px}
-.db-perime-ligne{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px 14px;align-items:center;padding:12px 0;border-top:1px solid var(--trait,#e5e7eb)}
-.db-perime-ligne:first-child{border-top:none}
+.db-perime-liste{list-style:none;margin:0;padding:14px 18px 18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.db-perime-ligne{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:12px 14px;border:1px solid var(--trait,#e5e7eb);border-radius:12px;background:var(--surface,#fff)}
+.db-perime-ligne .btn{margin-top:2px}
 .db-perime-nom{margin:0;font-size:var(--fs-md);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .db-perime-meta{margin:2px 0 0;font-size:var(--fs-sm);color:var(--encre-douce)}
 .db-hz-tete{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:12px}
@@ -1337,40 +1337,6 @@ function DashboardCommerce() {
           </>
         ) : (
           <>
-            {estPharmacie && lotsPerimes && lotsPerimes.count > 0 && (
-              <section className="db-perime db-niveau--urgent" role="alert">
-                <header className="db-perime-tete">
-                  <span className="db-perime-icone"><IconAlerte /></span>
-                  <div className="db-perime-titre">
-                    <h2>{lotsPerimes.count} lot{lotsPerimes.count > 1 ? 's' : ''} périmé{lotsPerimes.count > 1 ? 's' : ''} encore en stock</h2>
-                    <p>Ces produits ne peuvent plus être vendus. Détruisez-les pour les sortir du stock.</p>
-                  </div>
-                  <p className="db-perime-total">
-                    {fcfa(lotsPerimes.totalValue)} FCFA
-                    <small>à retirer du stock</small>
-                  </p>
-                </header>
-                <ul className="db-perime-liste">
-                  {lotsPerimes.lots.map((l) => (
-                    <li key={l.lot_id} className="db-perime-ligne">
-                      <div style={{ minWidth: 0 }}>
-                        <p className="db-perime-nom">{l.product_name}</p>
-                        <p className="db-perime-meta">
-                          Lot {l.lot_number || '—'} · {Math.round(Number(l.quantity))} unité(s) · périmé le {new Date(l.expiry_date).toLocaleDateString('fr-FR')}
-                        </p>
-                      </div>
-                      <span className="db-chip">{l.days_expired} j de retard</span>
-                      <button className="btn btn-principal" disabled={destructionEnCours === l.lot_id} onClick={() => detruireLotPerime(l)}>
-                        {destructionEnCours === l.lot_id ? 'Destruction…' : 'Détruire'}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-
-            {vueEquipe && <RappelsFiscaux lien={estManager ? '/fiscalite' : undefined} />}
-
             {estManager && alerteSalaires?.show && (
               <div className="erreur" style={{ marginBottom: 20, cursor: 'pointer' }} onClick={() => navigate('/salaires')}>
                 Salaires de {formatMois(alerteSalaires.month)} non versés pour {alerteSalaires.unpaid.length} employé{alerteSalaires.unpaid.length > 1 ? 's' : ''} :{' '}
@@ -1409,6 +1375,40 @@ function DashboardCommerce() {
                 <p className="db-kpi-sous">commande(s) validée(s)</p>
               </div>
             </div>
+
+            {estPharmacie && lotsPerimes && lotsPerimes.count > 0 && (
+              <section className="db-perime db-niveau--urgent" role="alert">
+                <header className="db-perime-tete">
+                  <span className="db-perime-icone"><IconAlerte /></span>
+                  <div className="db-perime-titre">
+                    <h2>{lotsPerimes.count} lot{lotsPerimes.count > 1 ? 's' : ''} périmé{lotsPerimes.count > 1 ? 's' : ''} encore en stock</h2>
+                    <p>Ces produits ne peuvent plus être vendus. Détruisez-les pour les sortir du stock.</p>
+                  </div>
+                  <p className="db-perime-total">
+                    {fcfa(lotsPerimes.totalValue)} FCFA
+                    <small>à retirer du stock</small>
+                  </p>
+                </header>
+                <ul className="db-perime-liste">
+                  {lotsPerimes.lots.map((l) => (
+                    <li key={l.lot_id} className="db-perime-ligne">
+                      <div style={{ minWidth: 0 }}>
+                        <p className="db-perime-nom">{l.product_name}</p>
+                        <p className="db-perime-meta">
+                          Lot {l.lot_number || '—'} · {Math.round(Number(l.quantity))} unité(s) · périmé le {new Date(l.expiry_date).toLocaleDateString('fr-FR')}
+                        </p>
+                      </div>
+                      <span className="db-chip">{l.days_expired} j de retard</span>
+                      <button className="btn btn-principal" disabled={destructionEnCours === l.lot_id} onClick={() => detruireLotPerime(l)}>
+                        {destructionEnCours === l.lot_id ? 'Destruction…' : 'Détruire'}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {vueEquipe && <RappelsFiscaux lien={estManager ? '/fiscalite' : undefined} />}
 
             <div className="db-grille">
               <div className="db-carte">

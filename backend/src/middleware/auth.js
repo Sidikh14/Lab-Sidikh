@@ -23,7 +23,7 @@ async function verifier(req, res, next, autoriserChangementMotDePasse) {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
 
     const result = await pool.query(
-      `SELECT u.is_active, u.role, u.roles, u.warehouse_id, u.must_change_password, u.password_reset_at, m.is_active AS merchant_is_active, m.sector AS merchant_sector,
+      `SELECT u.is_active, u.role, u.roles, u.warehouse_id, u.must_change_password, u.password_reset_at, u.action_permissions, m.is_active AS merchant_is_active, m.sector AS merchant_sector,
               COALESCE((SELECT array_agg(uw.warehouse_id) FROM user_warehouses uw WHERE uw.user_id = u.id), '{}') AS warehouse_ids
        FROM users u
        LEFT JOIN merchants m ON m.id = u.merchant_id
@@ -79,6 +79,9 @@ async function verifier(req, res, next, autoriserChangementMotDePasse) {
       warehouseIds: ids,
       sector: payload.sector || null,
       mustChangePassword: account.must_change_password === true,
+      // Lu en base à chaque requête (comme les rôles et les lieux) : une restriction
+      // posée par le manager s'applique immédiatement, sans attendre une reconnexion.
+      actionPermissions: account.action_permissions || {},
     };
     next();
   } catch (err) {

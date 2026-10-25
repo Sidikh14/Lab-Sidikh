@@ -3,8 +3,8 @@
 // journal d'activité, bulletins de paie…).
 //
 // Charte graphique Amaterasu v8 :
-//  - polices Plus Jakarta Sans (titres) et Inter (texte, chiffres), fournies par les paquets
-//    npm @fontsource/plus-jakarta-sans et @fontsource/inter (à installer côté backend) ;
+//  - police Plus Jakarta Sans partout (titres, texte, chiffres), fournie par le paquet
+//    npm @fontsource/plus-jakarta-sans (à installer côté backend) ;
 //  - Marine pour le texte, les en-têtes de tableau et les bandeaux de total ; Soleil pour le filet
 //    du titre et le montant sur fond Marine ; Brume pour les lignes alternées ; Ardoise pour
 //    le texte secondaire ; noir uniquement pour les reçus thermiques ;
@@ -12,7 +12,7 @@
 //  - pied de page « Édité avec Amaterasu » avec numéro de page « n / total ».
 //
 // Le code existant des PDF n'a pas besoin de changer : les noms de police 'Helvetica*' et
-// 'Titre' qu'il utilise sont remplacés ici par Inter et Plus Jakarta Sans. Si les paquets de
+// 'Titre' qu'il utilise sont remplacés ici par Plus Jakarta Sans. Si les paquets de
 // polices sont introuvables, repli automatique sur Helvetica (intégrée aux PDF).
 //
 // Réglages :
@@ -62,22 +62,23 @@ function trouverFichierPolice(paquet, base) {
 let policesCache; // résolu une seule fois par processus
 function chercherPolices() {
   if (policesCache !== undefined) return policesCache;
-  const inter = (poids, style = 'normal') => trouverFichierPolice('@fontsource/inter', `inter-latin-${poids}-${style}`);
-  const jakarta = (poids) => trouverFichierPolice('@fontsource/plus-jakarta-sans', `plus-jakarta-sans-latin-${poids}-normal`);
-  const regulier = inter(400);
-  const semi = inter(600);
+  // Une seule famille pour tout le document : Plus Jakarta Sans (texte, chiffres et titres).
+  const jakarta = (poids, style = 'normal') => trouverFichierPolice('@fontsource/plus-jakarta-sans', `plus-jakarta-sans-latin-${poids}-${style}`);
+  const regulier = jakarta(400);
+  const semi = jakarta(600);
+  const gras = jakarta(700);
   const titre = jakarta(800);
   if (!regulier || !semi || !titre) {
     policesCache = null;
     return null;
   }
   policesCache = {
-    'AM-Inter': regulier,
-    'AM-Inter-Semi': semi,
-    'AM-Inter-Italic': inter(400, 'italic') || regulier,
-    'AM-Inter-SemiItalic': inter(600, 'italic') || semi,
+    'AM-Jakarta': regulier,
+    'AM-Jakarta-Semi': semi,
+    'AM-Jakarta-Italic': jakarta(400, 'italic') || regulier,
+    'AM-Jakarta-SemiItalic': jakarta(600, 'italic') || semi,
     'AM-Jakarta-ExtraBold': titre,
-    'AM-Jakarta-Bold': jakarta(700) || titre,
+    'AM-Jakarta-Bold': gras || titre,
   };
   return policesCache;
 }
@@ -85,10 +86,10 @@ function chercherPolices() {
 function tablePolices(avecPolices) {
   if (avecPolices) {
     return {
-      Helvetica: TEXTE_GRAS ? 'AM-Inter-Semi' : 'AM-Inter',
-      'Helvetica-Bold': 'AM-Inter-Semi',
-      'Helvetica-Oblique': TEXTE_GRAS ? 'AM-Inter-SemiItalic' : 'AM-Inter-Italic',
-      'Helvetica-BoldOblique': 'AM-Inter-SemiItalic',
+      Helvetica: TEXTE_GRAS ? 'AM-Jakarta-Semi' : 'AM-Jakarta',
+      'Helvetica-Bold': 'AM-Jakarta-Bold',
+      'Helvetica-Oblique': TEXTE_GRAS ? 'AM-Jakarta-SemiItalic' : 'AM-Jakarta-Italic',
+      'Helvetica-BoldOblique': 'AM-Jakarta-SemiItalic',
       Titre: 'AM-Jakarta-ExtraBold',
       'Titre-Bold': 'AM-Jakarta-Bold',
     };

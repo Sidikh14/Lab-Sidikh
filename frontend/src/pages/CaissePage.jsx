@@ -377,7 +377,7 @@ export function CaissePage() {
       </div>
 
       {estManager && !chargementBoutiques && warehouses.length === 0 && (
-        <p className="etat-vide">Aucune boutique n'a encore été créée. Créez-en une avant de gérer la caisse.</p>
+        <p className="etat-vide">Aucune boutique.</p>
       )}
 
       {erreur && <div className="erreur">{erreur}</div>}
@@ -611,7 +611,7 @@ export function CaissePage() {
                     />
                     Pas de retenue (bénéficiaire non concerné)
                   </label>
-                  <p className="aide" style={{ marginTop: 6 }}>Le montant est ajouté automatiquement au registre BRS de la page Fiscalité.</p>
+                  
                 </div>
               )}
               <button type="submit" className="btn btn-principal" disabled={enregistrementSortie}>

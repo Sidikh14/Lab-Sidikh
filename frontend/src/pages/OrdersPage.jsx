@@ -1278,7 +1278,7 @@ export function OrdersPage() {
 
             <div className="ticket-lignes">
               {lignesPanier.length === 0 ? (
-                <p className="etat-vide" style={{ padding: '32px 8px' }}>Ticket vide. Touchez un produit pour l'ajouter.</p>
+                <p className="etat-vide" style={{ padding: '32px 8px' }}>Ticket vide.</p>
               ) : (
                 lignesPanier.map((l) => (
                   <div key={cleLigne(l.productId, l.unitId)} className="ticket-ligne">
@@ -2025,9 +2025,6 @@ export function OrdersPage() {
                         />
                       </div>
                     ))}
-                  <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '6px 0 0' }}>
-                    Laissez vide un produit non concerné. Les quantités sont comptées à l'unité de détail.
-                  </p>
                 </div>
               )}
               <div className="actions-modale">
@@ -2079,9 +2076,7 @@ export function OrdersPage() {
 
             {peutCreerReliquat && (
               <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--trait)' }}>
-                <p style={{ fontSize: 13, marginBottom: 10 }}>
-                  Créer une commande en attente (reliquat) : le client sera servi dès la prochaine réception fournisseur.
-                </p>
+                <p style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Commande en attente (reliquat)</p>
                 {!clientId && (
                   <p style={{ fontSize: 12, color: 'var(--danger, #B84A3E)', marginBottom: 10 }}>
                     Sélectionnez d'abord un {libelleClient.toLowerCase()} enregistré dans le ticket.
