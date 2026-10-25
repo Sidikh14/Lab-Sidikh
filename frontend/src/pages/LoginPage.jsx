@@ -881,7 +881,8 @@ const STYLES = `
     pointer-events: auto;
     z-index: 2;
   }
-  .ecran-connexion-partage .champ-avec-icone input.champ--avec-icone-droite { padding-right: 46px; }
+  .ecran-connexion-partage .champ-avec-icone input.champ--avec-icone { padding-left: 44px !important; }
+  .ecran-connexion-partage .champ-avec-icone input.champ--avec-icone-droite { padding-right: 46px !important; }
 
   .ecran-connexion-partage .lp-note {
     display: flex;

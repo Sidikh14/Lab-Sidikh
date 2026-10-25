@@ -4,9 +4,9 @@ import { PageModuleNonActive } from '../components/ModuleNonActive';
 import { api } from '../api/client';
 import { useAccountingAccess } from '../hooks/useAccountingAccess';
 import { useAuth } from '../context/AuthContext';
-import { BarreSections, GrilleKpi, BarresComparaison } from '../components/SectionsUi';
+import { BarreSections, BarresComparaison } from '../components/SectionsUi';
 import { PiecesModal } from '../components/PiecesModal';
-import { EntetePage, BandeauMarine } from '../components/SagfaUi';
+import { EntetePage, BandeauMarine, KpisMarine } from '../components/SagfaUi';
 
 // Module comptabilité (SYSCOHADA). Affiché uniquement si l'owner a donné
 // l'accès au commerçant : sinon la page redirige vers l'accueil et le lien
@@ -2601,7 +2601,7 @@ function VueEnsembleCompta() {
 
   return (
     <div>
-      <GrilleKpi cartes={[
+      <KpisMarine cartes={[
         { label: `Chiffre d'affaires ${annee}`, valeur: fmt(resultat.chiffreAffaires), unite: 'FCFA' },
         { label: `Résultat net ${annee}`, valeur: fmt(net), unite: 'FCFA', ton: net < 0 ? 'alerte' : undefined },
         { label: 'Trésorerie', valeur: fmt(flux.closing), unite: 'FCFA', detail: `${flux.variation >= 0 ? '+' : ''}${fmt(flux.variation)} depuis le 1er janvier`, ton: flux.closing < 0 ? 'alerte' : undefined },

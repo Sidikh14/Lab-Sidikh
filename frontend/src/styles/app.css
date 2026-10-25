@@ -2050,3 +2050,8 @@ html:root .md-kpi-icone, html:root .db-kpi-icone {
 html:root .md-kpi-label, html:root .db-kpi-label { max-width: 100%; }
 html:root .md-kpi-valeur, html:root .db-kpi-valeur, html:root .md-kpi-sous, html:root .db-kpi-sous { max-width: 100%; }
 html:root .stat-icone { display: flex; }
+
+/* Champs avec icône : le texte démarre après l'icône, même si la règle générale .champ (chargée plus tard) remet un
+   padding court. Couvre les recherches de toutes les pages et la connexion. */
+html:root .champ-avec-icone input.champ--avec-icone { padding-left: 42px !important; }
+html:root .champ-avec-icone input.champ--avec-icone-droite { padding-right: 42px !important; }

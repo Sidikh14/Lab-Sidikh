@@ -104,3 +104,25 @@ export function RangeeChiffres({ cartes }) {
     </div>
   );
 }
+
+// Rangée de chiffres au style commun du logiciel (panneau marine, petite icône, étiquette, gros chiffre).
+// cartes : [{ label, valeur, unite?, detail?, ton?: 'alerte' }]
+export function KpisMarine({ cartes }) {
+  return (
+    <div className="md-kpis">
+      {cartes.map((c, i) => (
+        <div key={c.label} className={`md-kpi${i === 0 ? ' md-kpi--hero' : ''}${c.ton === 'alerte' ? ' md-kpi--alerte' : ''}`}>
+          <span className="md-kpi-icone">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v10M9.5 9.5h3.8a1.7 1.7 0 010 3.5h-2.6a1.7 1.7 0 000 3.5h3.8" />
+            </svg>
+          </span>
+          <p className="md-kpi-label">{c.label}</p>
+          <p className="md-kpi-valeur">{c.valeur}{c.unite && <> <small>{c.unite}</small></>}</p>
+          {c.detail && <p className="md-kpi-sous">{c.detail}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
