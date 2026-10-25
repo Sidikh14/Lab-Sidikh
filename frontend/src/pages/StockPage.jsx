@@ -958,8 +958,8 @@ export function StockPage() {
                 title="Vue grille"
                 style={{
                   display: 'flex', alignItems: 'center', padding: '7px 10px', border: 'none', cursor: 'pointer',
-                  background: vueProduits === 'grille' ? 'var(--accent)' : 'transparent',
-                  color: vueProduits === 'grille' ? '#fff' : 'var(--encre-douce)',
+                  background: vueProduits === 'grille' ? 'var(--marine)' : 'transparent',
+                  color: vueProduits === 'grille' ? 'var(--soleil)' : 'var(--encre-douce)',
                 }}
               >
                 <IconGrille />
@@ -970,8 +970,8 @@ export function StockPage() {
                 title="Vue liste (sélection rapide)"
                 style={{
                   display: 'flex', alignItems: 'center', padding: '7px 10px', border: 'none', cursor: 'pointer',
-                  background: vueProduits === 'liste' ? 'var(--accent)' : 'transparent',
-                  color: vueProduits === 'liste' ? '#fff' : 'var(--encre-douce)',
+                  background: vueProduits === 'liste' ? 'var(--marine)' : 'transparent',
+                  color: vueProduits === 'liste' ? 'var(--soleil)' : 'var(--encre-douce)',
                 }}
               >
                 <IconListe />

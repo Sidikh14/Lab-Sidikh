@@ -309,7 +309,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
   if (confirmationHorsLigne) {
     return (
       <div className="modale-fond" onClick={onSuccess}>
-        <div className="modale" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modale modale-encaissement" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
           <h2 style={{ marginBottom: 6 }}>Encaissement enregistré localement</h2>
           <p style={{ color: 'var(--encre-douce)', fontSize: 14, marginBottom: 16 }}>
             Pas de connexion — il sera envoyé automatiquement au retour du réseau. Le reçu ne pourra être imprimé
@@ -327,7 +327,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
     if (demandeEnvoyee) {
       return (
         <div className="modale-fond" onClick={onClose}>
-          <div className="modale" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
+          <div className="modale modale-encaissement" style={{ textAlign: 'center' }} onClick={(e) => e.stopPropagation()}>
             <h2 style={{ marginBottom: 6 }}>Demande envoyée</h2>
             <p style={{ color: 'var(--encre-douce)', fontSize: 14, marginBottom: 16 }}>
               Le manager ou le gérant doit valider la création du client avant que cette vente puisse être encaissée à crédit.
@@ -343,7 +343,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
 
     return (
       <div className="modale-fond" onClick={onClose}>
-        <div className="modale" onClick={(e) => e.stopPropagation()}>
+        <div className="modale modale-encaissement" onClick={(e) => e.stopPropagation()}>
           <h2>Demander une vente à crédit</h2>
           <p style={{ fontSize: 14, color: 'var(--encre-douce)', marginBottom: 16 }}>
             La vente à crédit n'est autorisée que pour un client enregistré. Renseigne ses informations : le manager ou le
@@ -378,7 +378,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
   if (vueRetour) {
     return (
       <div className="modale-fond" onClick={onClose}>
-        <div className="modale" onClick={(e) => e.stopPropagation()}>
+        <div className="modale modale-encaissement" onClick={(e) => e.stopPropagation()}>
           <h2>Retourner {commande.order_number} au vendeur</h2>
           <p style={{ fontSize: 14, color: 'var(--encre-douce)', marginBottom: 16 }}>
             Le vendeur pourra modifier ou annuler cette facture. Elle vous reviendra directement une fois corrigée.
@@ -408,7 +408,7 @@ export function ModaleEncaissement({ commande, onClose, onSuccess, onReturned })
 
   return (
     <div className="modale-fond" onClick={onClose}>
-      <div className="modale" onClick={(e) => e.stopPropagation()}>
+      <div className="modale modale-encaissement" onClick={(e) => e.stopPropagation()}>
         <h2>Encaisser {commande.order_number}</h2>
         {!isOnline && (
           <p style={{ fontSize: 12, color: 'var(--brique, #b45309)', marginBottom: 4 }}>

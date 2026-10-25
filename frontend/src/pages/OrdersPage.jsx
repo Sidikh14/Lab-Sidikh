@@ -1161,8 +1161,8 @@ export function OrdersPage() {
                   title="Vue grille"
                   style={{
                     display: 'flex', alignItems: 'center', padding: '7px 10px', border: 'none', cursor: 'pointer',
-                    background: vueCaisse === 'grille' ? 'var(--accent)' : 'transparent',
-                    color: vueCaisse === 'grille' ? '#fff' : 'var(--encre-douce)',
+                    background: vueCaisse === 'grille' ? 'var(--marine)' : 'transparent',
+                    color: vueCaisse === 'grille' ? 'var(--soleil)' : 'var(--encre-douce)',
                   }}
                 >
                   <IconGrille />
@@ -1173,8 +1173,8 @@ export function OrdersPage() {
                   title="Vue liste (sélection rapide)"
                   style={{
                     display: 'flex', alignItems: 'center', padding: '7px 10px', border: 'none', cursor: 'pointer',
-                    background: vueCaisse === 'liste' ? 'var(--accent)' : 'transparent',
-                    color: vueCaisse === 'liste' ? '#fff' : 'var(--encre-douce)',
+                    background: vueCaisse === 'liste' ? 'var(--marine)' : 'transparent',
+                    color: vueCaisse === 'liste' ? 'var(--soleil)' : 'var(--encre-douce)',
                   }}
                 >
                   <IconListe />

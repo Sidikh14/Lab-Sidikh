@@ -2103,3 +2103,8 @@ html:root .md-vues > *.actif, html:root .md-vues > *.active, html:root .md-vues 
 html:root .md-vues > *.actif svg, html:root .md-vues > *.active svg, html:root .md-vues > [aria-pressed="true"] svg, html:root .md-vues > [aria-selected="true"] svg { color: var(--soleil); }
 
 html:root[data-theme="dark"] .md-puce.actif, html:root[data-theme="dark"] .onglet.actif { background: var(--marine-2); border-color: var(--marine-2); }
+
+/* Modale d'encaissement : toutes les écritures en gras (libellés, lignes du ticket, montants, boutons, saisies). */
+html:root .modale-encaissement,
+html:root .modale-encaissement :where(p, span, div, label, small, li, td, th, a, button, input, select, textarea) { font-weight: 700; }
+html:root .modale-encaissement :where(h1, h2, h3, strong, .chiffre) { font-weight: 800; }
