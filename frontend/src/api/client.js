@@ -485,8 +485,8 @@ export const api = {
   setUserRole: (id, roles) =>
     request(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify(Array.isArray(roles) ? { roles } : { role: roles }) }),
   deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
-  setUserPermissions: (id, modules) =>
-    request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules }) }),
+  setUserPermissions: (id, modules, actions) =>
+    request(`/users/${id}/permissions`, { method: 'PATCH', body: JSON.stringify({ modules, actions }) }),
   // Le serveur génère le mot de passe provisoire : il est renvoyé une seule fois dans la réponse.
   resetUserPassword: (id) =>
     request(`/users/${id}/password`, { method: 'PATCH' }),

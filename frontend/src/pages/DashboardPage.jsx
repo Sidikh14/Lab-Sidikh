@@ -227,12 +227,13 @@ const CSS_DASHBOARD = `
 .db-perime-titre p{margin:0;font-size:10.5px;line-height:1.25;color:var(--encre-douce);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .db-perime-total{grid-area:total;margin:0;text-align:right;font-size:13px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--danger,#b91c1c)}
 .db-perime-total small{display:block;margin-top:1px;font-size:9.5px;font-weight:500;color:var(--encre-douce)}
-.db-perime-liste{list-style:none;margin:0;padding:6px 10px 8px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
-.db-perime-ligne{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:5px 8px;border:1px solid var(--trait,#e5e7eb);border-radius:8px;background:var(--surface,#fff)}
+.db-perime-liste{list-style:none;margin:0;padding:6px 10px 8px;display:flex;flex-direction:column;gap:4px}
+.db-perime-ligne{display:flex;align-items:center;gap:10px;padding:6px 10px;border:1px solid var(--trait,#e5e7eb);border-radius:8px;background:var(--surface,#fff)}
+.db-perime-info{flex:1 1 auto;min-width:0}
 .db-perime-nom{margin:0;font-size:12px;font-weight:600;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.db-perime-meta{margin:0;font-size:10.5px;line-height:1.25;color:var(--encre-douce)}
-.db-perime-ligne .db-chip{font-size:10px;padding:1px 7px}
-.db-perime-ligne .btn{margin-top:2px;padding:2px 9px;font-size:11px;min-height:0;height:auto;line-height:1.4}
+.db-perime-meta{margin:0;font-size:10.5px;line-height:1.25;color:var(--encre-douce);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-perime-ligne .db-chip{flex:0 0 auto;font-size:10px;padding:1px 7px}
+.db-perime-ligne .btn{flex:0 0 auto;padding:2px 9px;font-size:11px;min-height:0;height:auto;line-height:1.4}
 .db-hz-tete{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:12px}
 .db-hz-tete h2{margin:0;font-size:var(--fs-lg)}
 .db-hz-tete span{font-size:var(--fs-sm);color:var(--encre-douce);font-variant-numeric:tabular-nums}
@@ -256,8 +257,8 @@ button.db-hz:not(:disabled):hover{box-shadow:0 6px 18px rgba(17,24,39,.08)}
 .db-modal-table table{margin-bottom:0 !important}
 @media (prefers-reduced-motion:reduce){.db-hz{transition:none}}
 @media (max-width:560px){
-  .db-perime-ligne{grid-template-columns:minmax(0,1fr) auto}
-  .db-perime-ligne .btn{grid-column:1 / -1}
+  .db-perime-ligne{flex-wrap:wrap}
+  .db-perime-ligne .btn{flex:1 1 100%}
   .db-perime-total{text-align:left}
 }
 @media (max-width:860px){
@@ -1387,7 +1388,7 @@ function DashboardCommerce() {
                 <ul className="db-perime-liste">
                   {lotsPerimes.lots.map((l) => (
                     <li key={l.lot_id} className="db-perime-ligne">
-                      <div style={{ minWidth: 0 }}>
+                      <div className="db-perime-info">
                         <p className="db-perime-nom">{l.product_name}</p>
                         <p className="db-perime-meta">
                           Lot {l.lot_number || '—'} · {Math.round(Number(l.quantity))} unité(s) · périmé le {new Date(l.expiry_date).toLocaleDateString('fr-FR')}

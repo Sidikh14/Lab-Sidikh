@@ -48,7 +48,7 @@ export function RappelsFiscaux({ lien }) {
   return (
     <div style={{ marginBottom: 20 }}>
       <h2 style={{ fontSize: 12.5, margin: '0 0 5px' }}>Rappels fiscaux</h2>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 6 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {alertes.map((a) => {
           const c = COULEURS[a.statut] || COULEURS.proche;
           return (
@@ -59,30 +59,30 @@ export function RappelsFiscaux({ lien }) {
               onClick={lien ? () => navigate(lien) : undefined}
               onKeyDown={lien ? (e) => { if (e.key === 'Enter') navigate(lien); } : undefined}
               style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2, padding: '5px 8px',
+                display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px',
                 borderRadius: 8, cursor: lien ? 'pointer' : 'default',
-                border: `1px solid color-mix(in srgb, ${c.bord} 30%, transparent)`,
-                borderTop: `2px solid ${c.bord}`,
-                background: `color-mix(in srgb, ${c.bord} 8%, var(--surface, var(--carte, #fff)))`,
+                border: `1px solid color-mix(in srgb, ${c.bord} 25%, transparent)`,
+                borderLeft: `3px solid ${c.bord}`,
+                background: `color-mix(in srgb, ${c.bord} 6%, var(--surface, var(--carte, #fff)))`,
                 color: 'var(--encre, inherit)',
               }}
             >
               <span
                 style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 6,
+                  flex: '0 0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: 18, height: 18, borderRadius: 6,
                   background: `color-mix(in srgb, ${c.bord} 16%, transparent)`, color: c.bord,
                 }}
               >
                 <IconeEcheance />
               </span>
-              <span style={{ fontSize: 11.5, lineHeight: 1.25 }}>
+              <span style={{ flex: '1 1 auto', minWidth: 0, fontSize: 11.5, lineHeight: 1.3 }}>
                 <strong>{a.label}</strong>
-                <span style={{ display: 'block', fontSize: 10.5, opacity: 0.75 }}>{a.periode}</span>
+                <span style={{ marginLeft: 6, opacity: 0.7 }}>{a.periode} · avant le {dateFr(a.limite)}</span>
               </span>
-              <span style={{ fontSize: 10.5, opacity: 0.85 }}>Avant le {dateFr(a.limite)}</span>
               <span
                 style={{
-                  marginTop: 'auto', padding: '1px 7px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+                  flex: '0 0 auto', whiteSpace: 'nowrap', padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700,
                   color: c.bord, background: `color-mix(in srgb, ${c.bord} 14%, transparent)`,
                 }}
               >
