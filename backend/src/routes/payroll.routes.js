@@ -383,18 +383,32 @@ router.get('/preview-month', GESTION, async (req, res) => {
       `SELECT ${COLONNES_EMPLOYE} ${SQL_EMPLOYES_DU_MOIS} ORDER BY e.full_name`,
       [req.user.merchantId, mois]
     );
-    const lignes = [];
-    for (const e of employes) {
-      const paye = await pool.query('SELECT 1 FROM salary_payments WHERE user_id = $1 AND month = $2', [e.id, mois]);
-      const stocke = await pool.query(
-        `SELECT gross_salary, net_a_payer, ipres_salarial, ipres_patronal, css_salarial, css_patronal, irpp, trimf, cfce, cout_total_employeur, number
-         FROM payslips WHERE user_id = $1 AND month = $2 AND status <> 'remplace' ORDER BY version DESC LIMIT 1`,
-        [e.id, mois]
-      );
-      const ligne = { id: e.id, name: e.full_name, paid: paye.rows.length > 0, hasPayslip: stocke.rows.length > 0, number: stocke.rows[0]?.number || null };
+    // Perf : au lieu de 2 requêtes par employé exécutées l'une après l'autre, on lit en 2 requêtes
+    // les paiements et les bulletins du mois pour tous les employés, puis on calcule les employés
+    // restants par petits lots en parallèle (la latence réseau vers la base ne s'additionne plus).
+    const { rows: payesRows } = await pool.query(
+      `SELECT DISTINCT sp.user_id FROM salary_payments sp
+       JOIN employees e ON e.id = sp.user_id
+       WHERE e.merchant_id = $1 AND sp.month = $2`,
+      [req.user.merchantId, mois]
+    );
+    const payes = new Set(payesRows.map((r) => String(r.user_id)));
+    const { rows: bulletinsRows } = await pool.query(
+      `SELECT DISTINCT ON (user_id) user_id, gross_salary, net_a_payer, ipres_salarial, ipres_patronal, css_salarial, css_patronal,
+              irpp, trimf, cfce, cout_total_employeur, number
+       FROM payslips
+       WHERE merchant_id = $1 AND month = $2 AND status <> 'remplace'
+       ORDER BY user_id, version DESC`,
+      [req.user.merchantId, mois]
+    );
+    const bulletins = new Map(bulletinsRows.map((r) => [String(r.user_id), r]));
+
+    async function calculerLigne(e) {
+      const stocke = bulletins.get(String(e.id)) || null;
+      const ligne = { id: e.id, name: e.full_name, paid: payes.has(String(e.id)), hasPayslip: Boolean(stocke), number: stocke?.number || null };
       try {
-        if (ligne.paid && stocke.rows.length > 0) {
-          const s = stocke.rows[0];
+        if (ligne.paid && stocke) {
+          const s = stocke;
           Object.assign(ligne, {
             gross: Number(s.gross_salary), net: Number(s.net_a_payer), employerCost: Number(s.cout_total_employeur),
             irpp: Number(s.irpp), trimf: Number(s.trimf), cfce: Number(s.cfce),
@@ -414,7 +428,13 @@ router.get('/preview-month', GESTION, async (req, res) => {
         if (!(err instanceof RetenueError)) throw err;
         ligne.error = err.message;
       }
-      lignes.push(ligne);
+      return ligne;
+    }
+
+    const lignes = [];
+    const TAILLE_LOT = 4; // reste sous la taille du pool de connexions pour ne pas bloquer les autres requêtes
+    for (let i = 0; i < employes.length; i += TAILLE_LOT) {
+      lignes.push(...(await Promise.all(employes.slice(i, i + TAILLE_LOT).map(calculerLigne))));
     }
     const totaux = lignes.reduce(
       (t, l) => ({

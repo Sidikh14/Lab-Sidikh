@@ -115,8 +115,6 @@ function SalairesTab() {
   const [montantPaiement, setMontantPaiement] = useState('');
   const [methodePaiement, setMethodePaiement] = useState('especes');
   const [envoiEnCours, setEnvoiEnCours] = useState(false);
-  const [envoiBulletinsEnCours, setEnvoiBulletinsEnCours] = useState(false);
-  const [resultatEnvoiBulletins, setResultatEnvoiBulletins] = useState(null);
 
   useEffect(() => {
     api
@@ -272,21 +270,6 @@ function SalairesTab() {
     }
   }
 
-  async function envoyerBulletins() {
-    setEnvoiBulletinsEnCours(true);
-    setErreur('');
-    setResultatEnvoiBulletins(null);
-    try {
-      const resultat = await api.sendPayslips(mois);
-      setResultatEnvoiBulletins(resultat);
-      charger();
-    } catch (err) {
-      setErreur(err.message);
-    } finally {
-      setEnvoiBulletinsEnCours(false);
-    }
-  }
-
   async function confirmerPaiement(e) {
     e.preventDefault();
     setEnvoiEnCours(true);
@@ -358,33 +341,7 @@ function SalairesTab() {
             onChange={(e) => setMois(e.target.value)}
           />
         </div>
-        <button
-          type="button"
-          className="btn btn-principal"
-          disabled={envoiBulletinsEnCours || employes.every((emp) => !emp.payslip_net)}
-          onClick={envoyerBulletins}
-        >
-          {envoiBulletinsEnCours ? 'Envoi en cours…' : 'Envoyer les bulletins par mail'}
-        </button>
       </div>
-
-      {resultatEnvoiBulletins && (
-        <div style={{ fontSize: 13, color: 'var(--encre-douce)', marginBottom: 14 }}>
-          <p>
-            {resultatEnvoiBulletins.sent.length} bulletin(s) envoyé(s) par mail.
-            {resultatEnvoiBulletins.accounts.length > 0 && ` ${resultatEnvoiBulletins.accounts.length} salarié(s) sans mail renseigné (bulletin disponible sur leur compte "Mes bulletins").`}
-            {resultatEnvoiBulletins.toPrint.length > 0 && ` ${resultatEnvoiBulletins.toPrint.length} à imprimer (pas de compte ni de mail).`}
-            {resultatEnvoiBulletins.errors.length > 0 && ` ${resultatEnvoiBulletins.errors.length} échec(s) d'envoi.`}
-          </p>
-          {resultatEnvoiBulletins.errors.length > 0 && (
-            <ul style={{ margin: '4px 0 0', paddingLeft: 18, color: 'var(--erreur, #c0392b)' }}>
-              {resultatEnvoiBulletins.errors.map((e) => (
-                <li key={e.id}>{e.name} : {e.error}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      )}
 
       <ActionsMois mois={mois} onChange={charger} />
 
