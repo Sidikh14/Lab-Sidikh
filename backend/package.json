@@ -14,7 +14,11 @@
     "test": "jest && node --test tests/roles.test.js tests/accounting.test.js"
   },
   "jest": {
-    "testPathIgnorePatterns": ["/node_modules/", "tests/roles.test.js", "tests/accounting.test.js"]
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "tests/roles.test.js",
+      "tests/accounting.test.js"
+    ]
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",

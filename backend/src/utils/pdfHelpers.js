@@ -132,6 +132,14 @@ function enregistrerPolices(doc) {
       policesUtilisables = false;
       console.error('Polices Amaterasu illisibles, repli sur Helvetica :', err.message);
     }
+  } else if (policesUtilisables === undefined) {
+    // Cas auparavant silencieux : le paquet @fontsource/plus-jakarta-sans n'est pas installé
+    // côté backend (ou un poids 400/600/800 manque), donc chercherPolices() renvoie null et
+    // tous les PDF retombent sur Helvetica standard sans qu'aucun log ne le signale.
+    policesUtilisables = false;
+    console.error(
+      "Polices Amaterasu introuvables (paquet @fontsource/plus-jakarta-sans absent ou incomplet côté backend) — PDF générés en Helvetica standard."
+    );
   }
   const POLICES = tablePolices(avecPolices);
 

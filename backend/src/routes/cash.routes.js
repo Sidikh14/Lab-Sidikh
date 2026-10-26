@@ -92,121 +92,122 @@ async function recupererMouvementsDetailles(req, method, from, to, cashier, ware
   const ts = construireParams(false);
   const dates = construireParams(true);
 
-  const encaissements = await pool.query(
-    `SELECT o.id, 'encaissement' AS type, o.validated_at AS date, o.total_amount AS amount, o.payment_method,
-            o.order_seq, o.created_at AS order_created_at, c.full_name AS client_name,
-            o.validated_by AS user_id, u.full_name AS user_name
-     FROM orders o
-     LEFT JOIN clients c ON c.id = o.client_id
-     LEFT JOIN users u ON u.id = o.validated_by
-     WHERE o.merchant_id = $1 AND o.validated_at >= $2 AND o.validated_at < $3 AND o.warehouse_id = $4
-       ${ts.idxMethode ? `AND o.payment_method = $${ts.idxMethode}` : ''}
-       ${ts.idxCaissier ? `AND o.validated_by = $${ts.idxCaissier}` : ''}
-       ${tous ? "AND o.payment_method NOT IN ('a_credit', 'tiers_payant')" : ''}
-     ORDER BY o.validated_at`,
-    ts.params
-  );
-
-  const reglementsCredit = await pool.query(
-    `SELECT cp.id, 'reglement_credit' AS type, cp.created_at AS date, cp.amount, cp.payment_method, c.full_name AS client_name,
-            cp.recorded_by AS user_id, u.full_name AS user_name
-     FROM credit_payments cp
-     LEFT JOIN clients c ON c.id = cp.client_id
-     LEFT JOIN users u ON u.id = cp.recorded_by
-     WHERE cp.merchant_id = $1 AND cp.created_at >= $2 AND cp.created_at < $3 AND cp.warehouse_id = $4
-       ${ts.idxMethode ? `AND cp.payment_method = $${ts.idxMethode}` : ''}
-       ${ts.idxCaissier ? `AND cp.recorded_by = $${ts.idxCaissier}` : ''}
-     ORDER BY cp.created_at`,
-    ts.params
-  );
-
-  // Reste à charge d'une vente en tiers payant : seul montant réellement
-  // encaissé côté client sur ce type de vente (la part assureur, elle,
-  // n'entre jamais en caisse — voir insurer_claims).
-  const copaiementsTiersPayant = await pool.query(
-    `SELECT icp.id, 'reglement_tiers_payant' AS type, icp.created_at AS date, icp.amount, icp.payment_method,
-            o.order_seq, o.created_at AS order_created_at, c.full_name AS client_name,
-            icp.user_id AS user_id, u.full_name AS user_name
-     FROM insurer_copayments icp
-     JOIN orders o ON o.id = icp.order_id
-     LEFT JOIN clients c ON c.id = o.client_id
-     LEFT JOIN users u ON u.id = icp.user_id
-     WHERE icp.merchant_id = $1 AND icp.created_at >= $2 AND icp.created_at < $3 AND o.warehouse_id = $4
-       ${ts.idxMethode ? `AND icp.payment_method = $${ts.idxMethode}` : ''}
-       ${ts.idxCaissier ? `AND icp.user_id = $${ts.idxCaissier}` : ''}
-     ORDER BY icp.created_at`,
-    ts.params
-  );
-
-  // Règlement reçu d'une mutuelle (remboursement des ventes en tiers
-  // payant) : au même titre qu'un règlement de crédit, il entre en caisse
-  // dès qu'il est enregistré (POST /insurers/:id/payments).
-  const reglementsMutuelle = await pool.query(
-    `SELECT ip.id, 'reglement_mutuelle' AS type, ip.paid_at AS date, ip.amount, ip.payment_method,
-            i.name AS insurer_name,
-            ip.user_id AS user_id, u.full_name AS user_name
-     FROM insurer_payments ip
-     JOIN insurers i ON i.id = ip.insurer_id
-     LEFT JOIN users u ON u.id = ip.user_id
-     WHERE ip.merchant_id = $1 AND ip.paid_at >= $2 AND ip.paid_at < $3 AND ip.warehouse_id = $4
-       ${ts.idxMethode ? `AND ip.payment_method = $${ts.idxMethode}` : ''}
-       ${ts.idxCaissier ? `AND ip.user_id = $${ts.idxCaissier}` : ''}
-     ORDER BY ip.paid_at`,
-    ts.params
-  );
-
-  const achatsStock = await pool.query(
-    `SELECT sm.id, 'achat_stock' AS type, sm.created_at AS date, sm.total_cost AS amount, sm.cash_method AS payment_method,
-            p.name AS product_name, s.name AS supplier_name,
-            sm.user_id AS user_id, u.full_name AS user_name
-     FROM stock_movements sm
-     LEFT JOIN products p ON p.id = sm.product_id
-     LEFT JOIN suppliers s ON s.id = sm.supplier_id
-     LEFT JOIN users u ON u.id = sm.user_id
-     WHERE sm.merchant_id = $1 AND sm.created_at >= $2 AND sm.created_at < $3
-       AND sm.movement_type = 'entree' AND sm.payment_method = 'comptant' AND sm.warehouse_id = $4
-       ${ts.idxMethode ? `AND sm.cash_method = $${ts.idxMethode}` : ''}
-       ${ts.idxCaissier ? `AND sm.user_id = $${ts.idxCaissier}` : ''}
-     ORDER BY sm.created_at`,
-    ts.params
-  );
-
-  const reglementsFournisseur = await pool.query(
-    `SELECT sp.id, 'reglement_fournisseur' AS type, sp.paid_at AS date, sp.amount, sp.payment_method, s.name AS supplier_name,
-            sp.user_id AS user_id, u.full_name AS user_name
-     FROM supplier_payments sp
-     LEFT JOIN suppliers s ON s.id = sp.supplier_id
-     LEFT JOIN users u ON u.id = sp.user_id
-     WHERE sp.merchant_id = $1 AND sp.paid_at >= $2 AND sp.paid_at < $3 AND sp.warehouse_id = $4
-       ${ts.idxMethode ? `AND sp.payment_method = $${ts.idxMethode}` : ''}
-       ${ts.idxCaissier ? `AND sp.user_id = $${ts.idxCaissier}` : ''}
-     ORDER BY sp.paid_at`,
-    ts.params
-  );
-
-  const sorties = await pool.query(
-    `SELECT ce.id, 'sortie' AS type, ce.expense_date AS date, ce.amount, ce.payment_method, ce.reason,
-            ce.user_id AS user_id, u.full_name AS user_name
-     FROM cash_expenses ce
-     LEFT JOIN users u ON u.id = ce.user_id
-     WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 AND ce.movement_type = 'sortie' AND ce.warehouse_id = $4
-       ${dates.idxMethode ? `AND ce.payment_method = $${dates.idxMethode}` : ''}
-       ${dates.idxCaissier ? `AND ce.user_id = $${dates.idxCaissier}` : ''}
-     ORDER BY ce.expense_date`,
-    dates.params
-  );
-
-  const entreesManuelles = await pool.query(
-    `SELECT ce.id, 'entree_manuelle' AS type, ce.expense_date AS date, ce.amount, ce.payment_method, ce.reason,
-            ce.user_id AS user_id, u.full_name AS user_name
-     FROM cash_expenses ce
-     LEFT JOIN users u ON u.id = ce.user_id
-     WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 AND ce.movement_type = 'entree' AND ce.warehouse_id = $4
-       ${dates.idxMethode ? `AND ce.payment_method = $${dates.idxMethode}` : ''}
-       ${dates.idxCaissier ? `AND ce.user_id = $${dates.idxCaissier}` : ''}
-     ORDER BY ce.expense_date`,
-    dates.params
-  );
+  // Les 8 requêtes ci-dessous sont indépendantes (tables différentes) : elles étaient
+  // awaited une par une (jusqu'à 8 allers-retours DB en série, ~4s observés sur 26 jours /
+  // 3483 lignes) — désormais lancées en parallèle avec Promise.all.
+  const [
+    encaissements, reglementsCredit, copaiementsTiersPayant, reglementsMutuelle,
+    achatsStock, reglementsFournisseur, sorties, entreesManuelles,
+  ] = await Promise.all([
+    pool.query(
+      `SELECT o.id, 'encaissement' AS type, o.validated_at AS date, o.total_amount AS amount, o.payment_method,
+              o.order_seq, o.created_at AS order_created_at, c.full_name AS client_name,
+              o.validated_by AS user_id, u.full_name AS user_name
+       FROM orders o
+       LEFT JOIN clients c ON c.id = o.client_id
+       LEFT JOIN users u ON u.id = o.validated_by
+       WHERE o.merchant_id = $1 AND o.validated_at >= $2 AND o.validated_at < $3 AND o.warehouse_id = $4
+         ${ts.idxMethode ? `AND o.payment_method = $${ts.idxMethode}` : ''}
+         ${ts.idxCaissier ? `AND o.validated_by = $${ts.idxCaissier}` : ''}
+         ${tous ? "AND o.payment_method NOT IN ('a_credit', 'tiers_payant')" : ''}
+       ORDER BY o.validated_at`,
+      ts.params
+    ),
+    pool.query(
+      `SELECT cp.id, 'reglement_credit' AS type, cp.created_at AS date, cp.amount, cp.payment_method, c.full_name AS client_name,
+              cp.recorded_by AS user_id, u.full_name AS user_name
+       FROM credit_payments cp
+       LEFT JOIN clients c ON c.id = cp.client_id
+       LEFT JOIN users u ON u.id = cp.recorded_by
+       WHERE cp.merchant_id = $1 AND cp.created_at >= $2 AND cp.created_at < $3 AND cp.warehouse_id = $4
+         ${ts.idxMethode ? `AND cp.payment_method = $${ts.idxMethode}` : ''}
+         ${ts.idxCaissier ? `AND cp.recorded_by = $${ts.idxCaissier}` : ''}
+       ORDER BY cp.created_at`,
+      ts.params
+    ),
+    // Reste à charge d'une vente en tiers payant : seul montant réellement
+    // encaissé côté client sur ce type de vente (la part assureur, elle,
+    // n'entre jamais en caisse — voir insurer_claims).
+    pool.query(
+      `SELECT icp.id, 'reglement_tiers_payant' AS type, icp.created_at AS date, icp.amount, icp.payment_method,
+              o.order_seq, o.created_at AS order_created_at, c.full_name AS client_name,
+              icp.user_id AS user_id, u.full_name AS user_name
+       FROM insurer_copayments icp
+       JOIN orders o ON o.id = icp.order_id
+       LEFT JOIN clients c ON c.id = o.client_id
+       LEFT JOIN users u ON u.id = icp.user_id
+       WHERE icp.merchant_id = $1 AND icp.created_at >= $2 AND icp.created_at < $3 AND o.warehouse_id = $4
+         ${ts.idxMethode ? `AND icp.payment_method = $${ts.idxMethode}` : ''}
+         ${ts.idxCaissier ? `AND icp.user_id = $${ts.idxCaissier}` : ''}
+       ORDER BY icp.created_at`,
+      ts.params
+    ),
+    // Règlement reçu d'une mutuelle (remboursement des ventes en tiers
+    // payant) : au même titre qu'un règlement de crédit, il entre en caisse
+    // dès qu'il est enregistré (POST /insurers/:id/payments).
+    pool.query(
+      `SELECT ip.id, 'reglement_mutuelle' AS type, ip.paid_at AS date, ip.amount, ip.payment_method,
+              i.name AS insurer_name,
+              ip.user_id AS user_id, u.full_name AS user_name
+       FROM insurer_payments ip
+       JOIN insurers i ON i.id = ip.insurer_id
+       LEFT JOIN users u ON u.id = ip.user_id
+       WHERE ip.merchant_id = $1 AND ip.paid_at >= $2 AND ip.paid_at < $3 AND ip.warehouse_id = $4
+         ${ts.idxMethode ? `AND ip.payment_method = $${ts.idxMethode}` : ''}
+         ${ts.idxCaissier ? `AND ip.user_id = $${ts.idxCaissier}` : ''}
+       ORDER BY ip.paid_at`,
+      ts.params
+    ),
+    pool.query(
+      `SELECT sm.id, 'achat_stock' AS type, sm.created_at AS date, sm.total_cost AS amount, sm.cash_method AS payment_method,
+              p.name AS product_name, s.name AS supplier_name,
+              sm.user_id AS user_id, u.full_name AS user_name
+       FROM stock_movements sm
+       LEFT JOIN products p ON p.id = sm.product_id
+       LEFT JOIN suppliers s ON s.id = sm.supplier_id
+       LEFT JOIN users u ON u.id = sm.user_id
+       WHERE sm.merchant_id = $1 AND sm.created_at >= $2 AND sm.created_at < $3
+         AND sm.movement_type = 'entree' AND sm.payment_method = 'comptant' AND sm.warehouse_id = $4
+         ${ts.idxMethode ? `AND sm.cash_method = $${ts.idxMethode}` : ''}
+         ${ts.idxCaissier ? `AND sm.user_id = $${ts.idxCaissier}` : ''}
+       ORDER BY sm.created_at`,
+      ts.params
+    ),
+    pool.query(
+      `SELECT sp.id, 'reglement_fournisseur' AS type, sp.paid_at AS date, sp.amount, sp.payment_method, s.name AS supplier_name,
+              sp.user_id AS user_id, u.full_name AS user_name
+       FROM supplier_payments sp
+       LEFT JOIN suppliers s ON s.id = sp.supplier_id
+       LEFT JOIN users u ON u.id = sp.user_id
+       WHERE sp.merchant_id = $1 AND sp.paid_at >= $2 AND sp.paid_at < $3 AND sp.warehouse_id = $4
+         ${ts.idxMethode ? `AND sp.payment_method = $${ts.idxMethode}` : ''}
+         ${ts.idxCaissier ? `AND sp.user_id = $${ts.idxCaissier}` : ''}
+       ORDER BY sp.paid_at`,
+      ts.params
+    ),
+    pool.query(
+      `SELECT ce.id, 'sortie' AS type, ce.expense_date AS date, ce.amount, ce.payment_method, ce.reason,
+              ce.user_id AS user_id, u.full_name AS user_name
+       FROM cash_expenses ce
+       LEFT JOIN users u ON u.id = ce.user_id
+       WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 AND ce.movement_type = 'sortie' AND ce.warehouse_id = $4
+         ${dates.idxMethode ? `AND ce.payment_method = $${dates.idxMethode}` : ''}
+         ${dates.idxCaissier ? `AND ce.user_id = $${dates.idxCaissier}` : ''}
+       ORDER BY ce.expense_date`,
+      dates.params
+    ),
+    pool.query(
+      `SELECT ce.id, 'entree_manuelle' AS type, ce.expense_date AS date, ce.amount, ce.payment_method, ce.reason,
+              ce.user_id AS user_id, u.full_name AS user_name
+       FROM cash_expenses ce
+       LEFT JOIN users u ON u.id = ce.user_id
+       WHERE ce.merchant_id = $1 AND ce.expense_date >= $2 AND ce.expense_date <= $3 AND ce.movement_type = 'entree' AND ce.warehouse_id = $4
+         ${dates.idxMethode ? `AND ce.payment_method = $${dates.idxMethode}` : ''}
+         ${dates.idxCaissier ? `AND ce.user_id = $${dates.idxCaissier}` : ''}
+       ORDER BY ce.expense_date`,
+      dates.params
+    ),
+  ]);
 
   const entrees = [...encaissements.rows, ...reglementsCredit.rows, ...copaiementsTiersPayant.rows, ...reglementsMutuelle.rows, ...entreesManuelles.rows].map((r) => ({ ...r, sens: 'entree' }));
   const dehors = [...achatsStock.rows, ...reglementsFournisseur.rows, ...sorties.rows].map((r) => ({ ...r, sens: 'sortie' }));

@@ -26,11 +26,21 @@ router.get('/', async (req, res) => {
   res.json(rows);
 });
 
+// Dernier contrôle des échéances par commerçant (en mémoire) : évite de relancer
+// verifierEcheances() à chaque poll de /unread-count, ce qui saturait le pool de
+// connexions et ralentissait la route (jusqu'à ~800 ms pour un simple COUNT).
+const dernierControleEcheances = new Map();
+const INTERVALLE_CONTROLE_ECHEANCES = 60 * 60 * 1000; // 1h
+
 router.get('/unread-count', async (req, res) => {
   // Le manager et le gérant qui consultent l'application déclenchent aussi le contrôle des échéances
   // (lots bientôt périmés, déclarations fiscales) : au plus une fois par heure, sans bloquer la réponse.
   if ((req.user.roles || [req.user.role]).some((r) => ['manager', 'gerant'].includes(r))) {
-    verifierEcheances(req.user.merchantId, req.user.sector).catch((err) => console.error('Erreur vérification échéances :', err));
+    const dernier = dernierControleEcheances.get(req.user.merchantId) || 0;
+    if (Date.now() - dernier > INTERVALLE_CONTROLE_ECHEANCES) {
+      dernierControleEcheances.set(req.user.merchantId, Date.now());
+      verifierEcheances(req.user.merchantId, req.user.sector).catch((err) => console.error('Erreur vérification échéances :', err));
+    }
   }
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS count FROM alerts WHERE merchant_id = $1 AND lu = false AND ${VISIBLE}`,
