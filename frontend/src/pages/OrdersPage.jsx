@@ -227,6 +227,25 @@ const CSS_HISTORIQUE = `
 .hv-carte--statique{cursor:default}
 .hv-carte--statique:hover{transform:none;box-shadow:none;border-color:var(--trait,#e5e7eb)}
 .hv-liste{display:flex;flex-direction:column;gap:10px}
+.hv-jour{margin:18px 0 8px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:700;text-transform:capitalize;color:var(--encre)}
+.hv-jour:first-child{margin-top:0}
+.hv-jour::after{content:'';flex:1;height:1px;background:var(--trait,#e5e7eb)}
+.hv-jour span{font-size:12px;font-weight:600;color:var(--encre-douce);text-transform:none}
+.hv-grille{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.hv-carte-c{display:flex;flex-direction:column;gap:6px;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:12px;padding:8px 12px;cursor:pointer;transition:box-shadow .15s,border-color .15s}
+.hv-carte-c:hover{border-color:var(--accent);box-shadow:0 4px 12px rgba(17,24,39,.07)}
+.hv-carte-c.hv-carte--prioritaire{border-left:3px solid var(--accent)}
+.hv-carte-c-haut{display:grid;grid-template-columns:26px minmax(0,1fr) auto;gap:8px;align-items:center}
+.hv-avatar-c{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:#eef2ff;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent)}
+.hv-carte-c .hv-numero{font-size:13px}
+.hv-carte-c .hv-sous{font-size:12px;margin:0}
+.hv-carte-c .hv-montant{font-size:13px;margin:0;white-space:nowrap}
+.hv-carte-c-bas{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.hv-carte-c-bas .hv-actions{margin-left:auto}
+.hv-carte-c .btn{padding:3px 8px !important;font-size:12px !important}
+@media (max-width:760px){
+  .hv-grille{grid-template-columns:minmax(0,1fr)}
+}
 .hv-carte{display:grid;grid-template-columns:44px minmax(0,1.5fr) minmax(0,1fr) auto;gap:14px;align-items:center;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:14px;padding:12px 16px;cursor:pointer;transition:box-shadow .15s,border-color .15s,transform .15s}
 .hv-carte:hover{border-color:var(--accent);box-shadow:0 6px 18px rgba(17,24,39,.08);transform:translateY(-1px)}
 .hv-carte--prioritaire{border-left:4px solid var(--accent)}
@@ -1094,6 +1113,35 @@ export function OrdersPage() {
     return acc;
   }, {});
   const ordersFiltres = filtreStatut === 'tous' ? ordersRecherche : ordersRecherche.filter((o) => o.status === filtreStatut);
+  // Historique : regroupé par jour (le plus récent d'abord), les factures
+  // à traiter en priorité passent en tête de leur journée.
+  const groupesParJour = (() => {
+    const parJour = new Map();
+    [...ordersFiltres]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .forEach((o) => {
+        const d = new Date(o.created_at);
+        const cle = Number.isNaN(d.getTime())
+          ? 'inconnu'
+          : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        if (!parJour.has(cle)) {
+          parJour.set(cle, {
+            cle,
+            libelle: cle === 'inconnu'
+              ? 'Date inconnue'
+              : d.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+            commandes: [],
+          });
+        }
+        parJour.get(cle).commandes.push(o);
+      });
+    const estPrioritaire = (o) =>
+      (o.status === 'en_attente' && peutEncaisserCetteCommande(o)) || (o.status === 'renvoyee_vendeur' && peutTraiterRenvoi);
+    return [...parJour.values()].map((g) => ({
+      ...g,
+      commandes: [...g.commandes].sort((a, b) => Number(estPrioritaire(b)) - Number(estPrioritaire(a))),
+    }));
+  })();
   const montantTotalRembourse = retours.reduce((somme, r) => somme + (Number(r.refund_amount) || 0), 0);
   const nbEnAttenteHistorique = ordersFiltres.filter((o) => o.status === 'en_attente').length;
 
@@ -1449,87 +1497,91 @@ export function OrdersPage() {
               {orders.length === 0 ? 'Aucune vente enregistrée pour le moment.' : 'Aucune vente ne correspond à ces filtres.'}
             </p>
           ) : (
-            <div className="hv-liste">
-              {ordersFiltres.map((o) => {
-                const prioritaire =
-                  (o.status === 'en_attente' && peutEncaisserCetteCommande(o)) || (o.status === 'renvoyee_vendeur' && peutTraiterRenvoi);
-                const nomClient = o.client_name || `${libelleClient} de passage`;
-                return (
-                  <div
-                    key={o.id}
-                    className={'hv-carte' + (prioritaire ? ' hv-carte--prioritaire' : '')}
-                    onClick={() => ouvrirDetailHistorique(o)}
-                  >
-                    <div className="hv-avatar">{o.client_name ? o.client_name.trim()[0].toUpperCase() : 'P'}</div>
-
-                    <div className="hv-bloc">
-                      <p className="hv-numero chiffre">{o.order_number}</p>
-                      <p className="hv-sous">
-                        {nomClient}
-                        {o.created_at ? ` · ${new Date(o.created_at).toLocaleString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).replace(/\u202f/g, '\u00a0')}` : ''}
-                      </p>
-                    </div>
-
-                    <div className="hv-bloc hv-bloc--montant">
-                      <p className="hv-montant">{Math.round(o.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
-                      <StatusBadge status={o.status} />
-                      {o.has_return && <span className="hv-retour">FACTURE RETOURNÉE</span>}
-                    </div>
-
-                    <div className="hv-actions" onClick={(e) => e.stopPropagation()}>
-                      {peutEncaisserCetteCommande(o) && o.status === 'en_attente' && (
-                        <button
-                          className="btn btn-principal"
-                          style={{ padding: '5px 10px', fontSize: 13 }}
-                          disabled={chargementDetail}
-                          onClick={() => ouvrirEncaissement(o)}
+            <div>
+              {groupesParJour.map((g) => (
+                <section key={g.cle}>
+                  <h3 className="hv-jour">
+                    {g.libelle} <span>· {g.commandes.length} facture{g.commandes.length > 1 ? 's' : ''}</span>
+                  </h3>
+                  <div className="hv-grille">
+                    {g.commandes.map((o) => {
+                      const prioritaire =
+                        (o.status === 'en_attente' && peutEncaisserCetteCommande(o)) || (o.status === 'renvoyee_vendeur' && peutTraiterRenvoi);
+                      const nomClient = o.client_name || `${libelleClient} de passage`;
+                      return (
+                        <div
+                          key={o.id}
+                          className={'hv-carte-c' + (prioritaire ? ' hv-carte--prioritaire' : '')}
+                          onClick={() => ouvrirDetailHistorique(o)}
                         >
-                          Encaisser
-                        </button>
-                      )}
-                      {peutTraiterRenvoi && o.status === 'renvoyee_vendeur' && (
-                        <>
-                          <button
-                            className="btn btn-principal"
-                            style={{ padding: '5px 10px', fontSize: 13 }}
-                            disabled={chargementDetail}
-                            onClick={() => demarrerModification(o)}
-                          >
-                            Modifier
-                          </button>
-                          <button
-                            className="btn btn-brique"
-                            style={{ padding: '5px 10px', fontSize: 13 }}
-                            onClick={() => annulerCommandeRenvoyee(o)}
-                          >
-                            Annuler
-                          </button>
-                        </>
-                      )}
-                      {peutGererStatut && o.status === 'validee' && o.client_name && (
-                        <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handleStatut(o, 'livree')}>
-                          Marquer livrée
-                        </button>
-                      )}
-                      {peutGererStatut && ['en_attente', 'validee'].includes(o.status) && (
-                        <button className="btn" style={{ padding: '5px 10px', fontSize: 13 }} onClick={() => handleStatut(o, 'annulee')}>
-                          Annuler
-                        </button>
-                      )}
-                      {(peutTraiterRetour || peutDemanderRetour) && !o.has_return && ['validee', 'livree'].includes(o.status) && (
-                        <button
-                          className="btn"
-                          style={{ padding: '5px 10px', fontSize: 13 }}
-                          disabled={chargementRetourCommande}
-                          onClick={() => ouvrirRetour(o)}
-                        >
-                          {peutTraiterRetour ? 'Retour' : 'Demander un retour'}
-                        </button>
-                      )}
-                    </div>
+                          <div className="hv-carte-c-haut">
+                            <div className="hv-avatar-c">{o.client_name ? o.client_name.trim()[0].toUpperCase() : 'P'}</div>
+                            <div className="hv-bloc">
+                              <p className="hv-numero chiffre">{o.order_number}</p>
+                              <p className="hv-sous">
+                                {nomClient}
+                                {o.created_at ? ` · ${new Date(o.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                              </p>
+                            </div>
+                            <p className="hv-montant">{Math.round(o.total_amount).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA</p>
+                          </div>
+                          <div className="hv-carte-c-bas">
+                            <StatusBadge status={o.status} />
+                            {o.has_return && <span className="hv-retour" style={{ margin: 0 }}>RETOURNÉE</span>}
+                                  <div className="hv-actions" onClick={(e) => e.stopPropagation()}>
+                                    {peutEncaisserCetteCommande(o) && o.status === 'en_attente' && (
+                                      <button
+                                        className="btn btn-principal"
+                                        disabled={chargementDetail}
+                                        onClick={() => ouvrirEncaissement(o)}
+                                      >
+                                        Encaisser
+                                      </button>
+                                    )}
+                                    {peutTraiterRenvoi && o.status === 'renvoyee_vendeur' && (
+                                      <>
+                                        <button
+                                          className="btn btn-principal"
+                                          disabled={chargementDetail}
+                                          onClick={() => demarrerModification(o)}
+                                        >
+                                          Modifier
+                                        </button>
+                                        <button
+                                          className="btn btn-brique"
+                                          onClick={() => annulerCommandeRenvoyee(o)}
+                                        >
+                                          Annuler
+                                        </button>
+                                      </>
+                                    )}
+                                    {peutGererStatut && o.status === 'validee' && o.client_name && (
+                                      <button className="btn" onClick={() => handleStatut(o, 'livree')}>
+                                        Marquer livrée
+                                      </button>
+                                    )}
+                                    {peutGererStatut && ['en_attente', 'validee'].includes(o.status) && (
+                                      <button className="btn" onClick={() => handleStatut(o, 'annulee')}>
+                                        Annuler
+                                      </button>
+                                    )}
+                                    {(peutTraiterRetour || peutDemanderRetour) && !o.has_return && ['validee', 'livree'].includes(o.status) && (
+                                      <button
+                                        className="btn"
+                                        disabled={chargementRetourCommande}
+                                        onClick={() => ouvrirRetour(o)}
+                                      >
+                                        {peutTraiterRetour ? 'Retour' : 'Demander un retour'}
+                                      </button>
+                                    )}
+                                  </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                </section>
+              ))}
             </div>
           )}
         </>
