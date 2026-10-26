@@ -232,8 +232,8 @@ const CSS_HISTORIQUE = `
 .hv-jour::after{content:'';flex:1;height:1px;background:var(--trait,#e5e7eb)}
 .hv-jour span{font-size:12px;font-weight:600;color:var(--encre-douce);text-transform:none}
 .hv-grille{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.hv-carte-c{display:flex;flex-direction:column;gap:6px;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:12px;padding:8px 12px;cursor:pointer;transition:box-shadow .15s,border-color .15s}
-.hv-carte-c:hover{border-color:var(--accent);box-shadow:0 4px 12px rgba(17,24,39,.07)}
+.hv-carte-c{display:flex;flex-direction:column;gap:6px;background:var(--surface,#fff);border:1px solid var(--trait,#e5e7eb);border-radius:12px;padding:8px 12px;cursor:pointer;transition:box-shadow .15s,border-color .15s,transform .15s}
+.hv-carte-c:hover{border-color:var(--accent);box-shadow:0 6px 18px rgba(17,24,39,.08);transform:translateY(-1px)}
 .hv-carte-c.hv-carte--prioritaire{border-left:3px solid var(--accent)}
 .hv-carte-c-haut{display:grid;grid-template-columns:26px minmax(0,1fr) auto;gap:8px;align-items:center}
 .hv-avatar-c{width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;background:#eef2ff;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent)}
@@ -1517,9 +1517,9 @@ export function OrdersPage() {
                           <div className="hv-carte-c-haut">
                             <div className="hv-avatar-c">{o.client_name ? o.client_name.trim()[0].toUpperCase() : 'P'}</div>
                             <div className="hv-bloc">
-                              <p className="hv-numero chiffre">{o.order_number}</p>
-                              <p className="hv-sous">
-                                {nomClient}
+                              <p className="hv-numero" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{nomClient}</p>
+                              <p className="hv-sous chiffre">
+                                {o.order_number}
                                 {o.created_at ? ` · ${new Date(o.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : ''}
                               </p>
                             </div>
