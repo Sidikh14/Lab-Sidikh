@@ -146,6 +146,29 @@ function enregistrerPolices(doc) {
   doc.font = (src, ...reste) => fontOrigine(POLICES[src] || src, ...reste);
   doc.fontSize = (taille) => fontSizeOrigine(taille * ECHELLE_TEXTE);
 
+  // Désactive les ligatures OpenType (fi, fl…) : pdfkit/fontkit les applique par défaut avec
+  // les polices Jakarta embarquées, ce qui soude "fi" en un seul glyphe "ﬁ" sans générer le
+  // ToUnicode correspondant — le texte extrait/copié perd alors le "i" ("fiscales" ->
+  // "fscales", "confidentiel" -> "confdentiel"). Sans incidence visuelle sur nos documents,
+  // mais la fidélité du texte extrait (recherche, copier-coller) prime pour des pièces
+  // administratives. Ne s'applique qu'avec les polices Jakarta (avecPolices) : les polices
+  // standard (repli Helvetica) ne font pas de substitution de ligature chez pdfkit.
+  if (avecPolices) {
+    const texteOrigine = doc.text.bind(doc);
+    const DESACTIVER_LIGATURES = ['-liga', '-rlig', '-dlig', '-clig'];
+    doc.text = (txt, ...reste) => {
+      let options = {};
+      let avantOptions = reste;
+      const dernier = reste[reste.length - 1];
+      if (reste.length && typeof dernier === 'object' && dernier !== null) {
+        options = dernier;
+        avantOptions = reste.slice(0, -1);
+      }
+      const nouvellesOptions = { ...options, features: [...(options.features || []), ...DESACTIVER_LIGATURES] };
+      return texteOrigine(txt, ...avantOptions, nouvellesOptions);
+    };
+  }
+
   doc.font('Helvetica');
 }
 
