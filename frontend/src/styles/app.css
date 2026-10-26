@@ -1705,7 +1705,7 @@ body { font-size: 1rem; }
 :root[data-theme="dark"] input,
 :root[data-theme="dark"] select,
 :root[data-theme="dark"] textarea {
-  background-color: var(--champ-fond, #222b3d);
+  background-color: #222b3d;
   color: var(--encre);
   border-color: var(--trait);
 }
@@ -1776,12 +1776,20 @@ html:root .selecteur-boutique select {
   background-position: right 0 center;
 }
 
-/* Mode sombre : les couleurs viennent de la CHARTE du commerçant (--marine, --accent), jamais d'une palette
-   fixe. On ne redéfinit donc ni --marine ni --accent ici : on garde seulement une copie de l'accent de la charte,
-   dont les variables sombres (bloc « passe complète » plus bas) sont dérivées. */
+/* Mode sombre : variables (la palette claire reste celle de la charte). */
 html:root[data-theme="dark"] {
-  color-scheme: dark;
-  --accent-charte: var(--accent);
+  --fond: #0e1b1f;
+  --carte: #152a30;
+  --encre: #eef2f2;
+  --encre-douce: #93a3a8;
+  --trait: rgba(238, 242, 242, 0.12);
+  --marine: #0a171a;
+  --accent: #4aa595;
+  --accent-fonce: #3a8a7b;
+  --accent-clair: rgba(74, 165, 149, 0.16);
+  --accent-transparent: rgba(74, 165, 149, 0.2);
+  --champ-fond: #10222a;
+  --sidebar-fond: #0a171a;
 }
 
 /* ---------- Composants SAGFA (components/SagfaUi.jsx) ---------- */
@@ -1917,26 +1925,15 @@ html:root .btn.sg-btn-blanc:hover:not(:disabled) { background: #f3efe5; border-c
    dans l'arbre, le mode sombre l'emporte. */
 html:root[data-theme="dark"] body,
 html:root[data-theme="dark"] #root {
-  /* Fonds : la couleur Marine de la charte, assombrie (mélange avec du noir) — pas de palette fixe. */
-  --fond: color-mix(in srgb, var(--marine) 48%, #000);
-  --carte: color-mix(in srgb, var(--marine) 80%, #000);
-  --surface: var(--carte); /* utilisée (avec repli blanc) par tous les composants md-* et db-* : sans elle, cartes blanches */
-  --champ-fond: color-mix(in srgb, var(--marine) 66%, #000);
-  --sidebar-fond: color-mix(in srgb, var(--marine) 62%, #000);
-  --noir-charte: color-mix(in srgb, var(--marine) 45%, #000);
-  --marine-2: color-mix(in srgb, var(--marine) 82%, #fff);
-  --encre: #eef2f7; --encre-douce: #9aa8bc; --trait: rgba(238, 242, 247, 0.12);
-  /* Accent de la charte, éclairci pour rester lisible sur fond sombre. */
-  --accent: color-mix(in srgb, var(--accent-charte) 82%, #fff);
-  --accent-fonce: var(--accent-charte);
-  --accent-clair: color-mix(in srgb, var(--accent-charte) 24%, transparent);
-  --accent-transparent: color-mix(in srgb, var(--accent-charte) 30%, transparent);
-  --danger-clair: rgba(220, 70, 60, 0.16);
+  --fond: #0e1b1f; --carte: #152a30; --encre: #eef2f2; --encre-douce: #93a3a8;
+  --trait: rgba(238, 242, 242, 0.12); --marine: #0a171a; --marine-2: #14343b;
+  --accent: #4aa595; --accent-fonce: #3a8a7b; --accent-clair: rgba(74, 165, 149, 0.16);
+  --accent-transparent: rgba(74, 165, 149, 0.2); --champ-fond: #10222a; --sidebar-fond: #0a171a;
   color-scheme: dark;
 }
 
 /* Barre latérale : toujours sombre (marine en clair, presque noir en sombre), jamais dépendante de --encre. */
-html:root[data-theme="dark"] .barre-laterale { background-color: var(--sidebar-fond) !important; color: rgba(255, 255, 255, 0.86); border-right: 1px solid var(--trait); }
+html:root[data-theme="dark"] .barre-laterale { background-color: #0a171a !important; color: rgba(255, 255, 255, 0.86); border-right: 1px solid var(--trait); }
 html:root[data-theme="dark"] .barre-laterale .nav-lien, html:root[data-theme="dark"] .barre-laterale .nav-lien svg { color: rgba(255, 255, 255, 0.78); }
 html:root[data-theme="dark"] .barre-laterale .nav-lien.actif, html:root[data-theme="dark"] .barre-laterale .nav-lien.actif svg { color: #fff; }
 html:root[data-theme="dark"] .barre-laterale .nav-groupe-bouton { color: rgba(255, 255, 255, 0.55); }
@@ -1963,7 +1960,7 @@ html:root[data-theme="dark"] .barre-haut-theme,
 html:root[data-theme="dark"] .barre-haut-recherche { background: var(--carte); color: var(--encre-douce); border-color: var(--trait); }
 html:root[data-theme="dark"] .barre-haut-menu { background: var(--carte); color: var(--encre); border: 1px solid var(--trait); }
 html:root[data-theme="dark"] .barre-haut-menu button { color: var(--encre); }
-html:root[data-theme="dark"] .avatar { background: var(--accent); color: var(--noir-charte); }
+html:root[data-theme="dark"] .avatar { background: var(--accent); color: #0a171a; }
 
 /* Fonds et textes clairs écrits en dur dans les styles en ligne des pages (tableaux, cartes, bandeaux…). */
 html:root[data-theme="dark"] [style*="background: rgb(255, 255, 255)"],
@@ -2073,38 +2070,14 @@ html:root .btn.btn-principal:hover:not(:disabled) { background: color-mix(in srg
 html:root .btn.btn-principal svg { color: #fff; }
 html:root .btn.btn-brique { background: var(--danger, #b3261e); border-color: var(--danger, #b3261e); color: #fff; }
 html:root .btn.btn-brique svg { color: #fff; }
-html:root[data-theme="dark"] .btn { background: var(--marine-2); border-color: var(--marine-2); color: #eef2f7; }
-html:root[data-theme="dark"] .btn.btn-principal { background: var(--marine-2); border-color: var(--marine-2); color: #fff; }
+html:root[data-theme="dark"] .btn { background: #1c3a42; border-color: #1c3a42; color: #eef2f2; }
+html:root[data-theme="dark"] .btn.btn-principal { background: var(--accent); border-color: var(--accent); color: #0a171a; }
 html:root .btn.sg-btn-blanc { background: #fff; border-color: #fff; color: var(--marine); }
 
-
-/* ============================================================
-   Même thème que les boutons (marine, icône dorée) pour tous les éléments cliquables du même genre (25/10)
-   - bouton principal (« Nouveau produit », « Enregistrer »…) : marine comme les autres boutons ;
-   - puces de statut / filtres (.md-puce), onglets (.onglet), bascule de vue (.md-vues) : l'état actif est marine,
-     le compteur et l'icône passent en doré.
-   ============================================================ */
-html:root .btn.btn-principal { background: var(--marine); border-color: var(--marine); color: #fff; box-shadow: none; }
-html:root .btn.btn-principal svg { color: var(--soleil); }
-html:root .btn.btn-principal:hover:not(:disabled) { background: color-mix(in srgb, var(--marine) 84%, #fff); border-color: color-mix(in srgb, var(--marine) 84%, #fff); color: #fff; }
-
-html:root .md-puce { border-color: var(--trait); color: var(--encre-douce); background: var(--carte, #fff); }
-html:root .md-puce:hover { border-color: var(--marine); color: var(--marine); }
-html:root .md-puce.actif { background: var(--marine); border-color: var(--marine); color: #fff; }
-html:root .md-puce.actif span { color: var(--soleil); opacity: 1; }
-
-html:root .onglet:hover { border-color: var(--marine); color: var(--marine); }
-html:root .onglet.actif { background: var(--marine); border-color: var(--marine); color: #fff; box-shadow: none; }
-
-html:root .md-vues { border-color: var(--trait); }
-html:root .md-vues > *.actif, html:root .md-vues > *.active, html:root .md-vues > [aria-pressed="true"], html:root .md-vues > [aria-selected="true"] {
-  background: var(--marine); color: #fff;
-}
-html:root .md-vues > *.actif svg, html:root .md-vues > *.active svg, html:root .md-vues > [aria-pressed="true"] svg, html:root .md-vues > [aria-selected="true"] svg { color: var(--soleil); }
-
-html:root[data-theme="dark"] .md-puce.actif, html:root[data-theme="dark"] .onglet.actif { background: var(--marine-2); border-color: var(--marine-2); }
-
-/* Modale d'encaissement : toutes les écritures en gras (libellés, lignes du ticket, montants, boutons, saisies). */
-html:root .modale-encaissement,
-html:root .modale-encaissement :where(p, span, div, label, small, li, td, th, a, button, input, select, textarea) { font-weight: 700; }
-html:root .modale-encaissement :where(h1, h2, h3, strong, .chiffre) { font-weight: 800; }
+/* Modale d'encaissement et panneau Ticket de la caisse : tout le texte en gras (étiquettes, champs, montants, boutons). */
+html:root .modale-encaissement, html:root .modale-encaissement *,
+html:root .caisse-ticket, html:root .caisse-ticket * { font-weight: 700; }
+html:root .modale-encaissement h1, html:root .modale-encaissement h2, html:root .modale-encaissement h3,
+html:root .caisse-ticket h1, html:root .caisse-ticket h2, html:root .caisse-ticket h3 { font-weight: 800; }
+html:root .modale-encaissement input::placeholder, html:root .modale-encaissement textarea::placeholder,
+html:root .caisse-ticket input::placeholder { font-weight: 600; }
