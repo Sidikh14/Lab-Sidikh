@@ -414,8 +414,10 @@ router.use(['/state-dues', '/state-payments', '/tax-settings', '/tax-profile', '
 // Les consultations (journal, grand livre, balance, résultat, bilan) lancent
 // d'abord la synchronisation automatique (au plus une fois toutes les 30 s) :
 // rien n'est à saisir ni à actualiser à la main.
+// Perf : la synchro complète est lancée en arrière-plan et la lecture n'attend que quelques secondes au
+// plus (voir synchroPourLecture) : avant, chaque page Comptabilité/Fiscalité patientait 20 à 30 s.
 router.use(['/dashboard', '/financing', '/adjustments', '/entries', '/ledger', '/general-ledger', '/trial-balance', '/income-statement', '/balance-sheet', '/state-dues', '/closing-preview', '/fiscal-years', '/declarations', '/reconciliations', '/aged-balance'], async (req, res, next) => {
-  if (req.method === 'GET') await assurerSynchro(req.user.merchantId, req.user.id);
+  if (req.method === 'GET') await synchroPourLecture(req.user.merchantId, req.user.id);
   next();
 });
 
@@ -3854,6 +3856,21 @@ async function assurerSynchro(merchantId, userId, force = false) {
     });
   ETAT_SYNCHRO.set(merchantId, { ...etat, enCours });
   return enCours;
+}
+
+// Lecture d'un état : la synchro tourne en arrière-plan (elle continue même si on n'attend plus) et la
+// requête ne patiente que DELAI_ATTENTE_LECTURE_MS. Les écritures déjà en base sont lues telles quelles ;
+// la synchro les complète pour la lecture suivante. Seule la toute première synchro d'un commerçant depuis
+// le démarrage du serveur est attendue plus longtemps, pour ne pas afficher des états vides à l'activation.
+const DELAI_ATTENTE_LECTURE_MS = 2500;
+const DELAI_ATTENTE_PREMIERE_SYNCHRO_MS = 8000;
+async function synchroPourLecture(merchantId, userId) {
+  const dejaSynchronise = Boolean((ETAT_SYNCHRO.get(merchantId) || {}).dernier);
+  const attente = assurerSynchro(merchantId, userId);
+  const delai = dejaSynchronise ? DELAI_ATTENTE_LECTURE_MS : DELAI_ATTENTE_PREMIERE_SYNCHRO_MS;
+  let minuteur;
+  await Promise.race([attente, new Promise((resolve) => { minuteur = setTimeout(resolve, delai); })]);
+  clearTimeout(minuteur);
 }
 
 // POST /accounting/sync — force une synchronisation immédiate (bouton "Actualiser").

@@ -2,16 +2,14 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole } = require('../middleware/roles');
-const {
-  COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerBandeauTotal,
-  enregistrerPolices, lireLogoCommercant, dessinerLogoCommercant,
-} = require('../utils/pdfHelpers');
-const { FORMATS, TAILLES, mmEnPt, nomFichierPdf, metadonneesPdf } = require('../utils/pdfTheme');
+const { requireAction, peutAgir } = require('../middleware/roles');
 
 const router = express.Router();
 router.use(authenticate);
-router.use(requireRole('manager', 'gerant'));
+// Pas de verrou de rôle global ici (comme pour clients.routes.js) : la visibilité de la page
+// « Commandes fournisseurs » est déjà gérée par visible_modules, et chaque action mutante est
+// gardée individuellement par requireAction('achats', ...) / peutAgir() ci-dessous — un membre
+// à qui une action précise a été accordée doit pouvoir l'effectuer même sans être manager/gérant.
 
 // GET /purchase-orders — liste des commandes fournisseurs récentes
 router.get('/', async (req, res) => {
@@ -36,8 +34,7 @@ async function getPurchaseOrderDetail(merchantId, id) {
   const poResult = await pool.query(
     `SELECT po.*, s.name AS supplier_name, s.phone AS supplier_phone,
             s.email AS supplier_email, s.address AS supplier_address,
-            m.business_name, m.currency, m.ninea, m.rccm, m.address AS merchant_address,
-            to_jsonb(m) AS merchant_json
+            m.business_name, m.currency
      FROM purchase_orders po
      JOIN suppliers s ON s.id = po.supplier_id
      JOIN merchants m ON m.id = po.merchant_id
@@ -61,9 +58,7 @@ router.get('/:id', async (req, res) => {
   try {
     const po = await getPurchaseOrderDetail(req.user.merchantId, req.params.id);
     if (!po) return res.status(404).json({ error: 'Commande fournisseur introuvable.' });
-    // merchant_json (ligne complète du commerçant, logo compris) ne sert qu'au PDF : on ne l'envoie pas au navigateur.
-    const { merchant_json: _ignore, ...visible } = po;
-    res.json(visible);
+    res.json(po);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la récupération de la commande.' });
@@ -72,7 +67,7 @@ router.get('/:id', async (req, res) => {
 
 // POST /purchase-orders
 // items attendu : [{ productId, quantity, unitCost }]
-router.post('/', async (req, res) => {
+router.post('/', requireAction('achats', 'creer'), async (req, res) => {
   const { supplierId, items, notes } = req.body;
 
   if (!supplierId || !Array.isArray(items) || items.length === 0) {
@@ -143,6 +138,11 @@ router.patch('/:id/status', async (req, res) => {
   if (!valides.includes(status)) {
     return res.status(400).json({ error: 'Statut invalide.' });
   }
+  // L'action requise dépend du statut visé : réceptionner et annuler sont deux droits distincts.
+  const actionRequise = status === 'recue' ? 'livrer' : status === 'annulee' ? 'annuler' : 'modifier';
+  if (!peutAgir(req.user, 'achats', actionRequise)) {
+    return res.status(403).json({ error: "Vous n'avez pas les droits nécessaires pour cette action." });
+  }
   try {
     const result = await pool.query(
       `UPDATE purchase_orders SET status = $1 WHERE id = $2 AND merchant_id = $3 RETURNING *`,
@@ -157,127 +157,64 @@ router.patch('/:id/status', async (req, res) => {
 });
 
 // GET /purchase-orders/:id/pdf — génère le bon de commande à adresser au fournisseur
-// (charte Amaterasu v8 : A4, marges de 20 mm, tableau à en-tête Marine, total sur bandeau Marine).
 router.get('/:id/pdf', async (req, res) => {
   try {
     const po = await getPurchaseOrderDetail(req.user.merchantId, req.params.id);
     if (!po) return res.status(404).json({ error: 'Commande fournisseur introuvable.' });
 
-    const reference = po.id.slice(0, 8).toUpperCase();
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${nomFichierPdf('Bon-commande', reference)}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="bon-de-commande-${po.id.slice(0, 8)}.pdf"`);
 
-    const M = FORMATS.marge;
-    const doc = new PDFDocument({
-      margin: M,
-      size: 'A4',
-      ...metadonneesPdf({ titre: `Bon de commande ${reference}`, commercant: po.business_name }),
-    });
-    doc.on('error', (err) => {
-      console.error('Erreur pdfkit (bon de commande) :', err);
-      if (!res.headersSent) res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
-      else if (!res.writableEnded) res.end();
-    });
+    const doc = new PDFDocument({ margin: 50 });
     doc.pipe(res);
-    enregistrerPolices(doc);
 
-    const droite = doc.page.width - M;
-    const largeurContenu = droite - M;
-    const devise = po.currency || 'FCFA';
-    const logoCommercant = lireLogoCommercant(po.merchant_json);
-    const merchant = { ninea: po.ninea, rccm: po.rccm, address: po.merchant_address };
+    doc.fontSize(18).text(po.business_name || 'Commerce', { continued: false });
+    doc.moveDown(0.3);
+    doc.fontSize(14).fillColor('#5b4fe9').text('BON DE COMMANDE', { characterSpacing: 1 });
+    doc.fillColor('#000000');
+    doc.moveDown(1);
 
-    const libelle = (texte, x, yy, w) => doc.font('Helvetica-Bold').fontSize(TAILLES.libelle).fillColor(COULEURS.muted)
-      .text(texte, x, yy, { width: w, characterSpacing: 0.6, lineBreak: false });
-    const entetePage = () => dessinerEntete(doc, {
-      businessName: po.business_name,
-      titre: 'Bon de commande',
-      sousTitre: `Réf. ${reference}  ·  ${new Date(po.created_at).toLocaleDateString('fr-FR')}`,
-      merchant,
-      marge: M,
-      logo: logoCommercant,
-    });
-    let y = entetePage() + 10;
+    doc.fontSize(10).fillColor('#555555').text(`Date : ${new Date(po.created_at).toLocaleDateString('fr-FR')}`);
+    doc.text(`Référence : ${po.id.slice(0, 8).toUpperCase()}`);
+    doc.moveDown(1);
 
-    // Émetteur (gauche) et fournisseur (droite), sur deux colonnes.
-    const largeurCol = (largeurContenu - 28) / 2;
-    const xG = M;
-    const xD = M + largeurCol + 28;
-    libelle('ÉMETTEUR', xG, y, largeurCol);
-    libelle('FOURNISSEUR', xD, y, largeurCol);
-    let yG = y + 13;
-    let yD = y + 13;
+    doc.fillColor('#000000').fontSize(11).text('Adressé à :', { underline: true });
+    doc.fontSize(10).text(po.supplier_name);
+    if (po.supplier_phone) doc.text(po.supplier_phone);
+    if (po.supplier_email) doc.text(po.supplier_email);
+    if (po.supplier_address) doc.text(po.supplier_address);
+    doc.moveDown(1.5);
 
-    doc.font('Helvetica-Bold').fontSize(TAILLES.texte + 1).fillColor(COULEURS.encre)
-      .text(po.business_name || 'Commerce', xG, yG, { width: largeurCol });
-    yG += 16;
-    doc.font('Helvetica').fontSize(TAILLES.texte).fillColor(COULEURS.encre);
-    [merchant.address, merchant.ninea && `NINEA ${merchant.ninea}`, merchant.rccm && `RCCM ${merchant.rccm}`]
-      .filter(Boolean)
-      .forEach((ligne) => { doc.text(ligne, xG, yG, { width: largeurCol }); yG += 14; });
+    const startY = doc.y;
+    doc.fontSize(10).fillColor('#555555');
+    doc.text('Produit', 50, startY, { width: 220 });
+    doc.text('Quantité', 280, startY, { width: 80 });
+    doc.text('Prix unitaire', 370, startY, { width: 90 });
+    doc.text('Total', 470, startY, { width: 80 });
+    doc.moveTo(50, startY + 15).lineTo(550, startY + 15).strokeColor('#e5e7eb').stroke();
 
-    doc.font('Helvetica-Bold').fontSize(TAILLES.texte + 1).fillColor(COULEURS.encre)
-      .text(po.supplier_name, xD, yD, { width: largeurCol });
-    yD += 16;
-    doc.font('Helvetica').fontSize(TAILLES.texte).fillColor(COULEURS.encre);
-    [po.supplier_phone, po.supplier_email, po.supplier_address].filter(Boolean).forEach((ligne) => {
-      doc.text(ligne, xD, yD, { width: largeurCol });
-      yD += doc.heightOfString(ligne, { width: largeurCol }) + 3;
+    let y = startY + 22;
+    doc.fillColor('#000000');
+    po.items.forEach((item) => {
+      doc.fontSize(10).text(item.product_name, 50, y, { width: 220 });
+      doc.text(String(item.quantity), 280, y, { width: 80 });
+      doc.text(`${Number(item.unit_cost).toLocaleString('fr-FR')} ${po.currency}`, 370, y, { width: 90 });
+      doc.text(`${Number(item.line_total).toLocaleString('fr-FR')} ${po.currency}`, 470, y, { width: 80 });
+      y += 20;
     });
 
-    y = Math.max(yG, yD) + 22;
-
-    // Tableau : en-tête Marine, lignes alternées Brume, montants alignés à droite.
-    const COLONNES = [
-      { texte: 'Produit', x: M + 8, largeur: 235 },
-      { texte: 'Quantité', x: M + 252, largeur: 60, aligner: 'right' },
-      { texte: 'Prix unitaire', x: M + 322, largeur: 70, aligner: 'right' },
-      { texte: 'Total', x: M + 402, largeur: largeurContenu - 402 - 8, aligner: 'right' },
-    ];
-    y = dessinerEnteteTableau(doc, y, COLONNES, M);
-
-    po.items.forEach((item, index) => {
-      if (y + 24 > doc.page.height - 90) {
-        doc.addPage();
-        y = entetePage() + 18;
-        y = dessinerEnteteTableau(doc, y, COLONNES, M);
-      }
-      if (index % 2 === 1) doc.rect(M, y - 6, largeurContenu, 24).fill(COULEURS.fondAlterne);
-      doc.font('Helvetica').fontSize(TAILLES.tableau).fillColor(COULEURS.encre);
-      doc.text(item.product_name, COLONNES[0].x, y, { width: COLONNES[0].largeur, lineBreak: false, ellipsis: true });
-      doc.text(String(item.quantity), COLONNES[1].x, y, { width: COLONNES[1].largeur, align: 'right', lineBreak: false });
-      doc.text(formatMontant(item.unit_cost), COLONNES[2].x, y, { width: COLONNES[2].largeur, align: 'right', lineBreak: false });
-      doc.font('Helvetica-Bold').text(formatMontant(item.line_total), COLONNES[3].x, y, { width: COLONNES[3].largeur, align: 'right', lineBreak: false });
-      y += 24;
-    });
-
-    doc.moveTo(M, y - 2).lineTo(droite, y - 2).strokeColor(COULEURS.bordure).lineWidth(0.8).stroke();
-    y += 16;
-
-    // Total : bandeau Marine, montant en Soleil.
-    if (y + 60 > doc.page.height - 70) {
-      doc.addPage();
-      y = entetePage() + 18;
-    }
-    y = dessinerBandeauTotal(doc, {
-      x: droite - 260, y, largeur: 260, label: 'Total', texteMontant: `${formatMontant(po.total_amount)} ${devise}`, hauteur: 32,
-    }) + 20;
+    doc.moveTo(50, y + 5).lineTo(550, y + 5).strokeColor('#e5e7eb').stroke();
+    doc.fontSize(12).text(`Total : ${Number(po.total_amount).toLocaleString('fr-FR')} ${po.currency}`, 370, y + 15, { width: 180 });
 
     if (po.notes) {
-      const hauteurNotes = doc.heightOfString(po.notes, { width: largeurContenu });
-      if (y + hauteurNotes + 20 > doc.page.height - 70) {
-        doc.addPage();
-        y = entetePage() + 18;
-      }
-      libelle('NOTES', M, y, largeurContenu);
-      doc.font('Helvetica').fontSize(TAILLES.texte).fillColor(COULEURS.encre)
-        .text(po.notes, M, y + 13, { width: largeurContenu });
+      doc.moveDown(3);
+      doc.fontSize(10).fillColor('#555555').text(`Notes : ${po.notes}`);
     }
 
     doc.end();
   } catch (err) {
     console.error(err);
-    if (!res.headersSent) res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
+    res.status(500).json({ error: 'Erreur lors de la génération du PDF.' });
   }
 });
 

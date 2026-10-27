@@ -166,7 +166,51 @@ function requireAction(module, action) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Le module « équipe » fonctionne en LISTE BLANCHE, à l'inverse de peutAgir() ci-dessus
+// (liste noire, absence de clé = autorisé). Gérer l'équipe (ajouter/modifier/supprimer un
+// membre, toucher à ses permissions ou son mot de passe) est une action sensible : elle reste
+// refusée par défaut à tout le monde sauf le manager, et doit être explicitement accordée
+// (valeur `true`, pas simplement absente ou différente de `false`) pour un gérant, vendeur,
+// caissier ou comptable.
+function peutGererEquipe(user, action) {
+  if (aRole(user, 'manager')) return true;
+  return user?.actionPermissions?.equipe?.[action] === true;
+}
+
+// Vrai si la personne a accès à la liste de l'équipe : manager/gérant par défaut (comme avant),
+// ou toute personne à qui au moins une action equipe a été explicitement accordée (elle a
+// besoin de voir la liste pour agir dessus).
+function aAccesEquipe(user) {
+  if (aRole(user, 'manager', 'gerant')) return true;
+  const actions = user?.actionPermissions?.equipe || {};
+  return Object.values(actions).some((v) => v === true);
+}
+
+function requireEquipeAction(action) {
+  return (req, res, next) => {
+    if (!peutGererEquipe(req.user, action)) {
+      return res.status(403).json({
+        error: "Vous n'avez pas les droits nécessaires pour cette action.",
+      });
+    }
+    next();
+  };
+}
+
+function requireAccesEquipe() {
+  return (req, res, next) => {
+    if (!aAccesEquipe(req.user)) {
+      return res.status(403).json({
+        error: "Vous n'avez pas les droits nécessaires pour cette action.",
+      });
+    }
+    next();
+  };
+}
+
 module.exports = {
   requireRole, aRole, normaliserRoles, rolePrincipal, ROLES_ATTRIBUABLES, ROLES_CLINIQUE,
   CATALOGUE_ACTIONS, peutAgir, requireAction,
+  peutGererEquipe, aAccesEquipe, requireEquipeAction, requireAccesEquipe,
 };

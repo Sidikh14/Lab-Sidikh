@@ -2685,11 +2685,9 @@ export function ComptabilitePage() {
   const [synchro, setSynchro] = useState(null);
   const [enSynchro, setEnSynchro] = useState(false);
 
-  // À l'ouverture, la reprise automatique des données est lancée d'elle-même.
-  useEffect(() => {
-    if (!enabled) return;
-    api.syncAccounting().then(setSynchro).catch(() => {});
-  }, [enabled]);
+  // La reprise automatique des données est lancée par le serveur à chaque lecture (au plus toutes les 3 min,
+  // en arrière-plan). On ne force plus une synchro complète à l'ouverture : c'était la cause des 20 à 30 s
+  // d'attente. Le bouton « Actualiser » reste là pour forcer une mise à jour.
 
   if (loading) return <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>;
   if (!enabled) return <PageModuleNonActive nom="Comptabilité" />;

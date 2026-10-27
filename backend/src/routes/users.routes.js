@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const { genererMotDePasseProvisoire } = require('../utils/motDePasseProvisoire');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole, requireAction, normaliserRoles, rolePrincipal, ROLES_ATTRIBUABLES, CATALOGUE_ACTIONS } = require('../middleware/roles');
+const { normaliserRoles, rolePrincipal, ROLES_ATTRIBUABLES, CATALOGUE_ACTIONS, requireEquipeAction, requireAccesEquipe } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 
 const router = express.Router();
@@ -36,7 +36,7 @@ const aRoleDeVente = (roles) => roles.some((r) => ROLES_VENTE.includes(r));
 const aBesoinDUnLieu = (roles) => roles.some((r) => ROLES_AVEC_LIEU.includes(r));
 
 // GET /users — liste de l'équipe du commerce (manager et gérant uniquement)
-router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
+router.get('/', requireAccesEquipe(), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.full_name, u.email, u.role, COALESCE(u.roles, ARRAY[u.role::text]) AS roles, u.is_active, u.last_login_at, u.created_at,
@@ -57,7 +57,7 @@ router.get('/', requireRole('manager', 'gerant'), async (req, res) => {
 });
 
 // POST /users — créer un membre de l'équipe (manager uniquement)
-router.post('/', requireRole('manager'), requireAction('equipe', 'creer'), async (req, res) => {
+router.post('/', requireEquipeAction('creer'), async (req, res) => {
   const { fullName, warehouseId } = req.body;
   const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
 
@@ -134,7 +134,7 @@ router.post('/', requireRole('manager'), requireAction('equipe', 'creer'), async
 });
 
 // PATCH /users/:id/status — activer/désactiver un membre (manager uniquement)
-router.patch('/:id/status', requireRole('manager'), requireAction('equipe', 'modifier'), async (req, res) => {
+router.patch('/:id/status', requireEquipeAction('modifier'), async (req, res) => {
   const { isActive } = req.body;
 
   if (typeof isActive !== 'boolean') {
@@ -185,8 +185,10 @@ router.patch('/:id/status', requireRole('manager'), requireAction('equipe', 'mod
 // Les trois dernières sont les pages de finance qu'un comptable peut ouvrir (voir middleware/financePermissions.js).
 const MODULES_VALIDES = ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse', 'comptabilite', 'fiscalite', 'paie'];
 
-// actions: { module: { action: false } } — ne retient que les refus explicites (false) ;
-// toute autre valeur (true, absente) est ignorée puisque c'est déjà le comportement par défaut.
+// actions: { module: { action: false } } — ne retient que les refus explicites (false) pour les
+// modules en liste noire ; toute autre valeur (true, absente) est ignorée puisque c'est déjà le
+// comportement par défaut. Le module « équipe » est en liste blanche (voir requireEquipeAction) :
+// on y garde au contraire les autorisations explicites (true), pas les refus.
 function nettoyerActions(actions) {
   if (actions == null) return {};
   if (typeof actions !== 'object' || Array.isArray(actions)) throw new Error('Permissions d\'action invalides.');
@@ -195,18 +197,20 @@ function nettoyerActions(actions) {
     if (!CATALOGUE_ACTIONS[module] || typeof parActions !== 'object' || Array.isArray(parActions)) {
       throw new Error('Permissions d\'action invalides.');
     }
+    const estEquipe = module === 'equipe';
     for (const action of Object.keys(parActions)) {
       if (!(action in CATALOGUE_ACTIONS[module])) throw new Error('Permissions d\'action invalides.');
-      if (parActions[action] === false) {
+      const valeur = parActions[action];
+      if ((estEquipe && valeur === true) || (!estEquipe && valeur === false)) {
         propre[module] = propre[module] || {};
-        propre[module][action] = false;
+        propre[module][action] = valeur;
       }
     }
   }
   return propre;
 }
 
-router.patch('/:id/permissions', requireRole('manager'), requireAction('equipe', 'permissions'), async (req, res) => {
+router.patch('/:id/permissions', requireEquipeAction('permissions'), async (req, res) => {
   const { modules, actions } = req.body;
 
   if (modules !== null && (!Array.isArray(modules) || !modules.every((m) => MODULES_VALIDES.includes(m)))) {
@@ -247,7 +251,7 @@ router.patch('/:id/permissions', requireRole('manager'), requireAction('equipe',
 // PATCH /users/:id/warehouse — manager réassigne un membre à une autre
 // boutique. Un gérant/caissier/vendeur doit toujours être assigné à une
 // boutique active (jamais NULL).
-router.patch('/:id/warehouse', requireRole('manager'), requireAction('equipe', 'modifier'), async (req, res) => {
+router.patch('/:id/warehouse', requireEquipeAction('modifier'), async (req, res) => {
   const { warehouseId } = req.body;
   if (!warehouseId) {
     return res.status(400).json({ error: 'La boutique est requise.' });
@@ -298,7 +302,7 @@ router.patch('/:id/warehouse', requireRole('manager'), requireAction('equipe', '
 // PATCH /users/:id/password — le manager réinitialise le mot de passe d'un membre
 // (cas d'oubli). Un mot de passe provisoire est généré ; le manager ne choisit ni ne voit
 // le mot de passe personnel. Le membre doit le changer à sa prochaine connexion.
-router.patch('/:id/password', requireRole('manager'), requireAction('equipe', 'mot_de_passe'), async (req, res) => {
+router.patch('/:id/password', requireEquipeAction('mot_de_passe'), async (req, res) => {
   if (req.params.id === req.user.id) {
     return res.status(400).json({ error: 'Vous ne pouvez pas réinitialiser votre propre mot de passe ici.' });
   }
@@ -335,7 +339,7 @@ router.patch('/:id/password', requireRole('manager'), requireAction('equipe', 'm
 // (l'ancien format { role } reste accepté). Réinitialise les permissions personnalisées
 // (visible_modules) car les modules par défaut des nouveaux rôles ne correspondent plus forcément
 // à l'ancienne sélection.
-router.patch('/:id/role', requireRole('manager'), requireAction('equipe', 'modifier'), async (req, res) => {
+router.patch('/:id/role', requireEquipeAction('modifier'), async (req, res) => {
   const lecture = lireRoles(req.body);
   if (lecture.erreur) return res.status(lecture.code).json({ error: lecture.erreur });
   const { roles } = lecture;
@@ -391,7 +395,7 @@ router.patch('/:id/role', requireRole('manager'), requireAction('equipe', 'modif
 // caisse…), la contrainte de clé étrangère bloque la suppression : on
 // renvoie alors un message invitant à désactiver le compte à la place,
 // plutôt que de casser l'historique.
-router.delete('/:id', requireRole('manager'), requireAction('equipe', 'supprimer'), async (req, res) => {
+router.delete('/:id', requireEquipeAction('supprimer'), async (req, res) => {
   if (req.params.id === req.user.id) {
     return res.status(400).json({ error: 'Vous ne pouvez pas supprimer votre propre compte.' });
   }
