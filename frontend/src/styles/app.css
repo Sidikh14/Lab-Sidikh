@@ -796,7 +796,8 @@
 .contenu {
   flex: 1;
   padding: 32px 40px;
-  max-width: 1080px;
+  /* Plus de largeur maximale : le contenu occupe tout l'écran, y compris les grands écrans. */
+  max-width: none;
 }
 
 .entete-page {
@@ -2081,3 +2082,33 @@ html:root .modale-encaissement h1, html:root .modale-encaissement h2, html:root 
 html:root .caisse-ticket h1, html:root .caisse-ticket h2, html:root .caisse-ticket h3 { font-weight: 800; }
 html:root .modale-encaissement input::placeholder, html:root .modale-encaissement textarea::placeholder,
 html:root .caisse-ticket input::placeholder { font-weight: 600; }
+
+/* ============================================================
+   Grands écrans (26/10) — l'échelle fluide ci-dessus s'arrêtait à 1600 px : au-delà, les cartes, icônes et
+   textes restaient à leur taille maximale et laissaient du vide. On les agrandit par paliers (×1,1 dès 1700 px,
+   ×1,2 dès 1920 px, ×1,35 dès 2400 px). Les écrans de moins de 1700 px ne changent pas.
+   ============================================================ */
+@media (min-width: 1700px) {
+  :root {
+    --fs-xs: 13.2px; --fs-sm: 14.9px; --fs-base: 16px; --fs-md: 18.2px; --fs-lg: 24.2px; --fs-xl: 29.7px; --fs-2xl: 37.4px;
+    --icon-sm: 17.6px; --icon-md: 20.9px; --icon-lg: 26.4px;
+    --space-xs: 6.6px; --space-sm: 12.1px; --space-md: 20.9px; --space-lg: 30.8px; --space-xl: 44px;
+    --largeur-sidebar-pleine: 253px;
+  }
+}
+@media (min-width: 1920px) {
+  :root {
+    --fs-xs: 14.4px; --fs-sm: 16.2px; --fs-base: 17.4px; --fs-md: 19.8px; --fs-lg: 26.4px; --fs-xl: 32.4px; --fs-2xl: 40.8px;
+    --icon-sm: 19.2px; --icon-md: 22.8px; --icon-lg: 28.8px;
+    --space-xs: 7.2px; --space-sm: 13.2px; --space-md: 22.8px; --space-lg: 33.6px; --space-xl: 48px;
+    --largeur-sidebar-pleine: 276px;
+  }
+}
+@media (min-width: 2400px) {
+  :root {
+    --fs-xs: 16.2px; --fs-sm: 18.2px; --fs-base: 19.6px; --fs-md: 22.3px; --fs-lg: 29.7px; --fs-xl: 36.5px; --fs-2xl: 45.9px;
+    --icon-sm: 21.6px; --icon-md: 25.7px; --icon-lg: 32.4px;
+    --space-xs: 8.1px; --space-sm: 14.9px; --space-md: 25.7px; --space-lg: 37.8px; --space-xl: 54px;
+    --largeur-sidebar-pleine: 310px;
+  }
+}
