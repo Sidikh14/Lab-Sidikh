@@ -775,15 +775,15 @@ router.patch('/:id', requireRole('manager', 'gerant'), requireAction('stock', 'm
          is_vital = COALESCE($10, is_vital),
          requires_prescription = COALESCE($11, requires_prescription),
          requires_cold_chain = COALESCE($12, requires_cold_chain),
-         is_dish = COALESCE($15, is_dish),
-         description = COALESCE($16, description),
-         ingredients_text = COALESCE($17, ingredients_text),
-         station = COALESCE($18, station),
-         course = COALESCE($19, course),
-         prep_minutes = COALESCE($20, prep_minutes),
-         available = COALESCE($21, available),
-         track_stock = COALESCE($22, track_stock)
-       WHERE id = $23 AND merchant_id = $24
+         is_dish = COALESCE($13, is_dish),
+         description = COALESCE($14, description),
+         ingredients_text = COALESCE($15, ingredients_text),
+         station = COALESCE($16, station),
+         course = COALESCE($17, course),
+         prep_minutes = COALESCE($18, prep_minutes),
+         available = COALESCE($19, available),
+         track_stock = COALESCE($20, track_stock)
+       WHERE id = $21 AND merchant_id = $22
        RETURNING *`,
       [
         name, sku, categoryId, unitPrice, costPrice, quantityAlertThreshold, isWeighted,
