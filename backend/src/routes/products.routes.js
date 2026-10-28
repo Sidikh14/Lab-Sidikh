@@ -20,17 +20,39 @@ const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
 // Secteur grossiste : prix de gros, produits périssables, unité d'achat (sac) / unité de vente (kg)
 // ---------------------------------------------------------------------------
 
-// Les nouveaux champs sont ajoutés tout seuls au premier démarrage (sans effet s'ils existent déjà).
+// Les nouveaux champs sont ajoutés tout seuls (sans effet s'ils existent déjà). La création est tentée
+// avant les requêtes produits ; si elle échoue (verrou, droits…), elle est retentée toutes les 30 s sans
+// jamais bloquer les requêtes plus de 10 s, et la cause est reprise dans les messages d'erreur.
+let schemaGrossisteOk = false;
+let schemaGrossisteErreur = null;
+let schemaGrossisteDerniereTentative = 0;
+let schemaGrossisteEnCours = null;
+
 async function assurerSchemaGrossiste() {
-  await pool.query(
-    `ALTER TABLE products
-       ADD COLUMN IF NOT EXISTS wholesale_price numeric,
-       ADD COLUMN IF NOT EXISTS wholesale_min_qty numeric,
-       ADD COLUMN IF NOT EXISTS is_perishable boolean NOT NULL DEFAULT false,
-       ADD COLUMN IF NOT EXISTS purchase_unit_label text,
-       ADD COLUMN IF NOT EXISTS purchase_unit_qty numeric,
-       ADD COLUMN IF NOT EXISTS purchase_unit_price numeric`
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL lock_timeout = '8s'`);
+    await client.query(
+      `ALTER TABLE products
+         ADD COLUMN IF NOT EXISTS wholesale_price numeric,
+         ADD COLUMN IF NOT EXISTS wholesale_min_qty numeric,
+         ADD COLUMN IF NOT EXISTS is_perishable boolean NOT NULL DEFAULT false,
+         ADD COLUMN IF NOT EXISTS purchase_unit_label text,
+         ADD COLUMN IF NOT EXISTS purchase_unit_qty numeric,
+         ADD COLUMN IF NOT EXISTS purchase_unit_price numeric`
+    );
+    await client.query('COMMIT');
+    schemaGrossisteOk = true;
+    schemaGrossisteErreur = null;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    schemaGrossisteErreur = err.message;
+    console.error('Schéma grossiste :', err.message);
+    throw err;
+  } finally {
+    client.release();
+  }
   try {
     // Le type d'alerte est un enum : on y ajoute « peremption_proche » s'il n'y est pas.
     const t = await pool.query(
@@ -41,11 +63,30 @@ async function assurerSchemaGrossiste() {
     console.error("Type d'alerte péremption :", err.message);
   }
 }
-const schemaGrossistePret = assurerSchemaGrossiste().catch((err) => console.error('Schéma grossiste :', err));
+
+function assurerSchemaTolerant() {
+  if (schemaGrossisteOk) return Promise.resolve();
+  if (!schemaGrossisteEnCours) {
+    schemaGrossisteDerniereTentative = Date.now();
+    schemaGrossisteEnCours = assurerSchemaGrossiste().finally(() => { schemaGrossisteEnCours = null; });
+  }
+  return schemaGrossisteEnCours;
+}
+assurerSchemaTolerant().catch(() => {});
 router.use(async (req, res, next) => {
-  await schemaGrossistePret;
+  if (!schemaGrossisteOk && (schemaGrossisteEnCours || Date.now() - schemaGrossisteDerniereTentative > 30000)) {
+    try {
+      await Promise.race([assurerSchemaTolerant(), new Promise((resolve) => setTimeout(resolve, 10000))]);
+    } catch (err) { /* déjà journalisé ; la requête continue */ }
+  }
   next();
 });
+
+// Détail technique ajouté aux erreurs 500 des produits pour que la cause soit visible à l'écran.
+function detailErreur(err) {
+  const cause = schemaGrossisteErreur ? `base : ${schemaGrossisteErreur}` : (err && err.message) || 'erreur inconnue';
+  return ` (${cause})`;
+}
 
 const DELAI_ALERTE_PEREMPTION_JOURS = 15;
 
@@ -157,7 +198,7 @@ async function verifierPeremptionsTous() {
   for (const r of rows) await verifierPeremptions(r.merchant_id, true);
 }
 // Contrôle automatique toutes les 6 h (et une minute après le démarrage), sans rien à configurer ailleurs.
-setTimeout(() => { schemaGrossistePret.then(verifierPeremptionsTous).catch(() => {}); }, 60 * 1000).unref();
+setTimeout(() => { assurerSchemaTolerant().then(verifierPeremptionsTous).catch(() => {}); }, 60 * 1000).unref();
 setInterval(() => { verifierPeremptionsTous().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
 
 // Achat saisi en unité d'achat (ex. 3 sacs à 12 000 FCFA le sac) : quantité convertie en unité de stock (kg)
@@ -659,7 +700,7 @@ router.post('/', requireRole('manager', 'gerant'), requireAction('stock', 'creer
     await client.query('ROLLBACK');
     if (err.status) return res.status(err.status).json({ error: err.message });
     console.error(err);
-    res.status(500).json({ error: 'Erreur lors de la création du produit.' });
+    res.status(500).json({ error: 'Erreur lors de la création du produit.' + detailErreur(err) });
   } finally {
     client.release();
   }
@@ -798,7 +839,7 @@ router.patch('/:id', requireRole('manager', 'gerant'), requireAction('stock', 'm
   } catch (err) {
     if (err.status) return res.status(err.status).json({ error: err.message });
     console.error(err);
-    res.status(500).json({ error: 'Erreur lors de la mise à jour du produit.' });
+    res.status(500).json({ error: 'Erreur lors de la mise à jour du produit.' + detailErreur(err) });
   }
 });
 
