@@ -16,6 +16,215 @@ const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
 // Seuil d'alerte suggéré (pas imposé) quand la case "Produit vital" est
 // cochée — reste librement modifiable ensuite par le pharmacien/gérant.
 const SEUIL_ALERTE_VITAL_SUGGERE = 20;
+// ---- Secteur grossiste : prix de gros, périssables, unité d'achat (sac) / unité de vente (kg) ----
+const fcfa = (n) => Math.round(Number(n) || 0).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0');
+const DELAI_ALERTE_PEREMPTION_JOURS = 15;
+
+// Champs « grossiste » d'un formulaire produit → corps de requête (null efface l'option côté serveur).
+function optionsGrossisteDepuisFormulaire(f) {
+  const gros = f.venteEnGros && Number(f.wholesalePrice) > 0 && Number(f.wholesaleMinQty) > 0;
+  const achat = f.uniteAchat && Number(f.purchaseUnitQty) > 0;
+  return {
+    wholesalePrice: gros ? Number(f.wholesalePrice) : null,
+    wholesaleMinQty: gros ? Number(f.wholesaleMinQty) : null,
+    isPerishable: Boolean(f.isPerishable),
+    purchaseUnitLabel: achat ? (f.purchaseUnitLabel || 'sac') : null,
+    purchaseUnitQty: achat ? Number(f.purchaseUnitQty) : null,
+    purchaseUnitPrice: achat && Number(f.purchaseUnitPrice) > 0 ? Number(f.purchaseUnitPrice) : null,
+  };
+}
+
+function erreurOptionsGrossiste(f) {
+  if (f.venteEnGros && !(Number(f.wholesalePrice) > 0 && Number(f.wholesaleMinQty) > 0)) {
+    return 'Vente en gros : indiquez le prix de gros et la quantité minimale, ou décochez l\u2019option.';
+  }
+  if (f.uniteAchat && !(Number(f.purchaseUnitQty) > 0)) {
+    return 'Achat en gros : indiquez ce que contient une unité d\u2019achat (ex. 50 kg par sac), ou décochez l\u2019option.';
+  }
+  return '';
+}
+
+// Marges d'un produit acheté en unité de gros (sac) et vendu au détail (kg) : coût par kg, marge au kg, marge au sac.
+function calculerMargesGrossiste({ unitPrice, purchasePrice, purchaseQty, units = [] }) {
+  const prix = Number(unitPrice) || 0;
+  const achat = Number(purchasePrice) || 0;
+  const qte = Number(purchaseQty) || 0;
+  if (!(achat > 0) || !(qte > 0)) return null;
+  const coutUnite = achat / qte;
+  const conditionnement = units.find((u) => Number(u.quantity_per_unit ?? u.quantityPerUnit) === qte);
+  const prixSac = conditionnement ? Number(conditionnement.price) : prix * qte;
+  return {
+    coutUnite,
+    margeUnite: prix > 0 ? prix - coutUnite : null,
+    pctUnite: prix > 0 ? Math.round(((prix - coutUnite) / prix) * 100) : null,
+    prixSac,
+    venduAuSac: Boolean(conditionnement),
+    margeSac: prixSac > 0 ? prixSac - achat : null,
+    pctSac: prixSac > 0 ? Math.round(((prixSac - achat) / prixSac) * 100) : null,
+  };
+}
+
+function BlocMargesGrossiste({ unitPrice, purchasePrice, purchaseQty, units, libelle = 'sac', auPoids }) {
+  const m = calculerMargesGrossiste({ unitPrice, purchasePrice, purchaseQty, units });
+  if (!m) return null;
+  const u = auPoids ? 'kg' : 'unité';
+  return (
+    <div style={{ fontSize: 12, color: 'var(--encre-douce)', marginTop: 6, lineHeight: 1.6 }}>
+      <div>Coût par {u} : <strong>{fcfa(m.coutUnite)} FCFA</strong> ({fcfa(purchasePrice)} FCFA le {libelle} ÷ {purchaseQty} {u})</div>
+      {m.margeUnite !== null && <div>Marge au {u} : <strong>{fcfa(m.margeUnite)} FCFA</strong> ({m.pctUnite} %)</div>}
+      {m.margeSac !== null && (
+        <div>
+          Marge au {libelle} : <strong>{fcfa(m.margeSac)} FCFA</strong> ({m.pctSac} %)
+          {' '}{m.venduAuSac ? `— vendu au ${libelle} à ${fcfa(m.prixSac)} FCFA` : `— si le ${libelle} est vendu entièrement au ${u}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Stock en unité de vente (kg) avec l'équivalent en unités d'achat : « 130 kg = 2 sacs et 30 kg ».
+function libelleStockEnSacs(p) {
+  const contenu = Number(p.purchase_unit_qty);
+  if (!(contenu > 0)) return '';
+  const qte = Number(p.quantity_in_stock) || 0;
+  const entiers = Math.floor(qte / contenu + 1e-9);
+  const reste = Math.round((qte - entiers * contenu) * 10) / 10;
+  const u = p.is_weighted ? 'kg' : 'unités';
+  const nom = p.purchase_unit_label || 'sac';
+  return `${entiers} ${nom}${entiers > 1 ? 's' : ''}${reste > 0 ? ` et ${reste} ${u}` : ''}`;
+}
+
+function joursAvantPeremption(dateIso) {
+  if (!dateIso) return null;
+  const aujourdhui = new Date(); aujourdhui.setHours(0, 0, 0, 0);
+  const d = new Date(dateIso); d.setHours(0, 0, 0, 0);
+  return Math.round((d - aujourdhui) / 86400000);
+}
+
+function EtiquettesGrossiste({ p }) {
+  const jours = joursAvantPeremption(p.next_expiry);
+  return (
+    <>
+      {Number(p.wholesale_price) > 0 && Number(p.wholesale_min_qty) > 0 && (
+        <span className="tampon tampon-info" style={{ marginLeft: 6, fontSize: 11 }}>
+          Gros dès {Number(p.wholesale_min_qty)} : {fcfa(p.wholesale_price)}
+        </span>
+      )}
+      {p.is_perishable && jours !== null && (
+        <span
+          className={`tampon ${jours < 0 ? 'tampon-brique' : jours <= DELAI_ALERTE_PEREMPTION_JOURS ? 'tampon-laiton' : 'tampon-sarcelle'}`}
+          style={{ marginLeft: 6, fontSize: 11 }}
+        >
+          {jours < 0 ? `Périmé depuis le ${new Date(p.next_expiry).toLocaleDateString('fr-FR')}` : `Périme le ${new Date(p.next_expiry).toLocaleDateString('fr-FR')}`}
+        </span>
+      )}
+    </>
+  );
+}
+
+// Bandeau des produits périmés ou qui périment dans les 15 jours.
+function BandeauPeremption({ produits }) {
+  const concernes = produits
+    .filter((p) => p.is_perishable && p.next_expiry)
+    .map((p) => ({ p, jours: joursAvantPeremption(p.next_expiry) }))
+    .filter((x) => x.jours <= DELAI_ALERTE_PEREMPTION_JOURS)
+    .sort((a, b) => a.jours - b.jours);
+  if (concernes.length === 0) return null;
+  const nbPerimes = concernes.filter((x) => x.jours < 0).length;
+  return (
+    <div style={{ border: '1px solid #fdba74', background: '#fff7ed', borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
+      <p style={{ margin: 0, fontWeight: 700, color: '#9a3412', fontSize: 14 }}>
+        {nbPerimes > 0 ? `${nbPerimes} produit(s) périmé(s) · ` : ''}{concernes.length - nbPerimes} produit(s) périment dans les {DELAI_ALERTE_PEREMPTION_JOURS} jours
+      </p>
+      <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontSize: 13, color: '#7c2d12' }}>
+        {concernes.slice(0, 8).map(({ p, jours }) => (
+          <li key={p.id}>
+            {p.name} — {jours < 0 ? `périmé depuis ${-jours} j` : jours === 0 ? 'périme aujourd\u2019hui' : `périme dans ${jours} j`} ({new Date(p.next_expiry).toLocaleDateString('fr-FR')})
+          </li>
+        ))}
+        {concernes.length > 8 && <li>… et {concernes.length - 8} autre(s)</li>}
+      </ul>
+    </div>
+  );
+}
+
+// Champs de la fiche produit propres au grossiste (création et modification).
+function ChampsGrossiste({ form, onChange, units = [], auPoids }) {
+  const u = auPoids ? 'kg' : 'unités';
+  return (
+    <div style={{ border: '1px solid var(--trait)', borderRadius: 10, padding: '12px 14px', margin: '4px 0 14px' }}>
+      <p style={{ margin: '0 0 8px', fontWeight: 700, fontSize: 13 }}>Options grossiste</p>
+
+      <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <input type="checkbox" checked={form.venteEnGros} onChange={(e) => onChange({ venteEnGros: e.target.checked })} />
+        Vente en gros : un prix de gros à partir d{'\u2019'}une certaine quantité
+      </label>
+      {form.venteEnGros && (
+        <div style={{ margin: '4px 0 10px' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input type="number" min="0" step="any" className="champ" style={{ flex: 1 }} placeholder={`Prix de gros (FCFA${auPoids ? '/kg' : ''})`} value={form.wholesalePrice} onChange={(e) => onChange({ wholesalePrice: e.target.value })} />
+            <input type="number" min="0" step="any" className="champ" style={{ flex: 1 }} placeholder={`À partir de (${u})`} value={form.wholesaleMinQty} onChange={(e) => onChange({ wholesaleMinQty: e.target.value })} />
+          </div>
+          <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '4px 0 0' }}>
+            Le prix de gros s{'\u2019'}applique automatiquement dès que la quantité vendue atteint ce minimum. Sans cette option, le produit se vend toujours au prix normal.
+          </p>
+        </div>
+      )}
+
+      <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <input type="checkbox" checked={form.isPerishable} onChange={(e) => onChange({ isPerishable: e.target.checked })} />
+        Produit périssable : date de péremption demandée à chaque réception
+      </label>
+      {form.isPerishable && (
+        <p style={{ fontSize: 12, color: 'var(--encre-douce)', margin: '0 0 8px' }}>
+          Une alerte est envoyée {DELAI_ALERTE_PEREMPTION_JOURS} jours avant la péremption, et les lots qui périment en premier sont vendus en premier.
+        </p>
+      )}
+
+      <label className="etiquette" style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <input type="checkbox" checked={form.uniteAchat} onChange={(e) => onChange({ uniteAchat: e.target.checked })} />
+        Acheté en gros (sac, carton…) et vendu au détail
+      </label>
+      {form.uniteAchat && (
+        <div style={{ margin: '4px 0 0' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input className="champ" style={{ flex: 1 }} placeholder="Unité d'achat (ex. sac)" value={form.purchaseUnitLabel} onChange={(e) => onChange({ purchaseUnitLabel: e.target.value })} />
+            <input type="number" min="0" step="any" className="champ" style={{ flex: 1 }} placeholder={`Contenu (${u} par ${form.purchaseUnitLabel || 'sac'})`} value={form.purchaseUnitQty} onChange={(e) => onChange({ purchaseUnitQty: e.target.value })} />
+          </div>
+          <input type="number" min="0" step="any" className="champ" style={{ marginTop: 8 }} placeholder={`Prix d'achat d'un ${form.purchaseUnitLabel || 'sac'} (FCFA)`} value={form.purchaseUnitPrice} onChange={(e) => onChange({ purchaseUnitPrice: e.target.value })} />
+          <BlocMargesGrossiste
+            unitPrice={form.unitPrice}
+            purchasePrice={form.purchaseUnitPrice}
+            purchaseQty={form.purchaseUnitQty}
+            units={units}
+            libelle={form.purchaseUnitLabel || 'sac'}
+            auPoids={auPoids}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+const CHAMPS_GROSSISTE_VIDES = {
+  venteEnGros: false, wholesalePrice: '', wholesaleMinQty: '',
+  isPerishable: false,
+  uniteAchat: false, purchaseUnitLabel: 'sac', purchaseUnitQty: '', purchaseUnitPrice: '',
+};
+
+function champsGrossisteDepuisProduit(p) {
+  return {
+    venteEnGros: Number(p.wholesale_price) > 0 && Number(p.wholesale_min_qty) > 0,
+    wholesalePrice: p.wholesale_price ?? '',
+    wholesaleMinQty: p.wholesale_min_qty ?? '',
+    isPerishable: Boolean(p.is_perishable),
+    uniteAchat: Number(p.purchase_unit_qty) > 0,
+    purchaseUnitLabel: p.purchase_unit_label || 'sac',
+    purchaseUnitQty: p.purchase_unit_qty ?? '',
+    purchaseUnitPrice: p.purchase_unit_price ?? '',
+  };
+}
+
 const FILTRES_STATUT = [
   { value: 'tous', label: 'Tous statuts' },
   { value: 'en_stock', label: 'En stock' },
@@ -141,6 +350,16 @@ export function StockPage() {
   const estPharmacie = merchant?.sector === 'pharmacie';
   const estElectromenager = merchant?.sector === 'electromenager';
   const estSecteurReliquat = SECTEURS_RELIQUAT.includes(merchant?.sector);
+  const estGrossiste = merchant?.sector === 'grossiste';
+  // Produit suivi par lots (date de péremption) : tous ceux de la pharmacie, et les produits cochés « périssable ».
+  function produitSuiviParLots(productId) {
+    return estPharmacie || (estGrossiste && products.find((p) => p.id === productId)?.is_perishable === true);
+  }
+  // Ligne de réception saisie en unité d'achat (sacs) : le serveur convertit en kg.
+  function ligneEnSacs(it) {
+    const p = products.find((x) => x.id === it.productId);
+    return Boolean(p && Number(p.purchase_unit_qty) > 0 && it.enSacs !== false);
+  }
   const [categories, setCategories] = useState([]);
   const [searchParams] = useSearchParams();
 
@@ -152,7 +371,7 @@ export function StockPage() {
   const [recherche, setRecherche] = useState(searchParams.get('q') || '');
   const [filtreStatut, setFiltreStatut] = useState('tous');
   const [modaleOuverte, setModaleOuverte] = useState(false);
-  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', costPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, requiresColdChain: false, attributes: {}, lotNumber: '', expiryDate: '' });
+  const [nouveauProduit, setNouveauProduit] = useState({ name: '', sku: '', unitPrice: '', costPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, requiresColdChain: false, attributes: {}, lotNumber: '', expiryDate: '', ...CHAMPS_GROSSISTE_VIDES });
   const [conditionnements, setConditionnements] = useState([]);
   const [modalePrixOuverte, setModalePrixOuverte] = useState(false);
   const [prixModifies, setPrixModifies] = useState({});
@@ -164,7 +383,7 @@ export function StockPage() {
   const [perte, setPerte] = useState({ quantite: '', motif: 'casse', note: '' });
   const [enregistrementPerte, setEnregistrementPerte] = useState(false);
   const entreeStockVide = {
-    items: [{ productId: '', quantity: '', unitCost: '', lotNumber: '', expiryDate: '' }],
+    items: [{ productId: '', quantity: '', unitCost: '', lotNumber: '', expiryDate: '', enSacs: true }],
     supplierId: '',
     movementDate: new Date().toISOString().slice(0, 10),
     paymentMethod: 'comptant',
@@ -202,6 +421,7 @@ export function StockPage() {
             productId: it.productId,
             quantity: Number(it.quantity),
             unitCost: Number(it.unitCost) > 0 ? Number(it.unitCost) : undefined,
+            inPurchaseUnit: ligneEnSacs(it) || undefined,
           })),
           discountType: remiseActive ? entreeStock.remiseType : undefined,
           discountValue: remiseActive ? Number(entreeStock.remiseValeur) : undefined,
@@ -219,7 +439,7 @@ export function StockPage() {
     return () => clearTimeout(minuteur);
   }, [modaleEntreeOuverte, entreeStock.items, entreeStock.avecRemise, entreeStock.remiseType, entreeStock.remiseValeur, entreeStock.importation, entreeStock.customsDuties, entreeStock.importVat]);
   function ajouterLigneEntree() {
-    setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '', unitCost: '', lotNumber: '', expiryDate: '' }] }));
+    setEntreeStock((prev) => ({ ...prev, items: [...prev.items, { productId: '', quantity: '', unitCost: '', lotNumber: '', expiryDate: '', enSacs: true }] }));
   }
   function retirerLigneEntree(index) {
     setEntreeStock((prev) => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
@@ -476,6 +696,14 @@ export function StockPage() {
       setErreur('Le nom du produit est requis.');
       return;
     }
+    if (estGrossiste) {
+      const erreurGros = erreurOptionsGrossiste(nouveauProduit);
+      if (erreurGros) { setErreur(erreurGros); return; }
+      if (nouveauProduit.isPerishable && Number(nouveauProduit.quantityInStock) > 0 && !nouveauProduit.expiryDate) {
+        setErreur('Produit périssable avec un stock initial : indiquez la date de péremption.');
+        return;
+      }
+    }
     try {
       await api.createProduct({
         name: nouveauProduit.name,
@@ -492,14 +720,15 @@ export function StockPage() {
         categoryId: (estPharmacie || estElectromenager) ? (nouveauProduit.categoryId || undefined) : undefined,
         tvaApplicable: nouveauProduit.tvaApplicable,
         attributes: nouveauProduit.attributes,
-        lotNumber: estPharmacie ? (nouveauProduit.lotNumber || undefined) : undefined,
-        expiryDate: estPharmacie ? (nouveauProduit.expiryDate || undefined) : undefined,
+        lotNumber: (estPharmacie || (estGrossiste && nouveauProduit.isPerishable)) ? (nouveauProduit.lotNumber || undefined) : undefined,
+        expiryDate: (estPharmacie || (estGrossiste && nouveauProduit.isPerishable)) ? (nouveauProduit.expiryDate || undefined) : undefined,
+        ...(estGrossiste ? optionsGrossisteDepuisFormulaire(nouveauProduit) : {}),
         units: conditionnements
           .filter((c) => c.label && Number(c.price) && Number(c.quantityPerUnit))
           .map((c) => ({ label: c.label, price: Number(c.price), quantityPerUnit: Number(c.quantityPerUnit) })),
       });
       setModaleOuverte(false);
-      setNouveauProduit({ name: '', sku: '', unitPrice: '', costPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, requiresColdChain: false, attributes: {}, lotNumber: '', expiryDate: '' });
+      setNouveauProduit({ name: '', sku: '', unitPrice: '', costPrice: '', quantityInStock: '', quantityAlertThreshold: '5', isWeighted: false, categoryId: '', tvaApplicable: true, isVital: false, requiresPrescription: false, requiresColdChain: false, attributes: {}, lotNumber: '', expiryDate: '', ...CHAMPS_GROSSISTE_VIDES });
       setConditionnements([]);
       charger();
     } catch (err) {
@@ -611,9 +840,10 @@ export function StockPage() {
       requiresColdChain: Boolean(product.requires_cold_chain),
       units: product.units || [],
       attributes: product.attributes || {},
+      ...champsGrossisteDepuisProduit(product),
     });
     setNouveauConditionnementEdition({ label: '', price: '', quantityPerUnit: '' });
-    if (estPharmacie) {
+    if (estPharmacie || (estGrossiste && product.is_perishable)) {
       chargerLotsProduit(product.id);
     }
   }
@@ -649,6 +879,10 @@ export function StockPage() {
 
   async function handleEnregistrerEdition(e) {
     e.preventDefault();
+    if (estGrossiste) {
+      const erreurGros = erreurOptionsGrossiste(produitEnEdition);
+      if (erreurGros) { setErreur(erreurGros); return; }
+    }
     setEnregistrementEdition(true);
     try {
       await api.updateProduct(produitEnEdition.id, {
@@ -664,6 +898,7 @@ export function StockPage() {
         categoryId: (estPharmacie || estElectromenager) ? (produitEnEdition.categoryId || null) : undefined,
         tvaApplicable: produitEnEdition.tvaApplicable,
         attributes: produitEnEdition.attributes,
+        ...(estGrossiste ? optionsGrossisteDepuisFormulaire(produitEnEdition) : {}),
       });
       setProduitEnEdition(null);
       charger();
@@ -722,6 +957,13 @@ export function StockPage() {
       setErreur('Importation : indiquez le numéro de déclaration en douane.');
       return;
     }
+    if (estGrossiste) {
+      const sansDate = items.find((it) => products.find((p) => p.id === it.productId)?.is_perishable && !it.expiryDate);
+      if (sansDate) {
+        setErreur(`${products.find((p) => p.id === sansDate.productId)?.name} est périssable : indiquez sa date de péremption.`);
+        return;
+      }
+    }
     setEnregistrementEntree(true);
     try {
       const resultat = await api.recordStockPurchase({
@@ -729,8 +971,9 @@ export function StockPage() {
           productId: it.productId,
           quantity: Number(it.quantity),
           unitCost: Number(it.unitCost) > 0 ? Number(it.unitCost) : undefined,
-          lotNumber: estPharmacie ? (it.lotNumber || undefined) : undefined,
-          expiryDate: estPharmacie ? (it.expiryDate || undefined) : undefined,
+          inPurchaseUnit: ligneEnSacs(it) || undefined,
+          lotNumber: produitSuiviParLots(it.productId) ? (it.lotNumber || undefined) : undefined,
+          expiryDate: produitSuiviParLots(it.productId) ? (it.expiryDate || undefined) : undefined,
         })),
         supplierId: entreeStock.supplierId || undefined,
         movementDate: entreeStock.movementDate || undefined,
@@ -979,6 +1222,8 @@ export function StockPage() {
             </div>
           </div>
 
+          {estGrossiste && <BandeauPeremption produits={products} />}
+
           {chargement ? (
             <p style={{ color: 'var(--encre-douce)' }}>Chargement…</p>
           ) : produitsFiltres.length === 0 ? (
@@ -1008,10 +1253,27 @@ export function StockPage() {
                       {estPharmacie && p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
                       {p.requires_cold_chain && <span className="tampon tampon-info" style={{ marginLeft: 6, fontSize: 11 }}>❄ Froid</span>}
                       {p.requires_prescription && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6, fontSize: 11 }}>Ordonnance</span>}
+                      {estGrossiste && <EtiquettesGrossiste p={p} />}
                     </td>
                     <td className="chiffre">{codeInterne(p)}</td>
-                    <td className="chiffre">{Math.round(p.unit_price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA{p.is_weighted ? '/kg' : ''}</td>
-                    <td className="chiffre">{p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''}</td>
+                    <td className="chiffre">
+                      {Math.round(p.unit_price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA{p.is_weighted ? '/kg' : ''}
+                      {estGrossiste && (() => {
+                        const m = calculerMargesGrossiste({ unitPrice: p.unit_price, purchasePrice: p.purchase_unit_price, purchaseQty: p.purchase_unit_qty, units: p.units || [] });
+                        if (!m) return null;
+                        return (
+                          <div style={{ fontSize: 11, color: 'var(--encre-douce)', fontWeight: 400 }}>
+                            Marge : {fcfa(m.margeUnite)}/{p.is_weighted ? 'kg' : 'u'} · {fcfa(m.margeSac)}/{p.purchase_unit_label || 'sac'}
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td className="chiffre">
+                      {p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''}
+                      {estGrossiste && libelleStockEnSacs(p) && (
+                        <div style={{ fontSize: 11, color: 'var(--encre-douce)', fontWeight: 400 }}>= {libelleStockEnSacs(p)}</div>
+                      )}
+                    </td>
                     <td><StatusBadge status={p.status} /></td>
                     {peutGerer && (
                       <td>
@@ -1050,10 +1312,14 @@ export function StockPage() {
                     {estPharmacie && p.is_vital && <span className="tampon tampon-brique" style={{ marginLeft: 6, fontSize: 11 }}>Vital</span>}
                     {p.requires_cold_chain && <span className="tampon tampon-info" style={{ marginLeft: 6, fontSize: 11 }}>❄ Froid</span>}
                     {p.requires_prescription && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6, fontSize: 11 }}>Ordonnance</span>}
+                    {estGrossiste && <EtiquettesGrossiste p={p} />}
                   </p>
                   <p className="carte-produit-sku">{codeInterne(p)}</p>
                   <p className="carte-produit-prix">{Math.round(p.unit_price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA{p.is_weighted ? '/kg' : ''}</p>
-                  <p className="carte-produit-stock">{p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''} en stock</p>
+                  <p className="carte-produit-stock">
+                    {p.is_weighted ? Number(p.quantity_in_stock).toFixed(1) : Math.round(Number(p.quantity_in_stock))}{p.is_weighted ? ' kg' : ''} en stock
+                    {estGrossiste && libelleStockEnSacs(p) ? ` (= ${libelleStockEnSacs(p)})` : ''}
+                  </p>
                   {peutGerer && (
                     <div className="carte-produit-actions">
                       <button
@@ -1388,7 +1654,7 @@ export function StockPage() {
                   </label>
                 </div>
               )}
-              <div className="champ-groupe">
+              <div className="champ-groupe" style={estGrossiste && nouveauProduit.uniteAchat ? { display: 'none' } : undefined}>
                 <label className="etiquette" htmlFor="p-cost-price">Prix d'achat (FCFA)</label>
                 <input
                   id="p-cost-price"
@@ -1425,7 +1691,7 @@ export function StockPage() {
                   onChange={(e) => setNouveauProduit({ ...nouveauProduit, quantityInStock: estPharmacie ? e.target.value.replace(/[.,].*$/, '') : e.target.value })}
                 />
               </div>
-              {estPharmacie && Number(nouveauProduit.quantityInStock) > 0 && (
+              {(estPharmacie || (estGrossiste && nouveauProduit.isPerishable)) && Number(nouveauProduit.quantityInStock) > 0 && (
                 <div className="champ-groupe">
                   <label className="etiquette">Lot de ce stock initial</label>
                   <div style={{ display: 'flex', gap: 8 }}>
@@ -1540,6 +1806,15 @@ export function StockPage() {
                     : 'Soumis à la TVA (18 %) — décochez pour un produit exonéré'}
                 </label>
               </div>
+
+              {estGrossiste && (
+                <ChampsGrossiste
+                  form={nouveauProduit}
+                  onChange={(patch) => setNouveauProduit((prev) => ({ ...prev, ...patch }))}
+                  units={conditionnements}
+                  auPoids={nouveauProduit.isWeighted}
+                />
+              )}
 
               {secteurConfig.champsProduitSup.map((champ) => (
                 <div className="champ-groupe" key={champ.key}>
@@ -1695,6 +1970,8 @@ export function StockPage() {
                 <label className="etiquette">Articles</label>
                 {entreeStock.items.map((item, index) => {
                   const produitLigne = products.find((p) => p.id === item.productId);
+                  const enSacs = ligneEnSacs(item);
+                  const nomUniteAchat = produitLigne?.purchase_unit_label || 'sac';
                   return (
                     <div key={index} style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
@@ -1711,14 +1988,26 @@ export function StockPage() {
                         </select>
                         <input
                           type="number"
-                          min={estPharmacie ? '1' : (produitLigne?.is_weighted ? '0.1' : '1')}
-                          step={estPharmacie ? '1' : (produitLigne?.is_weighted ? '0.1' : '1')}
+                          min={enSacs ? '0' : (estPharmacie ? '1' : (produitLigne?.is_weighted ? '0.1' : '1'))}
+                          step={enSacs ? 'any' : (estPharmacie ? '1' : (produitLigne?.is_weighted ? '0.1' : '1'))}
                           className="champ"
                           style={{ flex: 1 }}
-                          placeholder={produitLigne?.is_weighted ? 'Qté (kg)' : 'Qté'}
+                          placeholder={enSacs ? `Nombre de ${nomUniteAchat}s` : (produitLigne?.is_weighted ? 'Qté (kg)' : 'Qté')}
                           value={item.quantity}
                           onChange={(e) => modifierLigneEntree(index, 'quantity', estPharmacie ? e.target.value.replace(/[.,].*$/, '') : e.target.value)}
                         />
+                        {Number(produitLigne?.purchase_unit_qty) > 0 && (
+                          <select
+                            className="champ"
+                            style={{ flex: '0 0 92px' }}
+                            value={enSacs ? 'achat' : 'detail'}
+                            onChange={(e) => modifierLigneEntree(index, 'enSacs', e.target.value === 'achat')}
+                            title="Unité de la quantité saisie"
+                          >
+                            <option value="achat">{nomUniteAchat}(s)</option>
+                            <option value="detail">{produitLigne?.is_weighted ? 'kg' : 'unités'}</option>
+                          </select>
+                        )}
                         {entreeStock.items.length > 1 && (
                           <button
                             type="button"
@@ -1731,6 +2020,14 @@ export function StockPage() {
                           </button>
                         )}
                       </div>
+                      {enSacs && Number(item.quantity) > 0 && (
+                        <p style={{ margin: '0 0 0 4px', fontSize: 12, color: 'var(--encre-douce)' }}>
+                          = {Math.round(Number(item.quantity) * Number(produitLigne.purchase_unit_qty) * 1000) / 1000} {produitLigne.is_weighted ? 'kg' : 'unités'} en stock
+                          {Number(item.unitCost) > 0
+                            ? ` · coût ${fcfa(Number(item.unitCost) / Number(produitLigne.purchase_unit_qty))} FCFA/${produitLigne.is_weighted ? 'kg' : 'unité'}`
+                            : (Number(produitLigne.purchase_unit_price) > 0 ? ` · ${fcfa(produitLigne.purchase_unit_price)} FCFA le ${nomUniteAchat}` : '')}
+                        </p>
+                      )}
                       {item.productId && apercuAchat?.missingCost?.includes(item.productId) && (
                         <div style={{ display: 'flex', gap: 8, paddingLeft: 4, alignItems: 'center' }}>
                           <input
@@ -1739,7 +2036,7 @@ export function StockPage() {
                             step="any"
                             className="champ"
                             style={{ flex: 1 }}
-                            placeholder="Prix d'achat unitaire HT (manquant sur la fiche)"
+                            placeholder={enSacs ? `Prix d'achat d'un ${nomUniteAchat} HT (manquant sur la fiche)` : "Prix d'achat unitaire HT (manquant sur la fiche)"}
                             value={item.unitCost}
                             onChange={(e) => modifierLigneEntree(index, 'unitCost', e.target.value)}
                           />
@@ -1750,12 +2047,13 @@ export function StockPage() {
                           ❄ Chaîne du froid — à conserver au frais dès la réception.
                         </p>
                       )}
-                      {estPharmacie && item.productId && (
+                      {produitSuiviParLots(item.productId) && item.productId && (
                         <div style={{ display: 'flex', gap: 8, paddingLeft: 4 }}>
                           <input
                             type="date"
                             className="champ"
                             style={{ flex: 1 }}
+                            required={!estPharmacie}
                             title="Date de péremption de ce lot"
                             value={item.expiryDate}
                             min={new Date().toISOString().slice(0, 10)}
@@ -2128,7 +2426,7 @@ export function StockPage() {
                   </label>
                 </div>
               )}
-              <div className="champ-groupe">
+              <div className="champ-groupe" style={estGrossiste && produitEnEdition.uniteAchat ? { display: 'none' } : undefined}>
                 <label className="etiquette" htmlFor="pe-cost-price">Prix d'achat (FCFA)</label>
                 <input
                   id="pe-cost-price"
@@ -2245,6 +2543,15 @@ export function StockPage() {
                 </label>
               </div>
 
+              {estGrossiste && (
+                <ChampsGrossiste
+                  form={produitEnEdition}
+                  onChange={(patch) => setProduitEnEdition((prev) => ({ ...prev, ...patch }))}
+                  units={produitEnEdition.units || []}
+                  auPoids={produitEnEdition.isWeighted}
+                />
+              )}
+
               {secteurConfig.champsProduitSup.map((champ) => (
                 <div className="champ-groupe" key={champ.key}>
                   <label className="etiquette" htmlFor={`pe-${champ.key}`}>{champ.label}</label>
@@ -2263,7 +2570,7 @@ export function StockPage() {
                 </div>
               ))}
 
-              {estPharmacie && (
+              {(estPharmacie || (estGrossiste && produitEnEdition.isPerishable)) && (
                 <div className="champ-groupe">
                   <label className="etiquette">Lots en stock (péremption)</label>
                   {lotsProduitEdition === null && (

@@ -16,6 +16,175 @@ router.use(authenticate);
 // secteurs que côté orders_routes.js — à garder synchronisé.
 const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
 
+// ---------------------------------------------------------------------------
+// Secteur grossiste : prix de gros, produits périssables, unité d'achat (sac) / unité de vente (kg)
+// ---------------------------------------------------------------------------
+
+// Les nouveaux champs sont ajoutés tout seuls au premier démarrage (sans effet s'ils existent déjà).
+async function assurerSchemaGrossiste() {
+  await pool.query(
+    `ALTER TABLE products
+       ADD COLUMN IF NOT EXISTS wholesale_price numeric,
+       ADD COLUMN IF NOT EXISTS wholesale_min_qty numeric,
+       ADD COLUMN IF NOT EXISTS is_perishable boolean NOT NULL DEFAULT false,
+       ADD COLUMN IF NOT EXISTS purchase_unit_label text,
+       ADD COLUMN IF NOT EXISTS purchase_unit_qty numeric,
+       ADD COLUMN IF NOT EXISTS purchase_unit_price numeric`
+  );
+  try {
+    // Le type d'alerte est un enum : on y ajoute « peremption_proche » s'il n'y est pas.
+    const t = await pool.query(
+      `SELECT udt_name FROM information_schema.columns WHERE table_name = 'alerts' AND column_name = 'type' AND data_type = 'USER-DEFINED' LIMIT 1`
+    );
+    if (t.rows[0]) await pool.query(`ALTER TYPE "${t.rows[0].udt_name}" ADD VALUE IF NOT EXISTS 'peremption_proche'`);
+  } catch (err) {
+    console.error("Type d'alerte péremption :", err.message);
+  }
+}
+const schemaGrossistePret = assurerSchemaGrossiste().catch((err) => console.error('Schéma grossiste :', err));
+router.use(async (req, res, next) => {
+  await schemaGrossistePret;
+  next();
+});
+
+const DELAI_ALERTE_PEREMPTION_JOURS = 15;
+
+// Lit et valide les options grossiste d'un corps de requête. Une clé absente ne change rien ; une valeur
+// vide ou nulle efface l'option. Retourne { colonne: valeur } à écrire (ou {}), ou lève { status: 400 }.
+function lireOptionsGrossiste(body) {
+  const colonnes = {};
+  const present = (k) => Object.prototype.hasOwnProperty.call(body, k);
+  const nombre = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
+
+  if (present('wholesalePrice') || present('wholesaleMinQty')) {
+    const prix = nombre(body.wholesalePrice);
+    const qte = nombre(body.wholesaleMinQty);
+    if (!prix && !qte) {
+      colonnes.wholesale_price = null;
+      colonnes.wholesale_min_qty = null;
+    } else {
+      if (!(prix > 0) || !(qte > 0)) {
+        throw { status: 400, message: 'Vente en gros : indiquez le prix de gros et la quantité minimale (tous deux supérieurs à 0).' };
+      }
+      colonnes.wholesale_price = prix;
+      colonnes.wholesale_min_qty = qte;
+    }
+  }
+
+  if (present('isPerishable')) colonnes.is_perishable = Boolean(body.isPerishable);
+
+  if (present('purchaseUnitLabel') || present('purchaseUnitQty') || present('purchaseUnitPrice')) {
+    const qte = nombre(body.purchaseUnitQty);
+    const libelle = typeof body.purchaseUnitLabel === 'string' ? body.purchaseUnitLabel.trim().slice(0, 30) : '';
+    const prix = nombre(body.purchaseUnitPrice);
+    if (!qte) {
+      colonnes.purchase_unit_label = null;
+      colonnes.purchase_unit_qty = null;
+      colonnes.purchase_unit_price = null;
+    } else {
+      if (!(qte > 0) || !libelle) {
+        throw { status: 400, message: "Unité d'achat : indiquez son nom (ex. sac) et la quantité qu'elle contient." };
+      }
+      if (prix !== null && !(prix >= 0)) throw { status: 400, message: "Prix d'achat de l'unité invalide." };
+      colonnes.purchase_unit_label = libelle;
+      colonnes.purchase_unit_qty = qte;
+      colonnes.purchase_unit_price = prix;
+      // Le prix d'achat enregistré sur le produit reste par unité de vente (kg) : prix du sac ÷ contenu du sac.
+      if (prix > 0) colonnes.cost_price = Math.round((prix / qte) * 10000) / 10000;
+    }
+  }
+  return colonnes;
+}
+
+async function ecrireOptionsGrossiste(db, merchantId, productId, colonnes) {
+  const cles = Object.keys(colonnes);
+  if (cles.length === 0) return null;
+  const sets = cles.map((c, i) => `${c} = $${i + 3}`).join(', ');
+  const r = await db.query(
+    `UPDATE products SET ${sets} WHERE id = $1 AND merchant_id = $2 RETURNING *`,
+    [productId, merchantId, ...cles.map((c) => colonnes[c])]
+  );
+  return r.rows[0] || null;
+}
+
+function dateIsoValide(texte) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(texte || '')) && !Number.isNaN(Date.parse(texte));
+}
+
+// Alerte « bientôt périmé » : une alerte par produit périssable dont un lot est périmé ou périme dans les
+// 15 jours, renouvelée au plus une fois par semaine tant que le lot est toujours en stock.
+const DERNIERE_VERIF_PEREMPTION = new Map();
+async function verifierPeremptions(merchantId, force = false) {
+  const dernier = DERNIERE_VERIF_PEREMPTION.get(merchantId);
+  if (!force && dernier && Date.now() - dernier < 60 * 60 * 1000) return;
+  DERNIERE_VERIF_PEREMPTION.set(merchantId, Date.now());
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.id AS product_id, p.name, SUM(l.quantity) AS quantite, MIN(l.expiry_date) AS premiere,
+              BOOL_OR(l.expiry_date < CURRENT_DATE) AS a_des_perimes
+       FROM product_lots l
+       JOIN products p ON p.id = l.product_id
+       WHERE l.merchant_id = $1 AND p.is_perishable = TRUE AND p.is_active = TRUE AND l.quantity > 0
+         AND l.expiry_date <= CURRENT_DATE + $2::int
+         AND NOT EXISTS (
+           SELECT 1 FROM alerts a
+           WHERE a.merchant_id = $1 AND a.type::text = 'peremption_proche'
+             AND a.reference_id::text = p.id::text AND a.created_at > now() - interval '7 days'
+         )
+       GROUP BY p.id, p.name`,
+      [merchantId, DELAI_ALERTE_PEREMPTION_JOURS]
+    );
+    for (const r of rows) {
+      const date = new Date(r.premiere).toLocaleDateString('fr-FR');
+      const quantite = Math.round(Number(r.quantite) * 10) / 10;
+      await creerAlerte({
+        merchantId,
+        type: 'peremption_proche',
+        titre: r.a_des_perimes ? 'Produit périmé en stock' : 'Produit bientôt périmé',
+        message: r.a_des_perimes
+          ? `${r.name} : un lot est périmé depuis le ${date} (${quantite} en stock). À retirer de la vente.`
+          : `${r.name} : un lot périme le ${date}, dans moins de ${DELAI_ALERTE_PEREMPTION_JOURS} jours (${quantite} en stock).`,
+        referenceId: r.product_id,
+      }).catch((err) => console.error('Erreur alerte péremption :', err));
+    }
+  } catch (err) {
+    console.error('Vérification des péremptions :', err.message);
+  }
+}
+
+async function verifierPeremptionsTous() {
+  const { rows } = await pool.query(`SELECT DISTINCT merchant_id FROM products WHERE is_perishable = TRUE AND is_active = TRUE`);
+  for (const r of rows) await verifierPeremptions(r.merchant_id, true);
+}
+// Contrôle automatique toutes les 6 h (et une minute après le démarrage), sans rien à configurer ailleurs.
+setTimeout(() => { schemaGrossistePret.then(verifierPeremptionsTous).catch(() => {}); }, 60 * 1000).unref();
+setInterval(() => { verifierPeremptionsTous().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
+
+// Achat saisi en unité d'achat (ex. 3 sacs à 12 000 FCFA le sac) : quantité convertie en unité de stock (kg)
+// et prix d'achat par kg. Les lignes sans « inPurchaseUnit » ne changent pas.
+async function convertirItemsAchat(db, merchantId, items) {
+  const ids = items.filter((i) => i.inPurchaseUnit).map((i) => i.productId);
+  if (ids.length === 0) return items;
+  const { rows } = await db.query(
+    `SELECT id, name, purchase_unit_label, purchase_unit_qty FROM products WHERE merchant_id = $1 AND id = ANY($2::uuid[])`,
+    [merchantId, ids]
+  );
+  const parId = new Map(rows.map((r) => [String(r.id), r]));
+  return items.map((it) => {
+    if (!it.inPurchaseUnit) return it;
+    const p = parId.get(String(it.productId));
+    if (!p) throw erreurAchat(404, `Produit introuvable (${it.productId}).`);
+    const contenu = Number(p.purchase_unit_qty);
+    if (!(contenu > 0)) throw erreurAchat(400, `${p.name} n'a pas d'unité d'achat : renseignez-la dans la fiche produit.`);
+    return {
+      ...it,
+      quantity: Math.round(Number(it.quantity) * contenu * 1000) / 1000,
+      unitCost: Number(it.unitCost) > 0 ? Number(it.unitCost) / contenu : undefined,
+      inPurchaseUnit: false,
+    };
+  });
+}
+
 // Même logique que formatOrderNumber() dans orders_routes.js — dupliquée
 // ici car non exportée par ce module (uniquement utilisée pour l'affichage
 // du numéro de commande sur la liste des reliquats).
@@ -345,6 +514,10 @@ router.get('/', async (req, res) => {
          COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock,
          p.quantity_alert_threshold, p.is_weighted, p.tva_applicable, c.name AS category, p.category_id,
          p.is_vital, p.requires_prescription, p.requires_cold_chain,
+         p.wholesale_price, p.wholesale_min_qty, p.is_perishable, p.purchase_unit_label, p.purchase_unit_qty,
+         CASE WHEN $3::boolean THEN p.purchase_unit_price END AS purchase_unit_price,
+         (SELECT MIN(l.expiry_date) FROM product_lots l
+           WHERE l.product_id = p.id AND l.warehouse_id = $2 AND l.quantity > 0) AS next_expiry,
          CASE WHEN $3::boolean THEN p.cost_price END AS cost_price,
          CASE
            WHEN COALESCE(ps.quantity_in_stock, 0) = 0 THEN 'rupture'
@@ -358,6 +531,8 @@ router.get('/', async (req, res) => {
        ORDER BY p.name`,
       [req.user.merchantId, warehouseId, ['manager', 'gerant'].includes(req.user.role)]
     );
+
+    verifierPeremptions(req.user.merchantId).catch(() => {});
 
     const unitsResult = await pool.query(
       `SELECT id, product_id, label, price, quantity_per_unit
@@ -427,7 +602,14 @@ router.post('/', requireRole('manager', 'gerant'), requireAction('stock', 'creer
         trackStock === undefined ? !isDish : Boolean(trackStock),
       ]
     );
-    const product = result.rows[0];
+    let product = result.rows[0];
+    // Options grossiste (prix de gros, périssable, unité d'achat) : écrites juste après la création.
+    const miseAJourGrossiste = await ecrireOptionsGrossiste(client, req.user.merchantId, product.id, lireOptionsGrossiste(req.body));
+    if (miseAJourGrossiste) product = miseAJourGrossiste;
+    const suiviParLots = req.user.sector === 'pharmacie' || product.is_perishable === true;
+    if (product.is_perishable === true && req.user.sector !== 'pharmacie' && Number(quantityInStock) > 0 && !dateIsoValide(expiryDate)) {
+      throw { status: 400, message: 'Produit périssable avec un stock initial : indiquez la date de péremption.' };
+    }
 
     // Le stock initial n'est créé que pour la boutique où le produit est
     // ajouté ; les autres boutiques démarrent à 0 (COALESCE côté lecture).
@@ -439,7 +621,7 @@ router.post('/', requireRole('manager', 'gerant'), requireAction('stock', 'creer
 
     // Pharmacie : si un stock initial et une date de péremption sont
     // fournis dès la création, on crée directement le premier lot.
-    if (req.user.sector === 'pharmacie' && Number(quantityInStock) > 0) {
+    if (suiviParLots && Number(quantityInStock) > 0) {
       await addLot(client, {
         merchantId: req.user.merchantId,
         productId: product.id,
@@ -527,6 +709,7 @@ router.patch('/:id', requireRole('manager', 'gerant'), requireAction('stock', 'm
   const { name, sku, categoryId, unitPrice, costPrice, quantityAlertThreshold, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes, isDish, description, ingredientsText, station, course, prepMinutes, available, trackStock } = req.body;
 
   try {
+    const optionsGrossiste = lireOptionsGrossiste(req.body);
     const avant = await pool.query(
       `SELECT name, unit_price FROM products WHERE id = $1 AND merchant_id = $2`,
       [req.params.id, req.user.merchantId]
@@ -580,6 +763,9 @@ router.patch('/:id', requireRole('manager', 'gerant'), requireAction('stock', 'm
       ]
     );
 
+    const apresGrossiste = await ecrireOptionsGrossiste(pool, req.user.merchantId, req.params.id, optionsGrossiste);
+    if (apresGrossiste) result.rows[0] = apresGrossiste;
+
     if (unitPrice !== undefined && Number(unitPrice) !== ancienPrix) {
       await logActivity({
         merchantId: req.user.merchantId,
@@ -610,6 +796,7 @@ router.patch('/:id', requireRole('manager', 'gerant'), requireAction('stock', 'm
 
     res.json(result.rows[0]);
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la mise à jour du produit.' });
   }
@@ -648,6 +835,22 @@ router.post('/:id/stock-movement', requireAction('stock', 'modifier'), async (re
 
   if (!validTypes.includes(movementType) || typeof quantity !== 'number' || quantity <= 0) {
     return res.status(400).json({ error: 'Mouvement de stock invalide.' });
+  }
+
+  // Produit périssable (hors pharmacie) : la date de péremption est obligatoire à chaque entrée.
+  let estPerissable = false;
+  if (movementType === 'entree' && req.user.sector !== 'pharmacie') {
+    try {
+      const per = await pool.query(`SELECT is_perishable FROM products WHERE id = $1 AND merchant_id = $2`, [req.params.id, req.user.merchantId]);
+      estPerissable = per.rows[0]?.is_perishable === true;
+    } catch (err) {
+      console.error(err);
+      return res.status(500).json({ error: "Erreur lors de l'entrée de stock." });
+    }
+    if (estPerissable) {
+      if (!dateIsoValide(expiryDate)) return res.status(400).json({ error: 'Produit périssable : indiquez la date de péremption.' });
+      if (expiryDate < new Date().toISOString().slice(0, 10)) return res.status(400).json({ error: 'La date de péremption est déjà dépassée.' });
+    }
   }
 
   let paiementFinal = null;
@@ -799,7 +1002,7 @@ router.post('/:id/stock-movement', requireAction('stock', 'modifier'), async (re
     // Pharmacie : une entrée de stock "active" le produit (ne sera plus
     // affiché en rupture par défaut) et, si une péremption est fournie,
     // crée le lot correspondant pour le suivi FEFO.
-    if (movementType === 'entree' && req.user.sector === 'pharmacie') {
+    if (movementType === 'entree' && (req.user.sector === 'pharmacie' || estPerissable)) {
       await client.query(`UPDATE products SET is_activated = TRUE WHERE id = $1`, [product.id]);
       await addLot(client, {
         merchantId: req.user.merchantId,
@@ -983,7 +1186,8 @@ router.post('/purchases/preview', async (req, res) => {
     }
   }
   try {
-    const a = await calculerAchat(pool, req.user.merchantId, items, discountType, discountValue, true);
+    const itemsConvertis = await convertirItemsAchat(pool, req.user.merchantId, items);
+    const a = await calculerAchat(pool, req.user.merchantId, itemsConvertis, discountType, discountValue, true);
     const imp = ajusterAchatImportation(req.body, a);
     res.json({
       taxRate: TAUX_TVA,
@@ -1010,10 +1214,11 @@ router.post('/purchases/preview', async (req, res) => {
 // qu'une seule fois — cette appli ne suit pas de coût par article.
 router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) => {
   const {
-    items, supplierId, movementDate, paymentMethod, invoiceNumber, cashMethod, discountType, discountValue,
+    items: itemsSaisis, supplierId, movementDate, paymentMethod, invoiceNumber, cashMethod, discountType, discountValue,
     advanceAmount, advanceCashMethod,
     warehouseId: warehouseIdInput,
   } = req.body;
+  let items = itemsSaisis;
   const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -1027,6 +1232,12 @@ router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) =
   const productIds = items.map((i) => i.productId);
   if (new Set(productIds).size !== productIds.length) {
     return res.status(400).json({ error: 'Un même produit apparaît plusieurs fois — regroupez-le en une seule ligne.' });
+  }
+  // Lignes saisies en sacs (unité d'achat) : converties en kilos et en prix au kilo avant tout calcul.
+  try {
+    items = await convertirItemsAchat(pool, req.user.merchantId, items);
+  } catch (e) {
+    return res.status(e.status || 500).json({ error: e.message });
   }
   if (!['comptant', 'a_credit'].includes(paymentMethod)) {
     return res.status(400).json({ error: 'Mode de paiement invalide.' });
@@ -1126,7 +1337,7 @@ router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) =
       const item = items[index];
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.is_weighted, p.tva_applicable, p.quantity_alert_threshold, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
+        `SELECT p.id, p.name, p.is_weighted, p.is_perishable, p.tva_applicable, p.quantity_alert_threshold, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
          WHERE p.id = $1 AND p.merchant_id = $2 FOR UPDATE OF p`,
@@ -1144,6 +1355,18 @@ router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) =
         return res.status(400).json({ error: `${product.name} n'est pas vendu au poids : la quantité doit être un nombre entier.` });
       }
 
+      // Produit périssable (hors pharmacie) : date de péremption obligatoire, et pas déjà dépassée.
+      if (product.is_perishable && req.user.sector !== 'pharmacie') {
+        if (!dateIsoValide(item.expiryDate)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `${product.name} est périssable : indiquez sa date de péremption.` });
+        }
+        if (item.expiryDate < new Date().toISOString().slice(0, 10)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `${product.name} : la date de péremption est déjà dépassée.` });
+        }
+      }
+
       const newQuantity = Number(product.quantity_in_stock) + item.quantity;
 
       await client.query(
@@ -1154,9 +1377,9 @@ router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) =
         [req.user.merchantId, product.id, warehouseId, newQuantity]
       );
 
-      // Pharmacie : activation auto + lot (péremption) par article, comme
+      // Pharmacie ou produit périssable : activation auto + lot (péremption) par article, comme
       // pour l'entrée simple.
-      if (req.user.sector === 'pharmacie') {
+      if (req.user.sector === 'pharmacie' || product.is_perishable) {
         await client.query(`UPDATE products SET is_activated = TRUE WHERE id = $1`, [product.id]);
         await addLot(client, {
           merchantId: req.user.merchantId,
@@ -1607,6 +1830,7 @@ router.get('/destructions', async (req, res) => {
 // (surlignage rouge + destruction, voir GET /:id/lots).
 router.get('/expiring-lots', async (req, res) => {
   try {
+    verifierPeremptions(req.user.merchantId).catch(() => {});
     const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
     const result = await pool.query(
       `SELECT l.id AS lot_id, l.lot_number, l.expiry_date, l.quantity,

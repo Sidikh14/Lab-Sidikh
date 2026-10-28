@@ -905,8 +905,16 @@ export function OrdersPage() {
     .map((l) => {
       const produit = products.find((p) => p.id === l.productId);
       if (!produit) return null;
-      const option = optionsDeVente(produit).find((o) => o.unitId === l.unitId);
+      let option = optionsDeVente(produit).find((o) => o.unitId === l.unitId);
       if (!option) return null;
+      // Prix de gros : appliqué automatiquement à la vente au détail dès que la quantité atteint le minimum
+      // du produit (le serveur applique la même règle). Les produits sans prix de gros ne changent pas.
+      if (
+        !l.unitId && Number(produit.wholesale_price) > 0 && Number(produit.wholesale_min_qty) > 0
+        && l.quantity >= Number(produit.wholesale_min_qty)
+      ) {
+        option = { ...option, price: Number(produit.wholesale_price), gros: true };
+      }
       return { ...l, produit, option };
     })
     .filter(Boolean);
@@ -1339,6 +1347,12 @@ export function OrdersPage() {
                       </p>
                       <p className="ticket-ligne-prix">
                         {Math.round(l.option.price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA{l.produit.is_weighted ? '/kg' : ''}
+                        {l.option.gros && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6 }}>Prix de gros</span>}
+                        {!l.option.gros && !l.unitId && Number(l.produit.wholesale_price) > 0 && Number(l.produit.wholesale_min_qty) > 0 && (
+                          <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--encre-douce)' }}>
+                            gros dès {Number(l.produit.wholesale_min_qty)} : {Math.round(Number(l.produit.wholesale_price)).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')}
+                          </span>
+                        )}
                       </p>
                     </div>
                     {l.produit.is_weighted ? (
