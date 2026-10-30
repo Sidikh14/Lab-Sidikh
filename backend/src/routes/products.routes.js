@@ -2,7 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole, requireAction } = require('../middleware/roles');
+const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, traitSeparateur } = require('../utils/pdfHelpers');
 const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
@@ -15,216 +15,6 @@ router.use(authenticate);
 // Reliquat (commande client en attente sur rupture de stock) : mêmes
 // secteurs que côté orders_routes.js — à garder synchronisé.
 const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
-
-// ---------------------------------------------------------------------------
-// Secteur grossiste : prix de gros, produits périssables, unité d'achat (sac) / unité de vente (kg)
-// ---------------------------------------------------------------------------
-
-// Les nouveaux champs sont ajoutés tout seuls (sans effet s'ils existent déjà). La création est tentée
-// avant les requêtes produits ; si elle échoue (verrou, droits…), elle est retentée toutes les 30 s sans
-// jamais bloquer les requêtes plus de 10 s, et la cause est reprise dans les messages d'erreur.
-let schemaGrossisteOk = false;
-let schemaGrossisteErreur = null;
-let schemaGrossisteDerniereTentative = 0;
-let schemaGrossisteEnCours = null;
-
-async function assurerSchemaGrossiste() {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query(`SET LOCAL lock_timeout = '8s'`);
-    await client.query(
-      `ALTER TABLE products
-         ADD COLUMN IF NOT EXISTS wholesale_price numeric,
-         ADD COLUMN IF NOT EXISTS wholesale_min_qty numeric,
-         ADD COLUMN IF NOT EXISTS is_perishable boolean NOT NULL DEFAULT false,
-         ADD COLUMN IF NOT EXISTS purchase_unit_label text,
-         ADD COLUMN IF NOT EXISTS purchase_unit_qty numeric,
-         ADD COLUMN IF NOT EXISTS purchase_unit_price numeric`
-    );
-    await client.query('COMMIT');
-    schemaGrossisteOk = true;
-    schemaGrossisteErreur = null;
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    schemaGrossisteErreur = err.message;
-    console.error('Schéma grossiste :', err.message);
-    throw err;
-  } finally {
-    client.release();
-  }
-  try {
-    // Le type d'alerte est un enum : on y ajoute « peremption_proche » s'il n'y est pas.
-    const t = await pool.query(
-      `SELECT udt_name FROM information_schema.columns WHERE table_name = 'alerts' AND column_name = 'type' AND data_type = 'USER-DEFINED' LIMIT 1`
-    );
-    if (t.rows[0]) await pool.query(`ALTER TYPE "${t.rows[0].udt_name}" ADD VALUE IF NOT EXISTS 'peremption_proche'`);
-  } catch (err) {
-    console.error("Type d'alerte péremption :", err.message);
-  }
-}
-
-function assurerSchemaTolerant() {
-  if (schemaGrossisteOk) return Promise.resolve();
-  if (!schemaGrossisteEnCours) {
-    schemaGrossisteDerniereTentative = Date.now();
-    schemaGrossisteEnCours = assurerSchemaGrossiste().finally(() => { schemaGrossisteEnCours = null; });
-  }
-  return schemaGrossisteEnCours;
-}
-assurerSchemaTolerant().catch(() => {});
-router.use(async (req, res, next) => {
-  if (!schemaGrossisteOk && (schemaGrossisteEnCours || Date.now() - schemaGrossisteDerniereTentative > 30000)) {
-    try {
-      await Promise.race([assurerSchemaTolerant(), new Promise((resolve) => setTimeout(resolve, 10000))]);
-    } catch (err) { /* déjà journalisé ; la requête continue */ }
-  }
-  next();
-});
-
-// Détail technique ajouté aux erreurs 500 des produits pour que la cause soit visible à l'écran.
-function detailErreur(err) {
-  const cause = schemaGrossisteErreur ? `base : ${schemaGrossisteErreur}` : (err && err.message) || 'erreur inconnue';
-  return ` (${cause})`;
-}
-
-const DELAI_ALERTE_PEREMPTION_JOURS = 15;
-
-// Lit et valide les options grossiste d'un corps de requête. Une clé absente ne change rien ; une valeur
-// vide ou nulle efface l'option. Retourne { colonne: valeur } à écrire (ou {}), ou lève { status: 400 }.
-function lireOptionsGrossiste(body) {
-  const colonnes = {};
-  const present = (k) => Object.prototype.hasOwnProperty.call(body, k);
-  const nombre = (v) => (v === undefined || v === null || v === '' ? null : Number(v));
-
-  if (present('wholesalePrice') || present('wholesaleMinQty')) {
-    const prix = nombre(body.wholesalePrice);
-    const qte = nombre(body.wholesaleMinQty);
-    if (!prix && !qte) {
-      colonnes.wholesale_price = null;
-      colonnes.wholesale_min_qty = null;
-    } else {
-      if (!(prix > 0) || !(qte > 0)) {
-        throw { status: 400, message: 'Vente en gros : indiquez le prix de gros et la quantité minimale (tous deux supérieurs à 0).' };
-      }
-      colonnes.wholesale_price = prix;
-      colonnes.wholesale_min_qty = qte;
-    }
-  }
-
-  if (present('isPerishable')) colonnes.is_perishable = Boolean(body.isPerishable);
-
-  if (present('purchaseUnitLabel') || present('purchaseUnitQty') || present('purchaseUnitPrice')) {
-    const qte = nombre(body.purchaseUnitQty);
-    const libelle = typeof body.purchaseUnitLabel === 'string' ? body.purchaseUnitLabel.trim().slice(0, 30) : '';
-    const prix = nombre(body.purchaseUnitPrice);
-    if (!qte) {
-      colonnes.purchase_unit_label = null;
-      colonnes.purchase_unit_qty = null;
-      colonnes.purchase_unit_price = null;
-    } else {
-      if (!(qte > 0) || !libelle) {
-        throw { status: 400, message: "Unité d'achat : indiquez son nom (ex. sac) et la quantité qu'elle contient." };
-      }
-      if (prix !== null && !(prix >= 0)) throw { status: 400, message: "Prix d'achat de l'unité invalide." };
-      colonnes.purchase_unit_label = libelle;
-      colonnes.purchase_unit_qty = qte;
-      colonnes.purchase_unit_price = prix;
-      // Le prix d'achat enregistré sur le produit reste par unité de vente (kg) : prix du sac ÷ contenu du sac.
-      if (prix > 0) colonnes.cost_price = Math.round((prix / qte) * 10000) / 10000;
-    }
-  }
-  return colonnes;
-}
-
-async function ecrireOptionsGrossiste(db, merchantId, productId, colonnes) {
-  const cles = Object.keys(colonnes);
-  if (cles.length === 0) return null;
-  const sets = cles.map((c, i) => `${c} = $${i + 3}`).join(', ');
-  const r = await db.query(
-    `UPDATE products SET ${sets} WHERE id = $1 AND merchant_id = $2 RETURNING *`,
-    [productId, merchantId, ...cles.map((c) => colonnes[c])]
-  );
-  return r.rows[0] || null;
-}
-
-function dateIsoValide(texte) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(texte || '')) && !Number.isNaN(Date.parse(texte));
-}
-
-// Alerte « bientôt périmé » : une alerte par produit périssable dont un lot est périmé ou périme dans les
-// 15 jours, renouvelée au plus une fois par semaine tant que le lot est toujours en stock.
-const DERNIERE_VERIF_PEREMPTION = new Map();
-async function verifierPeremptions(merchantId, force = false) {
-  const dernier = DERNIERE_VERIF_PEREMPTION.get(merchantId);
-  if (!force && dernier && Date.now() - dernier < 60 * 60 * 1000) return;
-  DERNIERE_VERIF_PEREMPTION.set(merchantId, Date.now());
-  try {
-    const { rows } = await pool.query(
-      `SELECT p.id AS product_id, p.name, SUM(l.quantity) AS quantite, MIN(l.expiry_date) AS premiere,
-              BOOL_OR(l.expiry_date < CURRENT_DATE) AS a_des_perimes
-       FROM product_lots l
-       JOIN products p ON p.id = l.product_id
-       WHERE l.merchant_id = $1 AND p.is_perishable = TRUE AND p.is_active = TRUE AND l.quantity > 0
-         AND l.expiry_date <= CURRENT_DATE + $2::int
-         AND NOT EXISTS (
-           SELECT 1 FROM alerts a
-           WHERE a.merchant_id = $1 AND a.type::text = 'peremption_proche'
-             AND a.reference_id::text = p.id::text AND a.created_at > now() - interval '7 days'
-         )
-       GROUP BY p.id, p.name`,
-      [merchantId, DELAI_ALERTE_PEREMPTION_JOURS]
-    );
-    for (const r of rows) {
-      const date = new Date(r.premiere).toLocaleDateString('fr-FR');
-      const quantite = Math.round(Number(r.quantite) * 10) / 10;
-      await creerAlerte({
-        merchantId,
-        type: 'peremption_proche',
-        titre: r.a_des_perimes ? 'Produit périmé en stock' : 'Produit bientôt périmé',
-        message: r.a_des_perimes
-          ? `${r.name} : un lot est périmé depuis le ${date} (${quantite} en stock). À retirer de la vente.`
-          : `${r.name} : un lot périme le ${date}, dans moins de ${DELAI_ALERTE_PEREMPTION_JOURS} jours (${quantite} en stock).`,
-        referenceId: r.product_id,
-      }).catch((err) => console.error('Erreur alerte péremption :', err));
-    }
-  } catch (err) {
-    console.error('Vérification des péremptions :', err.message);
-  }
-}
-
-async function verifierPeremptionsTous() {
-  const { rows } = await pool.query(`SELECT DISTINCT merchant_id FROM products WHERE is_perishable = TRUE AND is_active = TRUE`);
-  for (const r of rows) await verifierPeremptions(r.merchant_id, true);
-}
-// Contrôle automatique toutes les 6 h (et une minute après le démarrage), sans rien à configurer ailleurs.
-setTimeout(() => { assurerSchemaTolerant().then(verifierPeremptionsTous).catch(() => {}); }, 60 * 1000).unref();
-setInterval(() => { verifierPeremptionsTous().catch(() => {}); }, 6 * 60 * 60 * 1000).unref();
-
-// Achat saisi en unité d'achat (ex. 3 sacs à 12 000 FCFA le sac) : quantité convertie en unité de stock (kg)
-// et prix d'achat par kg. Les lignes sans « inPurchaseUnit » ne changent pas.
-async function convertirItemsAchat(db, merchantId, items) {
-  const ids = items.filter((i) => i.inPurchaseUnit).map((i) => i.productId);
-  if (ids.length === 0) return items;
-  const { rows } = await db.query(
-    `SELECT id, name, purchase_unit_label, purchase_unit_qty FROM products WHERE merchant_id = $1 AND id = ANY($2::uuid[])`,
-    [merchantId, ids]
-  );
-  const parId = new Map(rows.map((r) => [String(r.id), r]));
-  return items.map((it) => {
-    if (!it.inPurchaseUnit) return it;
-    const p = parId.get(String(it.productId));
-    if (!p) throw erreurAchat(404, `Produit introuvable (${it.productId}).`);
-    const contenu = Number(p.purchase_unit_qty);
-    if (!(contenu > 0)) throw erreurAchat(400, `${p.name} n'a pas d'unité d'achat : renseignez-la dans la fiche produit.`);
-    return {
-      ...it,
-      quantity: Math.round(Number(it.quantity) * contenu * 1000) / 1000,
-      unitCost: Number(it.unitCost) > 0 ? Number(it.unitCost) / contenu : undefined,
-      inPurchaseUnit: false,
-    };
-  });
-}
 
 // Même logique que formatOrderNumber() dans orders_routes.js — dupliquée
 // ici car non exportée par ce module (uniquement utilisée pour l'affichage
@@ -555,10 +345,6 @@ router.get('/', async (req, res) => {
          COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock,
          p.quantity_alert_threshold, p.is_weighted, p.tva_applicable, c.name AS category, p.category_id,
          p.is_vital, p.requires_prescription, p.requires_cold_chain,
-         p.wholesale_price, p.wholesale_min_qty, p.is_perishable, p.purchase_unit_label, p.purchase_unit_qty,
-         CASE WHEN $3::boolean THEN p.purchase_unit_price END AS purchase_unit_price,
-         (SELECT MIN(l.expiry_date) FROM product_lots l
-           WHERE l.product_id = p.id AND l.warehouse_id = $2 AND l.quantity > 0) AS next_expiry,
          CASE WHEN $3::boolean THEN p.cost_price END AS cost_price,
          CASE
            WHEN COALESCE(ps.quantity_in_stock, 0) = 0 THEN 'rupture'
@@ -572,8 +358,6 @@ router.get('/', async (req, res) => {
        ORDER BY p.name`,
       [req.user.merchantId, warehouseId, ['manager', 'gerant'].includes(req.user.role)]
     );
-
-    verifierPeremptions(req.user.merchantId).catch(() => {});
 
     const unitsResult = await pool.query(
       `SELECT id, product_id, label, price, quantity_per_unit
@@ -595,7 +379,7 @@ router.get('/', async (req, res) => {
 });
 
 // POST /products
-router.post('/', requireRole('manager', 'gerant'), requireAction('stock', 'creer'), async (req, res) => {
+router.post('/', requireRole('manager', 'gerant'), async (req, res) => {
   const { name, sku, categoryId, unitPrice, costPrice, quantityInStock, quantityAlertThreshold, units, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes, warehouseId: warehouseIdInput, lotNumber, expiryDate, isDish, description, ingredientsText, station, course, prepMinutes, available, trackStock } = req.body;
 
   if (!name) {
@@ -643,14 +427,7 @@ router.post('/', requireRole('manager', 'gerant'), requireAction('stock', 'creer
         trackStock === undefined ? !isDish : Boolean(trackStock),
       ]
     );
-    let product = result.rows[0];
-    // Options grossiste (prix de gros, périssable, unité d'achat) : écrites juste après la création.
-    const miseAJourGrossiste = await ecrireOptionsGrossiste(client, req.user.merchantId, product.id, lireOptionsGrossiste(req.body));
-    if (miseAJourGrossiste) product = miseAJourGrossiste;
-    const suiviParLots = req.user.sector === 'pharmacie' || product.is_perishable === true;
-    if (product.is_perishable === true && req.user.sector !== 'pharmacie' && Number(quantityInStock) > 0 && !dateIsoValide(expiryDate)) {
-      throw { status: 400, message: 'Produit périssable avec un stock initial : indiquez la date de péremption.' };
-    }
+    const product = result.rows[0];
 
     // Le stock initial n'est créé que pour la boutique où le produit est
     // ajouté ; les autres boutiques démarrent à 0 (COALESCE côté lecture).
@@ -662,7 +439,7 @@ router.post('/', requireRole('manager', 'gerant'), requireAction('stock', 'creer
 
     // Pharmacie : si un stock initial et une date de péremption sont
     // fournis dès la création, on crée directement le premier lot.
-    if (suiviParLots && Number(quantityInStock) > 0) {
+    if (req.user.sector === 'pharmacie' && Number(quantityInStock) > 0) {
       await addLot(client, {
         merchantId: req.user.merchantId,
         productId: product.id,
@@ -700,14 +477,14 @@ router.post('/', requireRole('manager', 'gerant'), requireAction('stock', 'creer
     await client.query('ROLLBACK');
     if (err.status) return res.status(err.status).json({ error: err.message });
     console.error(err);
-    res.status(500).json({ error: 'Erreur lors de la création du produit.' + detailErreur(err) });
+    res.status(500).json({ error: 'Erreur lors de la création du produit.' });
   } finally {
     client.release();
   }
 });
 
 // POST /products/:id/units — ajouter un conditionnement à un produit existant
-router.post('/:id/units', requireRole('manager', 'gerant'), requireAction('stock', 'modifier'), async (req, res) => {
+router.post('/:id/units', requireRole('manager', 'gerant'), async (req, res) => {
   const { label, price, quantityPerUnit } = req.body;
 
   if (!label || !Number(price) || !Number.isInteger(Number(quantityPerUnit)) || Number(quantityPerUnit) < 1) {
@@ -731,7 +508,7 @@ router.post('/:id/units', requireRole('manager', 'gerant'), requireAction('stock
 });
 
 // DELETE /products/:id/units/:unitId
-router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), requireAction('stock', 'modifier'), async (req, res) => {
+router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const result = await pool.query(
       `DELETE FROM product_units WHERE id = $1 AND product_id = $2 AND merchant_id = $3 RETURNING id`,
@@ -746,11 +523,10 @@ router.delete('/:id/units/:unitId', requireRole('manager', 'gerant'), requireAct
 });
 
 // PATCH /products/:id — journalise un changement de prix, s'il y en a un
-router.patch('/:id', requireRole('manager', 'gerant'), requireAction('stock', 'modifier'), async (req, res) => {
+router.patch('/:id', requireRole('manager', 'gerant'), async (req, res) => {
   const { name, sku, categoryId, unitPrice, costPrice, quantityAlertThreshold, isWeighted, tvaApplicable, isVital, requiresPrescription, requiresColdChain, attributes, isDish, description, ingredientsText, station, course, prepMinutes, available, trackStock } = req.body;
 
   try {
-    const optionsGrossiste = lireOptionsGrossiste(req.body);
     const avant = await pool.query(
       `SELECT name, unit_price FROM products WHERE id = $1 AND merchant_id = $2`,
       [req.params.id, req.user.merchantId]
@@ -775,15 +551,15 @@ router.patch('/:id', requireRole('manager', 'gerant'), requireAction('stock', 'm
          is_vital = COALESCE($10, is_vital),
          requires_prescription = COALESCE($11, requires_prescription),
          requires_cold_chain = COALESCE($12, requires_cold_chain),
-         is_dish = COALESCE($13, is_dish),
-         description = COALESCE($14, description),
-         ingredients_text = COALESCE($15, ingredients_text),
-         station = COALESCE($16, station),
-         course = COALESCE($17, course),
-         prep_minutes = COALESCE($18, prep_minutes),
-         available = COALESCE($19, available),
-         track_stock = COALESCE($20, track_stock)
-       WHERE id = $21 AND merchant_id = $22
+         is_dish = COALESCE($15, is_dish),
+         description = COALESCE($16, description),
+         ingredients_text = COALESCE($17, ingredients_text),
+         station = COALESCE($18, station),
+         course = COALESCE($19, course),
+         prep_minutes = COALESCE($20, prep_minutes),
+         available = COALESCE($21, available),
+         track_stock = COALESCE($22, track_stock)
+       WHERE id = $23 AND merchant_id = $24
        RETURNING *`,
       [
         name, sku, categoryId, unitPrice, costPrice, quantityAlertThreshold, isWeighted,
@@ -803,9 +579,6 @@ router.patch('/:id', requireRole('manager', 'gerant'), requireAction('stock', 'm
         req.params.id, req.user.merchantId,
       ]
     );
-
-    const apresGrossiste = await ecrireOptionsGrossiste(pool, req.user.merchantId, req.params.id, optionsGrossiste);
-    if (apresGrossiste) result.rows[0] = apresGrossiste;
 
     if (unitPrice !== undefined && Number(unitPrice) !== ancienPrix) {
       await logActivity({
@@ -837,9 +610,8 @@ router.patch('/:id', requireRole('manager', 'gerant'), requireAction('stock', 'm
 
     res.json(result.rows[0]);
   } catch (err) {
-    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error(err);
-    res.status(500).json({ error: 'Erreur lors de la mise à jour du produit.' + detailErreur(err) });
+    res.status(500).json({ error: 'Erreur lors de la mise à jour du produit.' });
   }
 });
 
@@ -863,7 +635,7 @@ function lireImportation(body, { total, tva }) {
 
 // Une entrée peut être au comptant ou à crédit ; le crédit exige un
 // fournisseur enregistré (pour pouvoir suivre la dette) et un montant total.
-router.post('/:id/stock-movement', requireAction('stock', 'modifier'), async (req, res) => {
+router.post('/:id/stock-movement', requireRole('manager', 'gerant'), async (req, res) => {
   const {
     movementType, quantity, reason, supplierId, movementDate,
     paymentMethod, totalCost, cashMethod, tvaAmount,
@@ -876,22 +648,6 @@ router.post('/:id/stock-movement', requireAction('stock', 'modifier'), async (re
 
   if (!validTypes.includes(movementType) || typeof quantity !== 'number' || quantity <= 0) {
     return res.status(400).json({ error: 'Mouvement de stock invalide.' });
-  }
-
-  // Produit périssable (hors pharmacie) : la date de péremption est obligatoire à chaque entrée.
-  let estPerissable = false;
-  if (movementType === 'entree' && req.user.sector !== 'pharmacie') {
-    try {
-      const per = await pool.query(`SELECT is_perishable FROM products WHERE id = $1 AND merchant_id = $2`, [req.params.id, req.user.merchantId]);
-      estPerissable = per.rows[0]?.is_perishable === true;
-    } catch (err) {
-      console.error(err);
-      return res.status(500).json({ error: "Erreur lors de l'entrée de stock." });
-    }
-    if (estPerissable) {
-      if (!dateIsoValide(expiryDate)) return res.status(400).json({ error: 'Produit périssable : indiquez la date de péremption.' });
-      if (expiryDate < new Date().toISOString().slice(0, 10)) return res.status(400).json({ error: 'La date de péremption est déjà dépassée.' });
-    }
   }
 
   let paiementFinal = null;
@@ -1043,7 +799,7 @@ router.post('/:id/stock-movement', requireAction('stock', 'modifier'), async (re
     // Pharmacie : une entrée de stock "active" le produit (ne sera plus
     // affiché en rupture par défaut) et, si une péremption est fournie,
     // crée le lot correspondant pour le suivi FEFO.
-    if (movementType === 'entree' && (req.user.sector === 'pharmacie' || estPerissable)) {
+    if (movementType === 'entree' && req.user.sector === 'pharmacie') {
       await client.query(`UPDATE products SET is_activated = TRUE WHERE id = $1`, [product.id]);
       await addLot(client, {
         merchantId: req.user.merchantId,
@@ -1227,8 +983,7 @@ router.post('/purchases/preview', async (req, res) => {
     }
   }
   try {
-    const itemsConvertis = await convertirItemsAchat(pool, req.user.merchantId, items);
-    const a = await calculerAchat(pool, req.user.merchantId, itemsConvertis, discountType, discountValue, true);
+    const a = await calculerAchat(pool, req.user.merchantId, items, discountType, discountValue, true);
     const imp = ajusterAchatImportation(req.body, a);
     res.json({
       taxRate: TAUX_TVA,
@@ -1253,13 +1008,12 @@ router.post('/purchases/preview', async (req, res) => {
 // (les autres ont total_cost = null) pour que les sommes déjà utilisées
 // ailleurs (dette fournisseur, solde de caisse) ne comptent ce montant
 // qu'une seule fois — cette appli ne suit pas de coût par article.
-router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) => {
+router.post('/purchases', requireRole('manager', 'gerant'), async (req, res) => {
   const {
-    items: itemsSaisis, supplierId, movementDate, paymentMethod, invoiceNumber, cashMethod, discountType, discountValue,
+    items, supplierId, movementDate, paymentMethod, invoiceNumber, cashMethod, discountType, discountValue,
     advanceAmount, advanceCashMethod,
     warehouseId: warehouseIdInput,
   } = req.body;
-  let items = itemsSaisis;
   const MOYENS_PAIEMENT = ['especes', 'wave', 'orange_money', 'cheque', 'virement'];
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -1273,12 +1027,6 @@ router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) =
   const productIds = items.map((i) => i.productId);
   if (new Set(productIds).size !== productIds.length) {
     return res.status(400).json({ error: 'Un même produit apparaît plusieurs fois — regroupez-le en une seule ligne.' });
-  }
-  // Lignes saisies en sacs (unité d'achat) : converties en kilos et en prix au kilo avant tout calcul.
-  try {
-    items = await convertirItemsAchat(pool, req.user.merchantId, items);
-  } catch (e) {
-    return res.status(e.status || 500).json({ error: e.message });
   }
   if (!['comptant', 'a_credit'].includes(paymentMethod)) {
     return res.status(400).json({ error: 'Mode de paiement invalide.' });
@@ -1378,7 +1126,7 @@ router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) =
       const item = items[index];
 
       const productResult = await client.query(
-        `SELECT p.id, p.name, p.is_weighted, p.is_perishable, p.tva_applicable, p.quantity_alert_threshold, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
+        `SELECT p.id, p.name, p.is_weighted, p.tva_applicable, p.quantity_alert_threshold, COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
          WHERE p.id = $1 AND p.merchant_id = $2 FOR UPDATE OF p`,
@@ -1396,18 +1144,6 @@ router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) =
         return res.status(400).json({ error: `${product.name} n'est pas vendu au poids : la quantité doit être un nombre entier.` });
       }
 
-      // Produit périssable (hors pharmacie) : date de péremption obligatoire, et pas déjà dépassée.
-      if (product.is_perishable && req.user.sector !== 'pharmacie') {
-        if (!dateIsoValide(item.expiryDate)) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: `${product.name} est périssable : indiquez sa date de péremption.` });
-        }
-        if (item.expiryDate < new Date().toISOString().slice(0, 10)) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: `${product.name} : la date de péremption est déjà dépassée.` });
-        }
-      }
-
       const newQuantity = Number(product.quantity_in_stock) + item.quantity;
 
       await client.query(
@@ -1418,9 +1154,9 @@ router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) =
         [req.user.merchantId, product.id, warehouseId, newQuantity]
       );
 
-      // Pharmacie ou produit périssable : activation auto + lot (péremption) par article, comme
+      // Pharmacie : activation auto + lot (péremption) par article, comme
       // pour l'entrée simple.
-      if (req.user.sector === 'pharmacie' || product.is_perishable) {
+      if (req.user.sector === 'pharmacie') {
         await client.query(`UPDATE products SET is_activated = TRUE WHERE id = $1`, [product.id]);
         await addLot(client, {
           merchantId: req.user.merchantId,
@@ -1589,7 +1325,7 @@ router.post('/purchases', requireAction('stock', 'modifier'), async (req, res) =
 });
 
 // DELETE /products/:id
-router.delete('/:id', requireRole('manager'), requireAction('stock', 'supprimer'), async (req, res) => {
+router.delete('/:id', requireRole('manager'), async (req, res) => {
   try {
     const avant = await pool.query(
       `SELECT name FROM products WHERE id = $1 AND merchant_id = $2`,
@@ -1647,7 +1383,7 @@ router.get('/:id/lots', async (req, res) => {
 // comptabilité en tire une charge « pertes sur stocks » (débit 6581, crédit 311).
 // Les lots (pharmacie) sont consommés du plus proche de la péremption au plus lointain.
 const MOTIFS_PERTE = { casse: 'Casse', peremption: 'Péremption', vol: 'Vol / démarque', autre: 'Autre perte' };
-router.post('/:id/losses', requireRole('manager', 'gerant'), requireAction('stock', 'supprimer'), async (req, res) => {
+router.post('/:id/losses', requireRole('manager', 'gerant'), async (req, res) => {
   const { quantity, reason, note, warehouseId: warehouseIdInput } = req.body;
   if (typeof quantity !== 'number' || !(quantity > 0)) {
     return res.status(400).json({ error: 'La quantité perdue doit être un nombre positif.' });
@@ -1735,7 +1471,7 @@ router.post('/:id/losses', requireRole('manager', 'gerant'), requireAction('stoc
 // la destruction que d'un lot déjà périmé (expiry_date < aujourd'hui),
 // pour éviter qu'un lot valide soit détruit par erreur au lieu d'être
 // simplement corrigé/vendu.
-router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), requireAction('stock', 'supprimer'), async (req, res) => {
+router.delete('/:id/lots/:lotId', requireRole('manager', 'gerant'), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1871,7 +1607,6 @@ router.get('/destructions', async (req, res) => {
 // (surlignage rouge + destruction, voir GET /:id/lots).
 router.get('/expiring-lots', async (req, res) => {
   try {
-    verifierPeremptions(req.user.merchantId).catch(() => {});
     const warehouseId = await resolveWarehouseId(req, null, req.query.warehouseId);
     const result = await pool.query(
       `SELECT l.id AS lot_id, l.lot_number, l.expiry_date, l.quantity,
@@ -1924,7 +1659,7 @@ router.get('/equivalences', async (req, res) => {
 // POST /products/equivalences — lie deux produits comme équivalents
 // (princeps <-> générique). La relation est symétrique : peu importe quel
 // produit est envoyé en premier, elle sert dans les deux sens à la caisse.
-router.post('/equivalences', requireRole('manager', 'gerant'), requireAction('stock', 'modifier'), async (req, res) => {
+router.post('/equivalences', requireRole('manager', 'gerant'), async (req, res) => {
   const { productId1, productId2 } = req.body;
   if (!productId1 || !productId2 || productId1 === productId2) {
     return res.status(400).json({ error: 'Deux produits distincts sont requis.' });
@@ -1967,7 +1702,7 @@ router.post('/equivalences', requireRole('manager', 'gerant'), requireAction('st
 });
 
 // DELETE /products/equivalences/:linkId
-router.delete('/equivalences/:linkId', requireRole('manager', 'gerant'), requireAction('stock', 'modifier'), async (req, res) => {
+router.delete('/equivalences/:linkId', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const result = await pool.query(
       `DELETE FROM product_equivalences WHERE id = $1 AND merchant_id = $2 RETURNING id`,

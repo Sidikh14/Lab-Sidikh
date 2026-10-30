@@ -137,29 +137,6 @@ const MODULES = [
   { value: 'paie', label: 'Paie', finance: true },
 ];
 
-// Doit rester synchronisé avec CATALOGUE_ACTIONS de middleware/roles.js (backend).
-const CATALOGUE_ACTIONS = {
-  stock: { creer: 'Créer un produit', modifier: 'Modifier (prix, quantité)', supprimer: 'Supprimer un produit', transferer: 'Transférer entre boutiques', rupture: 'Autoriser une vente en rupture de stock', inventaire: 'Ajuster un inventaire' },
-  ventes: { creer: 'Encaisser une vente', annuler: 'Annuler une commande', remise: 'Appliquer une remise', retour: 'Enregistrer un retour client', reservation: 'Créer une réservation (reliquat)' },
-  clients: { creer: 'Créer un client', modifier: 'Modifier un client', supprimer: 'Supprimer un client', credit: 'Valider une vente à crédit', reglement: 'Enregistrer un règlement', releve: 'Envoyer un relevé de compte', export: 'Exporter les factures impayées' },
-  fournisseurs: { creer: 'Créer un fournisseur', modifier: 'Modifier un fournisseur', supprimer: 'Supprimer un fournisseur', reglement: 'Enregistrer un paiement fournisseur' },
-  achats: { creer: 'Créer une commande fournisseur', modifier: 'Modifier une commande fournisseur', annuler: 'Annuler une commande fournisseur', livrer: 'Réceptionner une commande fournisseur' },
-  caisse: { entree: 'Enregistrer une entrée de caisse', sortie: 'Enregistrer une sortie de caisse', cloture: 'Clôturer la caisse', charge: 'Payer une charge depuis la caisse' },
-  comptabilite: { saisir: 'Saisir une écriture comptable', cloture: "Clôturer l'exercice", rapprochement: 'Faire un rapprochement / lettrage', charge: 'Comptabiliser une charge' },
-  fiscalite: { declarer: 'Enregistrer une déclaration', paiement: "Enregistrer un paiement d'impôt" },
-  paie: { bulletin: 'Générer un bulletin de paie', payer: 'Payer un salaire', avance: 'Verser une avance sur salaire', document: 'Émettre un document RH (attestation, contrat)', parametres: 'Modifier les paramètres de paie (taux/barèmes)', envoi: 'Envoyer les bulletins par mail' },
-  equipe: { creer: 'Ajouter un membre', modifier: 'Modifier un membre (rôles, infos)', supprimer: 'Désactiver un membre', permissions: "Modifier les permissions d'un membre", mot_de_passe: "Réinitialiser le mot de passe d'un membre" },
-  entreprise: { modifier: "Modifier les informations de l'entreprise" },
-  boutiques: { creer: 'Ajouter une boutique', modifier: 'Modifier une boutique', transferer: 'Transférer du stock entre boutiques' },
-};
-// Modules sans bascule de page (pas dans MODULES/visible_modules) : les actions
-// restent affichées en permanence dans la modale, sans case "module" parente.
-const MODULES_HORS_BASCULE = [
-  { value: 'equipe', label: 'Équipe' },
-  { value: 'entreprise', label: 'Entreprise' },
-  { value: 'boutiques', label: 'Boutiques' },
-];
-
 const MODULES_PAR_ROLE = {
   gerant: ['stock', 'ventes', 'clients', 'fournisseurs', 'achats', 'caisse'],
   vendeur: ['stock', 'ventes', 'clients'],
@@ -326,12 +303,10 @@ function EquipeTab() {
   const [selectionModules, setSelectionModules] = useState([]);
   // { module: { action: false } } — ne retient que les refus explicites ; une action absente
   // reste autorisée par défaut (même logique que les modules : null/absent = accès complet).
-  const [selectionActions, setSelectionActions] = useState({});
 
   function ouvrirPermissions(membre) {
     setMembrePermissions(membre);
     setSelectionModules(membre.visible_modules ?? modulesParDefaut(rolesDe(membre)));
-    setSelectionActions(membre.action_permissions ?? {});
   }
 
   function toggleModule(value) {
@@ -340,27 +315,10 @@ function EquipeTab() {
     );
   }
 
-  const actionAutorisee = (module, action) => selectionActions[module]?.[action] !== false;
-
-  function toggleAction(module, action) {
-    setSelectionActions((prev) => {
-      const parModule = { ...(prev[module] || {}) };
-      if (parModule[action] === false) {
-        delete parModule[action]; // on réautorise (retour au défaut)
-      } else {
-        parModule[action] = false; // on retire le droit
-      }
-      const suivant = { ...prev };
-      if (Object.keys(parModule).length === 0) delete suivant[module];
-      else suivant[module] = parModule;
-      return suivant;
-    });
-  }
-
   async function handleSavePermissions(e) {
     e.preventDefault();
     try {
-      await api.setUserPermissions(membrePermissions.id, selectionModules, selectionActions);
+      await api.setUserPermissions(membrePermissions.id, selectionModules);
       setMembrePermissions(null);
       charger();
     } catch (err) {
@@ -370,7 +328,7 @@ function EquipeTab() {
 
   async function handleResetPermissions() {
     try {
-      await api.setUserPermissions(membrePermissions.id, null, {});
+      await api.setUserPermissions(membrePermissions.id, null);
       setMembrePermissions(null);
       charger();
     } catch (err) {
@@ -699,39 +657,6 @@ function EquipeTab() {
                     />
                     {m.label}
                   </label>
-                  {selectionModules.includes(m.value) && CATALOGUE_ACTIONS[m.value] && (
-                    <div style={{ marginLeft: 26, marginTop: 4 }}>
-                      {Object.entries(CATALOGUE_ACTIONS[m.value]).map(([action, libelle]) => (
-                        <label key={action} className="case-a-cocher" style={{ display: 'block', fontSize: 13, color: 'var(--encre-douce)', marginBottom: 3 }}>
-                          <input
-                            type="checkbox"
-                            checked={actionAutorisee(m.value, action)}
-                            onChange={() => toggleAction(m.value, action)}
-                          />
-                          {libelle}
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-
-              <p style={{ fontSize: 13, fontWeight: 700, margin: '14px 0 8px' }}>Autres actions</p>
-              {MODULES_HORS_BASCULE.map((m) => (
-                <div key={m.value} style={{ marginBottom: 10 }}>
-                  <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{m.label}</p>
-                  <div style={{ marginLeft: 4 }}>
-                    {Object.entries(CATALOGUE_ACTIONS[m.value]).map(([action, libelle]) => (
-                      <label key={action} className="case-a-cocher" style={{ display: 'block', fontSize: 13, color: 'var(--encre-douce)', marginBottom: 3 }}>
-                        <input
-                          type="checkbox"
-                          checked={actionAutorisee(m.value, action)}
-                          onChange={() => toggleAction(m.value, action)}
-                        />
-                        {libelle}
-                      </label>
-                    ))}
-                  </div>
                 </div>
               ))}
 

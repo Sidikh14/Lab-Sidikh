@@ -2,14 +2,11 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireAction, peutAgir } = require('../middleware/roles');
+const { requireRole } = require('../middleware/roles');
 
 const router = express.Router();
 router.use(authenticate);
-// Pas de verrou de rôle global ici (comme pour clients.routes.js) : la visibilité de la page
-// « Commandes fournisseurs » est déjà gérée par visible_modules, et chaque action mutante est
-// gardée individuellement par requireAction('achats', ...) / peutAgir() ci-dessous — un membre
-// à qui une action précise a été accordée doit pouvoir l'effectuer même sans être manager/gérant.
+router.use(requireRole('manager', 'gerant'));
 
 // GET /purchase-orders — liste des commandes fournisseurs récentes
 router.get('/', async (req, res) => {
@@ -67,7 +64,7 @@ router.get('/:id', async (req, res) => {
 
 // POST /purchase-orders
 // items attendu : [{ productId, quantity, unitCost }]
-router.post('/', requireAction('achats', 'creer'), async (req, res) => {
+router.post('/', async (req, res) => {
   const { supplierId, items, notes } = req.body;
 
   if (!supplierId || !Array.isArray(items) || items.length === 0) {
@@ -137,11 +134,6 @@ router.patch('/:id/status', async (req, res) => {
   const valides = ['envoyee', 'recue', 'annulee'];
   if (!valides.includes(status)) {
     return res.status(400).json({ error: 'Statut invalide.' });
-  }
-  // L'action requise dépend du statut visé : réceptionner et annuler sont deux droits distincts.
-  const actionRequise = status === 'recue' ? 'livrer' : status === 'annulee' ? 'annuler' : 'modifier';
-  if (!peutAgir(req.user, 'achats', actionRequise)) {
-    return res.status(403).json({ error: "Vous n'avez pas les droits nécessaires pour cette action." });
   }
   try {
     const result = await pool.query(

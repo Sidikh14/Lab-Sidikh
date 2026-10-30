@@ -2,7 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole, requireAction } = require('../middleware/roles');
+const { requireRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { creerAlerte, getNomUtilisateur } = require('../services/alerts.service');
 const { COULEURS, formatMontant, dessinerEntete, dessinerEnteteTableau, dessinerPiedDePage, traitSeparateur } = require('../utils/pdfHelpers');
@@ -154,7 +154,7 @@ router.get('/:id', async (req, res) => {
 
 // POST /clients/:id/credit-payments — enregistrer un règlement de créance
 // (partiel ou total). Accessible au caissier, au manager et au gérant.
-router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), requireAction('clients', 'reglement'), async (req, res) => {
+router.post('/:id/credit-payments', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   const { amount, note, paymentMethod, warehouseId: warehouseIdInput, orderId } = req.body;
 
   if (typeof amount !== 'number' || amount <= 0) {
@@ -269,7 +269,7 @@ function normaliserNumeroWhatsapp(phone) {
 // WhatsApp. Ne contacte aucune API externe : c'est le frontend qui ouvre
 // ensuite wa.me avec ce message pré-rempli, et l'utilisateur clique
 // lui-même sur "Envoyer" dans WhatsApp.
-router.post('/:id/whatsapp-statement', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), requireAction('clients', 'releve'), async (req, res) => {
+router.post('/:id/whatsapp-statement', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   try {
     const clientResult = await pool.query(
       `SELECT c.*, m.business_name
@@ -411,7 +411,7 @@ function genererFacturesImpayeesPdf(res, { businessName, clientName, factures, t
 // GET /clients/:id/unpaid-invoices-pdf — export PDF des factures à crédit
 // impayées ou partiellement réglées du client (avec le détail des
 // versements déjà faits), à télécharger et envoyer au client.
-router.get('/:id/unpaid-invoices-pdf', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), requireAction('clients', 'export'), async (req, res) => {
+router.get('/:id/unpaid-invoices-pdf', requireRole('manager', 'gerant', 'caissier', 'vendeur_caissier'), async (req, res) => {
   try {
     const clientResult = await pool.query(
       `SELECT c.*, m.business_name, m.logo_data, m.ninea, m.rccm,
@@ -465,7 +465,7 @@ router.get('/:id/unpaid-invoices-pdf', requireRole('manager', 'gerant', 'caissie
 });
 
 // POST /clients — tous les rôles peuvent créer une fiche client (utile au comptoir)
-router.post('/', requireAction('clients', 'creer'), async (req, res) => {
+router.post('/', requireRole('manager', 'gerant', 'caissier', 'vendeur', 'vendeur_caissier'), async (req, res) => {
   const { fullName, phone, email, address, insurerId, insuranceCoveragePercent } = req.body;
 
   if (!fullName) {
@@ -494,7 +494,7 @@ router.post('/', requireAction('clients', 'creer'), async (req, res) => {
 // PATCH /clients/:id — modifier les coordonnées d'un client (ex : ajouter un
 // numéro pour pouvoir lui envoyer des relances via WhatsApp). Ouvert à tous
 // les rôles, comme la création, pour rester pratique au comptoir.
-router.patch('/:id', requireAction('clients', 'modifier'), async (req, res) => {
+router.patch('/:id', requireRole('manager', 'gerant', 'caissier', 'vendeur', 'vendeur_caissier'), async (req, res) => {
   const { fullName, phone, email, address, insurerId, insuranceCoveragePercent } = req.body;
 
   if (insuranceCoveragePercent !== undefined && insuranceCoveragePercent !== null) {
@@ -530,7 +530,7 @@ router.patch('/:id', requireAction('clients', 'modifier'), async (req, res) => {
 // DELETE /clients/:id — suppression définitive, uniquement pour un client sans aucun historique
 // (ventes, règlements). Dès qu'une facture ou un règlement s'y rattache, la base refuse
 // (clé étrangère) et on renvoie un message clair plutôt que de casser la comptabilité.
-router.delete('/:id', requireRole('manager', 'gerant'), requireAction('clients', 'supprimer'), async (req, res) => {
+router.delete('/:id', requireRole('manager', 'gerant'), async (req, res) => {
   try {
     const existant = await pool.query(
       `SELECT full_name FROM clients WHERE id = $1 AND merchant_id = $2`,

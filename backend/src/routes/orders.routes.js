@@ -2,7 +2,7 @@ const express = require('express');
 const PDFDocument = require('pdfkit');
 const pool = require('../config/db');
 const { authenticate } = require('../middleware/auth');
-const { requireRole, aRole, requireAction, peutAgir } = require('../middleware/roles');
+const { requireRole, aRole } = require('../middleware/roles');
 const { logActivity } = require('../utils/activityLog');
 const { enregistrerHonorairesCommande } = require('../services/honoraires.clinique.service'); // clinique : honoraires à reverser
 const { broadcast } = require('../utils/eventsBus');
@@ -54,7 +54,7 @@ const SECTEURS_RELIQUAT = ['grossiste', 'textile', 'electromenager'];
 // Le prix personnalisé (customPrice) reste réservé au manager.
 function peutVendreEnRupture(user) {
   if (user.role === 'manager') return true;
-  return user.role === 'gerant' && SECTEURS_RELIQUAT.includes(user.sector) && peutAgir(user, 'stock', 'rupture');
+  return user.role === 'gerant' && SECTEURS_RELIQUAT.includes(user.sector);
 }
 
 const router = express.Router();
@@ -340,7 +340,7 @@ function requireRoleVente(req, res, next) {
   return requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier')(req, res, next);
 }
 
-router.post('/', requireRoleVente, requireAction('ventes', 'creer'), async (req, res) => {
+router.post('/', requireRoleVente, async (req, res) => {
   const { clientId, items, notes, tvaApplicable, clientOrderId, warehouseId: warehouseIdInput, prescriptionId, tvaRegime, precompte } = req.body;
   // items attendu : [{ productId, quantity, unitId, customPrice, authorizeOutOfStock }, ...]
   // quantity = nombre de conditionnements vendus (ex: 2 cartons) ; unitId
@@ -390,7 +390,6 @@ router.post('/', requireRoleVente, requireAction('ventes', 'creer'), async (req,
 
       const productResult = await client.query(
         `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription, p.tva_applicable,
-                p.wholesale_price, p.wholesale_min_qty, p.is_perishable,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -420,13 +419,6 @@ router.post('/', requireRoleVente, requireAction('ventes', 'creer'), async (req,
         prixParConditionnement = Number(unite.price);
         quantitePerUnite = unite.quantity_per_unit;
         packagingLabel = unite.label;
-      }
-
-      // Prix de gros : s'applique tout seul à la vente au détail (sans conditionnement) dès que la quantité
-      // atteint le minimum du produit. Facultatif par produit ; un prix personnalisé du manager reste prioritaire.
-      if (!item.unitId && Number(product.wholesale_price) > 0 && Number(product.wholesale_min_qty) > 0
-          && item.quantity >= Number(product.wholesale_min_qty)) {
-        prixParConditionnement = Number(product.wholesale_price);
       }
 
       // Prix personnalisé (réduction ou majoration) : réservé au manager.
@@ -569,7 +561,7 @@ router.post('/', requireRoleVente, requireAction('ventes', 'creer'), async (req,
       // en priorité le lot dont la péremption est la plus proche, et
       // bloque la vente si le stock non périmé est insuffisant — un
       // produit périmé ne doit jamais pouvoir être vendu, même en override.
-      if (req.user.sector === 'pharmacie' || resolved.product.is_perishable) {
+      if (req.user.sector === 'pharmacie') {
         const fefo = await consumeFEFO(client, {
           merchantId: req.user.merchantId,
           productId: resolved.product.id,
@@ -584,7 +576,7 @@ router.post('/', requireRoleVente, requireAction('ventes', 'creer'), async (req,
         // vente qui puise dans un lot bientôt périmé — un vendeur/caissier
         // doit lui faire valider la vente en personne, pas de mot de passe
         // de déblocage (décision utilisateur).
-        if (req.user.sector === 'pharmacie' && fefo.tracked && fefo.consommes && !['manager', 'gerant'].includes(req.user.role)) {
+        if (fefo.tracked && fefo.consommes && !['manager', 'gerant'].includes(req.user.role)) {
           const dansMoins30Jours = fefo.consommes.some((c) => {
             const jours = (new Date(c.expiryDate) - new Date()) / (1000 * 60 * 60 * 24);
             return jours < SEUIL_ALERTE_PEREMPTION_JOURS;
@@ -763,7 +755,9 @@ router.patch('/:id/payment', requireRole('manager', 'caissier', 'gerant', 'vende
   const estACredit = paymentMethod === 'a_credit';
   const estTiersPayant = paymentMethod === 'tiers_payant';
 
-  if (estACredit && !peutAgir(req.user, 'clients', 'credit')) {
+  // Valider une vente à crédit reste réservé au manager/gérant (décision financière sensible),
+  // même si caissier/vendeur_caissier peuvent encaisser les autres moyens de paiement sur cette route.
+  if (estACredit && !aRole(req.user, 'manager', 'gerant')) {
     return res.status(403).json({ error: "Vous n'avez pas les droits nécessaires pour cette action." });
   }
 
@@ -1175,10 +1169,6 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
   if (!validStatuses.includes(status)) {
     return res.status(400).json({ error: 'Statut invalide.' });
   }
-  if (status === 'annulee' && !peutAgir(req.user, 'ventes', 'annuler')) {
-    return res.status(403).json({ error: "Vous n'avez pas les droits nécessaires pour cette action." });
-  }
-
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1295,7 +1285,7 @@ router.patch('/:id/status', requireRole('manager', 'gerant', 'caissier', 'vendeu
 // règles que la création), on recalcule les totaux, et la commande repart
 // au statut 'en_attente' — assigned_cashier_id n'est pas touché, donc elle
 // reste rattachée au même caissier que precedemment.
-router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), requireAction('ventes', 'creer'), async (req, res) => {
+router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier'), async (req, res) => {
   const { clientId, items, notes, tvaApplicable, prescriptionId, tvaRegime, precompte } = req.body;
 
   if (!Array.isArray(items) || items.length === 0) {
@@ -1386,7 +1376,6 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
 
       const productResult = await client.query(
         `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription, p.tva_applicable,
-                p.wholesale_price, p.wholesale_min_qty, p.is_perishable,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -1416,13 +1405,6 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
         prixParConditionnement = Number(unite.price);
         quantitePerUnite = unite.quantity_per_unit;
         packagingLabel = unite.label;
-      }
-
-      // Prix de gros : s'applique tout seul à la vente au détail (sans conditionnement) dès que la quantité
-      // atteint le minimum du produit. Facultatif par produit ; un prix personnalisé du manager reste prioritaire.
-      if (!item.unitId && Number(product.wholesale_price) > 0 && Number(product.wholesale_min_qty) > 0
-          && item.quantity >= Number(product.wholesale_min_qty)) {
-        prixParConditionnement = Number(product.wholesale_price);
       }
 
       // Prix personnalisé (réduction ou majoration) : réservé au manager.
@@ -1525,7 +1507,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
         [req.user.merchantId, resolved.product.id, warehouseId, newQuantity]
       );
 
-      if (req.user.sector === 'pharmacie' || resolved.product.is_perishable) {
+      if (req.user.sector === 'pharmacie') {
         const fefo = await consumeFEFO(client, {
           merchantId: req.user.merchantId,
           productId: resolved.product.id,
@@ -1535,7 +1517,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
         if (fefo.tracked && !fefo.ok) {
           throw { status: 400, message: `${resolved.product.name} : stock non périmé insuffisant (lots restants périmés ou épuisés).` };
         }
-        if (req.user.sector === 'pharmacie' && fefo.tracked && fefo.consommes && !['manager', 'gerant'].includes(req.user.role)) {
+        if (fefo.tracked && fefo.consommes && !['manager', 'gerant'].includes(req.user.role)) {
           const dansMoins30Jours = fefo.consommes.some((c) => {
             const jours = (new Date(c.expiryDate) - new Date()) / (1000 * 60 * 60 * 24);
             return jours < SEUIL_ALERTE_PEREMPTION_JOURS;
