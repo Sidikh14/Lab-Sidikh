@@ -907,13 +907,17 @@ export function OrdersPage() {
       if (!produit) return null;
       let option = optionsDeVente(produit).find((o) => o.unitId === l.unitId);
       if (!option) return null;
-      // Prix de gros : appliqué automatiquement à la vente au détail dès que la quantité atteint le minimum
-      // du produit (le serveur applique la même règle). Les produits sans prix de gros ne changent pas.
+      // Prix de gros : appliqué automatiquement dès que la quantité/le poids total de la
+      // ligne atteint le minimum du produit (le serveur applique la même règle), que la
+      // vente soit au détail, au poids ou par sac/carton. wholesale_price est toujours
+      // exprimé par unité de base (kg ou pièce) : on le multiplie par quantityPerUnit pour
+      // retrouver un prix par sac le cas échéant. Les produits sans prix de gros ne changent pas.
+      const poidsLigne = l.quantity * (option.quantityPerUnit || 1);
       if (
-        !l.unitId && Number(produit.wholesale_price) > 0 && Number(produit.wholesale_min_qty) > 0
-        && l.quantity >= Number(produit.wholesale_min_qty)
+        Number(produit.wholesale_price) > 0 && Number(produit.wholesale_min_qty) > 0
+        && poidsLigne >= Number(produit.wholesale_min_qty)
       ) {
-        option = { ...option, price: Number(produit.wholesale_price), gros: true };
+        option = { ...option, price: Number(produit.wholesale_price) * (option.quantityPerUnit || 1), gros: true };
       }
       return { ...l, produit, option };
     })
@@ -1348,7 +1352,7 @@ export function OrdersPage() {
                       <p className="ticket-ligne-prix">
                         {Math.round(l.option.price).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')} FCFA{l.produit.is_weighted ? '/kg' : ''}
                         {l.option.gros && <span className="tampon tampon-sarcelle" style={{ marginLeft: 6 }}>Prix de gros</span>}
-                        {!l.option.gros && !l.unitId && Number(l.produit.wholesale_price) > 0 && Number(l.produit.wholesale_min_qty) > 0 && (
+                        {!l.option.gros && Number(l.produit.wholesale_price) > 0 && Number(l.produit.wholesale_min_qty) > 0 && (
                           <span style={{ marginLeft: 6, fontSize: 11, color: 'var(--encre-douce)' }}>
                             gros dès {Number(l.produit.wholesale_min_qty)} : {Math.round(Number(l.produit.wholesale_price)).toLocaleString('fr-FR').replace(/\u202f/g, '\u00a0')}
                           </span>

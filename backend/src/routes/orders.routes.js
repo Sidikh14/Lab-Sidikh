@@ -390,6 +390,7 @@ router.post('/', requireRoleVente, async (req, res) => {
 
       const productResult = await client.query(
         `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription, p.tva_applicable,
+                p.wholesale_price, p.wholesale_min_qty,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -421,7 +422,21 @@ router.post('/', requireRoleVente, async (req, res) => {
         packagingLabel = unite.label;
       }
 
-      // Prix personnalisé (réduction ou majoration) : réservé au manager.
+      const baseQuantity = item.quantity * quantitePerUnite;
+
+      // Prix de gros : s'applique dès que la quantité/le poids total de la ligne
+      // atteint le minimum configuré sur le produit, que la vente soit au détail,
+      // au poids ou par sac/carton (wholesale_price est toujours exprimé par unité
+      // de base, comme unit_price — on le multiplie par quantitePerUnite pour
+      // retrouver un prix par sac le cas échéant).
+      if (
+        Number(product.wholesale_price) > 0 && Number(product.wholesale_min_qty) > 0
+        && baseQuantity >= Number(product.wholesale_min_qty)
+      ) {
+        prixParConditionnement = Number(product.wholesale_price) * quantitePerUnite;
+      }
+
+      // Prix personnalisé (réduction ou majoration) : réservé au manager. Prend le pas sur le prix de gros.
       let originalUnitPrice = null;
       if (item.customPrice !== undefined && item.customPrice !== null) {
         if (req.user.role !== 'manager') {
@@ -434,7 +449,6 @@ router.post('/', requireRoleVente, async (req, res) => {
         prixParConditionnement = item.customPrice;
       }
 
-      const baseQuantity = item.quantity * quantitePerUnite;
       const rupture = product.quantity_in_stock < baseQuantity;
       // Part de la vente réellement couverte par le stock actuel, et part
       // manquante qui deviendra une réservation (reliquat) si le secteur
@@ -1376,6 +1390,7 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
 
       const productResult = await client.query(
         `SELECT p.id, p.name, p.unit_price, p.cost_price, p.is_weighted, p.quantity_alert_threshold, p.requires_prescription, p.tva_applicable,
+                p.wholesale_price, p.wholesale_min_qty,
                 COALESCE(ps.quantity_in_stock, 0) AS quantity_in_stock
          FROM products p
          LEFT JOIN product_stock ps ON ps.product_id = p.id AND ps.warehouse_id = $3
@@ -1407,7 +1422,21 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
         packagingLabel = unite.label;
       }
 
-      // Prix personnalisé (réduction ou majoration) : réservé au manager.
+      const baseQuantity = item.quantity * quantitePerUnite;
+
+      // Prix de gros : s'applique dès que la quantité/le poids total de la ligne
+      // atteint le minimum configuré sur le produit, que la vente soit au détail,
+      // au poids ou par sac/carton (wholesale_price est toujours exprimé par unité
+      // de base, comme unit_price — on le multiplie par quantitePerUnite pour
+      // retrouver un prix par sac le cas échéant).
+      if (
+        Number(product.wholesale_price) > 0 && Number(product.wholesale_min_qty) > 0
+        && baseQuantity >= Number(product.wholesale_min_qty)
+      ) {
+        prixParConditionnement = Number(product.wholesale_price) * quantitePerUnite;
+      }
+
+      // Prix personnalisé (réduction ou majoration) : réservé au manager. Prend le pas sur le prix de gros.
       let originalUnitPrice = null;
       if (item.customPrice !== undefined && item.customPrice !== null) {
         if (req.user.role !== 'manager') {
@@ -1420,7 +1449,6 @@ router.put('/:id', requireRole('manager', 'gerant', 'vendeur', 'vendeur_caissier
         prixParConditionnement = item.customPrice;
       }
 
-      const baseQuantity = item.quantity * quantitePerUnite;
       const rupture = product.quantity_in_stock < baseQuantity;
       const quantiteDisponible = Math.min(baseQuantity, Math.max(0, product.quantity_in_stock));
       const quantiteManquante = baseQuantity - quantiteDisponible;
